@@ -12,6 +12,16 @@ pub(crate) fn install(s: &Scope<'_>, page: &crate::page::PageDom, factory: pyro_
         if args.len() > 1 {
             return match args.get(1).to_number()? as u32 {
                 0 => {
+                    // A FileSystemHandle: a new handle of the same entry. Its
+                    // delivery depends on the receiving context (origin and
+                    // secure context), so the message stays serialized until
+                    // the receiver deserializes it (`messageerror` if refused).
+                    if let Some(handle) = crate::opfs::handle_of(s, value) {
+                        if let Some(marker) = args.get(3).as_object() {
+                            marker.set_index(0, s.boolean(true))?;
+                        }
+                        return crate::opfs::clone_handle(s, &handle);
+                    }
                     if let Some(resource) = CodecResource::parts(s, value)? {
                         if args.get(2).to_bool() {
                             return Err(JsError::dom("DataCloneError", "WebCodecs resources cannot be serialized for storage."));
@@ -30,6 +40,11 @@ pub(crate) fn install(s: &Scope<'_>, page: &crate::page::PageDom, factory: pyro_
                 3 => {
                     let copy = crate::crypto::clone_platform_object(s, value)?;
                     if !copy.is_undefined() {
+                        // A CryptoKey is `[SecureContext]`: whether the receiver gets it is
+                        // decided when it deserializes the message (`messageerror` if not).
+                        if let Some(marker) = args.get(3).as_object() {
+                            marker.set_index(0, s.boolean(true))?;
+                        }
                         return Ok(copy);
                     }
                     match canvas_object(s, value, false)? {
@@ -403,6 +418,8 @@ pub struct WireMessage {
     canvases: Vec<crate::canvas::CanvasObject>,
     /// Encoded chunks and AudioData frames share immutable byte storage.
     codecs: Vec<CodecResource>,
+    /// The FileSystemHandles it holds (shared locators of the same entries).
+    handles: Vec<crate::opfs::Handle>,
 }
 
 impl WireMessage {
@@ -416,6 +433,7 @@ impl WireMessage {
             listed_ports: 0,
             canvases: Vec::new(),
             codecs: Vec::new(),
+            handles: Vec::new(),
         }
     }
     #[cfg(test)]
@@ -428,7 +446,7 @@ impl WireMessage {
             + self.buffers.iter().map(Vec::len).sum::<usize>()
             + self.blobs.iter().map(bytes::Bytes::len).sum::<usize>()
             + self.codecs.iter().map(CodecResource::byte_length).sum::<usize>()
-            + 64 * (1 + self.ports.len() + self.canvases.len() + self.codecs.len())
+            + 64 * (1 + self.ports.len() + self.canvases.len() + self.codecs.len() + self.handles.len())
     }
     /// The pipe sides it carries.
     pub(crate) fn transit_ends(&self) -> &[crate::port_link::TransitEnd] {
@@ -453,6 +471,9 @@ thread_local! {
     static WIRE_CANVASES: std::cell::RefCell<Vec<crate::canvas::CanvasObject>> =
         const { std::cell::RefCell::new(Vec::new()) };
     static WIRE_CODECS: std::cell::RefCell<Vec<CodecResource>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+    /// As `WIRE_BLOBS`, for FileSystemHandles.
+    static WIRE_HANDLES: std::cell::RefCell<Vec<crate::opfs::Handle>> =
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
@@ -487,6 +508,13 @@ fn wire_host<'s>(s: &Scope<'s>, args: &pyro_js::Args<'s>) -> JsResult<pyro_js::V
             }
             if let Some(parts) = crate::crypto::serialize_key(s, value)? {
                 return Ok(s.array(&[s.string("K"), parts])?.value());
+            }
+            if let Some(handle) = crate::opfs::handle_of(s, value) {
+                let index = WIRE_HANDLES.with_borrow_mut(|handles| {
+                    handles.push(handle);
+                    handles.len() - 1
+                });
+                return Ok(s.array(&[s.string("O"), s.number(index as f64)])?.value());
             }
             // An ImageBitmap, or an OffscreenCanvas (the copy holds one only
             // when it is transferred).
@@ -553,6 +581,13 @@ fn wire_host<'s>(s: &Scope<'s>, args: &pyro_js::Args<'s>) -> JsResult<pyro_js::V
             let resource = WIRE_CODECS.with_borrow(|codecs| codecs.get(index).cloned())
                 .ok_or_else(|| JsError::dom("DataCloneError", "Malformed WebCodecs resource"))?;
             resource.wrap(s)
+        }
+        // The FileSystemHandle of a decoded 'O' tree (its index).
+        18 => {
+            let index = value.to_number()? as usize;
+            let handle = WIRE_HANDLES.with_borrow(|handles| handles.get(index).cloned())
+                .ok_or_else(|| JsError::dom("DataCloneError", "Malformed message"))?;
+            crate::opfs::clone_handle(s, &handle)
         }
         15 => geometry_parts(s, value),
         16 => crate::canvas::MODULE.helper(s, &crate::target::page_of(s)?, "geometryFromParts", &[value, args.get(2)]),
@@ -628,7 +663,9 @@ fn encode<'s>(
     let saved = WIRE_BLOBS.with(|b| b.take());
     let saved_canvases = WIRE_CANVASES.with(|c| c.take());
     let saved_codecs = WIRE_CODECS.with(|c| c.take());
+    let saved_handles = WIRE_HANDLES.with(|h| h.take());
     let pair = encode.call(None, &[clone, value, options, s.boolean(for_storage)]);
+    let handles = WIRE_HANDLES.with(|h| h.replace(saved_handles));
     let codecs = WIRE_CODECS.with(|c| c.replace(saved_codecs));
     let blobs = WIRE_BLOBS.with(|b| b.replace(saved));
     let canvases = WIRE_CANVASES.with(|c| c.replace(saved_canvases));
@@ -662,7 +699,7 @@ fn encode<'s>(
         ports.push(crate::message_channel::export_port(s, port)?);
     }
     let listed_ports = (pair.get_index(3)?.to_number()? as usize).min(ports.len());
-    Ok(WireMessage { text, buffers, blobs, ports, listed_ports, canvases, codecs })
+    Ok(WireMessage { text, buffers, blobs, ports, listed_ports, canvases, codecs, handles })
 }
 
 /// StructuredDeserialize into `s`'s realm.
@@ -694,7 +731,9 @@ pub(crate) fn decode_with_ports<'s>(
         let saved = WIRE_BLOBS.with(|b| b.replace(message.blobs.clone()));
         let saved_canvases = WIRE_CANVASES.with(|c| c.replace(message.canvases.clone()));
         let saved_codecs = WIRE_CODECS.with(|c| c.replace(message.codecs.clone()));
+        let saved_handles = WIRE_HANDLES.with(|h| h.replace(message.handles.clone()));
         let result = decode.call(None, &[s.string(&message.text), list.value(), ports]);
+        WIRE_HANDLES.with(|h| *h.borrow_mut() = saved_handles);
         WIRE_CODECS.with(|c| *c.borrow_mut() = saved_codecs);
         WIRE_BLOBS.with(|b| *b.borrow_mut() = saved);
         WIRE_CANVASES.with(|c| *c.borrow_mut() = saved_canvases);
@@ -755,6 +794,9 @@ pub(crate) fn thread_leftover() -> Option<&'static str> {
     }
     if WIRE_CANVASES.with(|c| !c.borrow().is_empty()) {
         return Some("structured_clone::WIRE_CANVASES");
+    }
+    if WIRE_HANDLES.with_borrow(|handles| !handles.is_empty()) {
+        return Some("structured_clone::WIRE_HANDLES");
     }
     WIRE_CODECS.with_borrow(|codecs| !codecs.is_empty()).then_some("structured_clone::WIRE_CODECS")
 }

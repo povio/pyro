@@ -739,9 +739,11 @@ impl generic::Shape<Angle, AxisPosition, Position, LengthPercentage> {
     fn parse_function_arguments(
         context: &ParserContext,
         input: &mut Parser,
-        shape_type: ShapeType,
+        _shape_type: ShapeType,
     ) -> Result<Self, ParseError> {
-        let fill = parse_fill_rule(input, shape_type, false /* no following comma */);
+        // pyro: shape()'s <fill-rule> is part of its grammar for outline shapes too (Chrome:
+        // `offset-path: shape(evenodd from 0px 0px, close)`), unlike path()'s.
+        let fill = parse_fill_rule(input, ShapeType::Filled, false /* no following comma */);
 
         let mut first = true;
         let commands = input.parse_comma_separated(|i| {

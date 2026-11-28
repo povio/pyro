@@ -52,6 +52,12 @@ pub(crate) fn environment(s: &Scope<'_>, page: &Rc<PageDom>) -> JsResult<Url> {
     Ok(url)
 }
 
+/// A third party without storage access has no unpartitioned cookies (`crate::storage_access`): the Cookie
+/// Store sees none and its writes are dropped, as `document.cookie` does.
+pub(super) fn blocked(page: &PageDom, url: &Url) -> bool {
+    page.cookie_blocking().is_some_and(|b| b.blocks(url))
+}
+
 fn query_url(page: &PageDom, mut creation: Url, option: Option<String>) -> JsResult<Url> {
     if let Some(option) = option {
         let dom = page.dom.borrow();
@@ -97,8 +103,10 @@ fn cookie_task<'s>(
     Ok(promise)
 }
 
-fn network(page: &PageDom) -> JsResult<pyro_net::NetClient> {
-    page.net.borrow().clone().ok_or_else(|| JsError::Type("Cookie storage is unavailable.".into()))
+/// The cookie jar of the document: its credentialless partition's, else the network client's.
+fn network(page: &PageDom) -> JsResult<std::sync::Arc<std::sync::Mutex<pyro_net::cookies::CookieJar>>> {
+    let net = page.net.borrow().clone().ok_or_else(|| JsError::Type("Cookie storage is unavailable.".into()))?;
+    Ok(page.cookie_jar(&net))
 }
 
 struct Write {
@@ -118,7 +126,11 @@ fn write<'s>(s: &Scope<'s>, data: Write) -> JsResult<Value<'s>> {
     let partition = page.cookie_partition_key();
     let site = page.cookie_site_context();
     let net = network(&page)?;
+    let blocked = blocked(&page, &url);
     cookie_task(s, &page, move |home| {
+        if blocked {
+            return Ok(home.undefined());
+        }
         let cookie = CookieOptions {
             name: &data.name,
             value: &data.value,
@@ -129,8 +141,7 @@ fn write<'s>(s: &Scope<'s>, data: Write) -> JsResult<Value<'s>> {
             path: &data.path,
             same_site: data.same_site,
         };
-        net.cookies()
-            .lock()
+        net.lock()
             .unwrap_or_else(|e| e.into_inner())
             .store_script_in(&url, cookie, now_secs(), partition.as_deref(), site)
             .map_err(|msg| JsError::Type(msg.into()))?;
@@ -156,9 +167,12 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
             let partition = page.cookie_partition_key();
             let site = page.cookie_site_context();
             let net = network(&page)?;
+            let blocked = blocked(&page, &url);
             cookie_task(s, &page, move |home| {
-                let items: Vec<_> = {
-                    let mut jar = net.cookies().lock().unwrap_or_else(|e| e.into_inner());
+                let items: Vec<_> = if blocked {
+                    Vec::new()
+                } else {
+                    let mut jar = net.lock().unwrap_or_else(|e| e.into_inner());
                     jar.matching_for(&url, Access::Script, site, now_secs(), partition.as_deref())
                         .into_iter()
                         .filter(|cookie| name.as_ref().is_none_or(|n| cookie.name == *n))

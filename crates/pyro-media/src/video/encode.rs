@@ -10,6 +10,8 @@ pub struct EncoderConfig {
     pub framerate: Option<f64>,
     pub bitrate_mode: String,
     pub format: String,
+    /// Temporal layers of the L1T<n> scalability mode (0 or 1: a single layer, at most 3).
+    pub temporal_layers: u8,
 }
 
 pub struct EncodedPacket {
@@ -18,6 +20,7 @@ pub struct EncodedPacket {
     pub timestamp: i64,
     pub duration: Option<u64>,
     pub description: Option<Vec<u8>>,
+    pub temporal_layer: u8,
 }
 
 pub struct PacketEncoder {
@@ -121,7 +124,10 @@ mod avc {
             || c.width.min(c.height) > 2160
             || c.width % 2 != 0
             || c.height % 2 != 0
-            || c.bitrate_mode != "variable"
+            // OpenH264's bitrate mode is constant-bitrate rate control; "variable" keeps the
+            // same controller with a rate that may stray from the target.
+            || !matches!(c.bitrate_mode.as_str(), "variable" | "constant")
+            || c.temporal_layers > 3
             || !matches!(c.format.as_str(), "avc" | "annexb")
         {
             return None;
@@ -168,8 +174,42 @@ mod avc {
     impl Encoder {
         pub(super) fn new(c: &EncoderConfig) -> Result<Self, String> {
             let (settings, profile_level) = settings(c).ok_or("unsupported AVC configuration")?;
-            let codec = openh264::encoder::Encoder::with_api_config(OpenH264API::from_source(), settings)
+            let mut codec = openh264::encoder::Encoder::with_api_config(OpenH264API::from_source(), settings)
                 .map_err(|e| e.to_string())?;
+            if c.temporal_layers > 1 {
+                // The safe wrapper initialises with one temporal layer on the first picture.
+                // Initialise now with a throwaway grey picture, raise iTemporalLayerNum
+                // through the extended parameters and restart at an IDR picture.
+                let pixels = (c.width * c.height) as usize;
+                let grey = vec![128u8; pixels + pixels / 2];
+                let (y, uv) = grey.split_at(pixels);
+                let (u, v) = uv.split_at(pixels / 4);
+                let (w, h) = (c.width as usize, c.height as usize);
+                let source = YUVSlices::new((y, u, v), (w, h), (w, w / 2, w / 2));
+                codec.encode_at(&source, Timestamp::ZERO).map_err(|e| e.to_string())?;
+                let mut params = openh264_sys2::SEncParamExt::default();
+                // SAFETY: the encoder is initialised and the parameter struct is the type
+                // ENCODER_OPTION_SVC_ENCODE_PARAM_EXT reads and writes.
+                unsafe {
+                    let api = codec.raw_api();
+                    let get = api.get_option(
+                        openh264_sys2::ENCODER_OPTION_SVC_ENCODE_PARAM_EXT,
+                        std::ptr::addr_of_mut!(params).cast(),
+                    );
+                    if get != 0 {
+                        return Err("AVC encoder rejected temporal layer query".into());
+                    }
+                    params.iTemporalLayerNum = i32::from(c.temporal_layers);
+                    let set = api.set_option(
+                        openh264_sys2::ENCODER_OPTION_SVC_ENCODE_PARAM_EXT,
+                        std::ptr::addr_of_mut!(params).cast(),
+                    );
+                    if set != 0 {
+                        return Err("AVC encoder rejected temporal layers".into());
+                    }
+                }
+                codec.force_intra_frame();
+            }
             Ok(Self {
                 codec,
                 width: c.width as usize,
@@ -206,8 +246,14 @@ mod avc {
             let mut pps = None;
             let mut idr = false;
             let mut picture = false;
+            let mut temporal_layer = 0;
             for l in 0..stream.num_layers() {
                 let layer = stream.layer(l).ok_or("missing AVC layer")?;
+                // The temporal layer of the picture is its video coding layer's (a parameter-set layer
+                // has no temporal id of its own).
+                if layer.is_video() {
+                    temporal_layer = temporal_layer.max(layer.raw_info().uiTemporalId);
+                }
                 for n in 0..layer.nal_count() {
                     let unit = layer.nal_unit(n).ok_or("missing AVC NAL")?;
                     let nal = unit
@@ -262,7 +308,7 @@ mod avc {
             } else {
                 None
             };
-            Ok(EncodedPacket { data, key: idr, timestamp, duration, description })
+            Ok(EncodedPacket { data, key: idr, timestamp, duration, description, temporal_layer })
         }
     }
 }

@@ -21,6 +21,7 @@
   const getOwnPropertyNames = Object.getOwnPropertyNames;
   const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
   const parseColor = natives.parseColor;
+  const parseStopColor = natives.parseStopColor;
   const apply = Reflect.apply;
 
   function illegal() { return new TypeErrorC('Illegal constructor'); }
@@ -134,6 +135,38 @@
     get y() { return super.y; } set y(value) { setRect(this, 'y', value); }
     get width() { return super.width; } set width(value) { setRect(this, 'width', value); }
     get height() { return super.height; } set height(value) { setRect(this, 'height', value); }
+  }
+  // ---- SVGRect values --------------------------------------------------
+  // `SVGRect` is DOMRect's legacy window alias (the same interface object), but SVG's own rectangles (`createSVGRect()`, `getBBox()`, the
+  // `viewBox` of an element) take Web IDL `float`s: a TypeError for NaN and the infinities. The
+  // `viewBox` ones are live: `links` gives each its element's `read()` (the four numbers) and
+  // `write(index, number)`, and `animVal` is read only.
+  const svgRectLinks = new WeakMap();
+  function svgRectSet(self, index, name, value) {
+    const n = finite(value, `The provided float value for '${name}'`);
+    const link = svgRectLinks.get(self);
+    if (!link) { setRect(self, name, n); return; }
+    if (link.animated) throw domError('NoModificationAllowedError', 'The object is read-only.');
+    link.write(index, n);
+  }
+  function svgRectGet(self, index, inherited) {
+    const link = svgRectLinks.get(self);
+    return link ? link.read()[index] : inherited;
+  }
+  class SvgRectValue extends DOMRect {
+    get x() { return svgRectGet(this, 0, super.x); }
+    set x(value) { svgRectSet(this, 0, 'x', value); }
+    get y() { return svgRectGet(this, 1, super.y); }
+    set y(value) { svgRectSet(this, 1, 'y', value); }
+    get width() { return svgRectGet(this, 2, super.width); }
+    set width(value) { svgRectSet(this, 2, 'width', value); }
+    get height() { return svgRectGet(this, 3, super.height); }
+    set height(value) { svgRectSet(this, 3, 'height', value); }
+  }
+  function viewBoxRect(read, write, animated) {
+    const rect = new SvgRectValue();
+    svgRectLinks.set(rect, { read, write, animated });
+    return rect;
   }
   class DOMQuad {
     #points;
@@ -729,7 +762,7 @@
   class CanvasGradient {
     constructor(token, kind, args) {
       if (token !== secret) throw illegal();
-      gradients.set(this, { kind, args, stops: [], version: 0 });
+      gradients.set(this, { kind, args, stops: [], nonLegacy: false, version: 0 });
     }
     addColorStop(offset, color) {
       const g = gradients.get(this);
@@ -737,9 +770,11 @@
       if (arguments.length < 2) throw new TypeErrorC(`Failed to execute 'addColorStop' on 'CanvasGradient': 2 arguments required, but only ${arguments.length} present.`);
       const o = finite(offset, "The provided double value");
       if (o < 0 || o > 1) throw domError('IndexSizeError', `The provided value (${o}) is outside the range (0.0, 1.0).`);
-      const parsed = parseColor(String(color));
+      const parsed = parseStopColor(String(color));
       if (parsed === null) throw domError('SyntaxError', `The value provided ('${color}') could not be parsed as a color.`);
-      g.stops.push(o, parsed);
+      // A stop in a non-legacy color syntax makes the gradient interpolate in Oklab.
+      if (!parsed[1]) g.nonLegacy = true;
+      g.stops.push(o, parsed[0]);
       g.version++;
     }
   }
@@ -951,6 +986,13 @@
       }
       return o.context;
     }
+    // HTML-in-Canvas: the size of an ElementImage of the canvas this OffscreenCanvas took the control of.
+    getElementImageDefaultSize(image) {
+      const o = oc(this);
+      if (arguments.length < 1) throw new TypeErrorC(`Failed to execute 'getElementImageDefaultSize' on 'OffscreenCanvas': 1 argument required, but only 0 present.`);
+      if (o.detached) throw domError('InvalidStateError', 'OffscreenCanvas object is detached.');
+      return natives.offscreenElementImageSize(o.placeholder, image);
+    }
     transferToImageBitmap() {
       const o = oc(this);
       if (o.detached) throw domError('InvalidStateError', 'Cannot transfer an ImageBitmap from a detached OffscreenCanvas');
@@ -1036,6 +1078,8 @@
       }
     },
     rectList(rects) { return new DOMRectList(secret, rects); },
+    svgRectValue(x,y,width,height) { return new SvgRectValue(x,y,width,height); },
+    viewBoxRect,
     rectValue(x,y,width,height,readonly) { return readonly ? new DOMRectReadOnly(x,y,width,height) : new DOMRect(x,y,width,height); },
     Path2D, ImageData, CanvasGradient, CanvasPattern, TextMetrics,
     ImageBitmap, ImageBitmapRenderingContext, OffscreenCanvas, createImageBitmap,

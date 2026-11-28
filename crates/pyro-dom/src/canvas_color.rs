@@ -14,6 +14,11 @@ use style::stylesheets::{CssRuleType, Origin, UrlExtraData};
 pub struct CanvasColor {
     pub css: String,
     pub rgba: [f32; 4],
+    /// The color was written in a legacy color syntax (`#rgb`, a named color, `rgb()`/`rgba()`,
+    /// `hsl()`/`hsla()`, `hwb()`, `transparent`) as opposed to a modern color space or function
+    /// (`color()`, `lab()`, `oklch()`, `color-mix()`, relative colors, ...). A gradient with a
+    /// non-legacy stop interpolates in Oklab (CSS Color 4 / Chromium).
+    pub legacy: bool,
 }
 
 /// A canvas bitmap's or an `ImageData`'s color space (HTML
@@ -79,7 +84,7 @@ pub fn parse(raw: &str, current: [f32; 4]) -> Option<CanvasColor> {
 /// [`parse`] with the components in `space` (a canvas's color space).
 pub fn parse_in(raw: &str, current: [f32; 4], space: Space) -> Option<CanvasColor> {
     let color = absolute(raw.trim_matches(|c: char| c.is_ascii_whitespace()), current)?;
-    Some(CanvasColor { css: serialize(&color), rgba: components(&color, space) })
+    Some(CanvasColor { css: serialize(&color), rgba: components(&color, space), legacy: color.is_legacy_syntax() })
 }
 
 /// Converts straight-alpha RGBA8 `pixels` from `from` to `to` (gamut-clipped,

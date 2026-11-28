@@ -49,14 +49,17 @@ pub(crate) struct Preloads {
     prefetches: HashMap<String, PrefetchEntry>,
     /// Compression dictionary fetches waiting for the document's load event.
     dictionaries: Vec<DeferredFetch>,
+    /// The response URL (after redirects) of each classic script fetched at another URL: the
+    /// script's base URL, which `import()` in it resolves against (HTML "fetch a classic script").
+    script_responses: HashMap<String, String>,
 }
 
 /// A fetch started once the document has loaded.
 type DeferredFetch = Box<dyn FnOnce(&mut Browser)>;
 
-/// The resolved URLs of a document response's `Link` header values with the
-/// `compression-dictionary` relation (RFC 8288 link-values; others are skipped).
-pub(crate) fn compression_dictionary_links<'a>(values: impl Iterator<Item = &'a str>, base: &url::Url) -> Vec<String> {
+/// The link-values (RFC 8288) of the `Link` header `values`: each target as written, with the
+/// text of its parameters (`; rel=preload; as=script`).
+fn link_values<'a>(values: impl Iterator<Item = &'a str>) -> Vec<(&'a str, &'a str)> {
     let mut out = Vec::new();
     for value in values {
         let mut rest = value;
@@ -79,20 +82,110 @@ pub(crate) fn compression_dictionary_links<'a>(values: impl Iterator<Item = &'a 
                 None => (rest, ""),
             };
             rest = next;
-            let dictionary = params.split(';').any(|p| {
-                let Some((name, value)) = p.split_once('=') else { return false };
-                name.trim().eq_ignore_ascii_case("rel")
-                    && value
-                        .trim()
-                        .trim_matches('"')
-                        .split_ascii_whitespace()
-                        .any(|r| r.eq_ignore_ascii_case("compression-dictionary"))
-            });
-            if dictionary {
-                if let Ok(url) = base.join(target.trim()) {
-                    out.push(url.to_string());
-                }
+            out.push((target, params));
+        }
+    }
+    out
+}
+
+/// The value of parameter `name` among a link's `params` (unquoted), the first one.
+fn link_param<'a>(params: &'a str, name: &str) -> Option<&'a str> {
+    params.split(';').find_map(|p| {
+        let (n, v) = p.split_once('=')?;
+        n.trim().eq_ignore_ascii_case(name).then(|| v.trim().trim_matches('"'))
+    })
+}
+
+/// The resolved URLs of a document response's `Link` header values with the
+/// `compression-dictionary` relation (RFC 8288 link-values; others are skipped).
+pub(crate) fn compression_dictionary_links<'a>(values: impl Iterator<Item = &'a str>, base: &url::Url) -> Vec<String> {
+    let mut out = Vec::new();
+    for (target, params) in link_values(values) {
+        let dictionary = link_param(params, "rel")
+            .is_some_and(|rel| rel.split_ascii_whitespace().any(|r| r.eq_ignore_ascii_case("compression-dictionary")));
+        if dictionary {
+            if let Ok(url) = base.join(target.trim()) {
+                out.push(url.to_string());
             }
+        }
+    }
+    out
+}
+
+/// A parameter that may be a bare flag (`; crossorigin`): its value, empty for the flag.
+fn link_param_or_flag<'a>(params: &'a str, name: &str) -> Option<&'a str> {
+    params.split(';').find_map(|p| {
+        let p = p.trim();
+        match p.split_once('=') {
+            Some((n, v)) => n.trim().eq_ignore_ascii_case(name).then(|| v.trim().trim_matches('"')),
+            None => p.eq_ignore_ascii_case(name).then_some(""),
+        }
+    })
+}
+
+/// A `Link` response header's `preload`, `modulepreload` or `prefetch` link: the fetch the
+/// document starts before it parses anything. What a `<link>` element's attributes decide
+/// (`media`, `imagesrcset`, `imagesizes`) is decided when the fetch starts, against the document's
+/// viewport ([`Browser::link_headers`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinkFetch {
+    /// The link's target as written (none: only an `imagesrcset` names the image).
+    pub href: Option<String>,
+    /// The response URL the target (and the srcset's URLs) resolve against.
+    pub base: String,
+    pub kind: ResourceKind,
+    pub crossorigin: Option<String>,
+    pub media: Option<String>,
+    pub srcset: Option<String>,
+    pub sizes: Option<String>,
+    pub integrity: Option<String>,
+}
+
+/// The fetches the `Link` header `values` of a document response (from `base`) ask for, in order
+/// (`as=` picks a preload's destination as it does on a `<link>`; a preload whose `as` is missing
+/// or is not a destination this browser fetches is not fetched, as Fetch says). A link of several
+/// relations is fetched once, as a module preload before a preload before a prefetch; the same
+/// fetch twice in one header is made once.
+pub(crate) fn link_header_fetches<'a>(values: impl Iterator<Item = &'a str>, base: &url::Url) -> Vec<LinkFetch> {
+    let mut out: Vec<LinkFetch> = Vec::new();
+    for (target, params) in link_values(values) {
+        let rel = link_param(params, "rel").unwrap_or_default();
+        let has = |name: &str| rel.split_ascii_whitespace().any(|r| r.eq_ignore_ascii_case(name));
+        let as_dest = link_param(params, "as").map(str::to_ascii_lowercase);
+        let kind = if has("modulepreload") {
+            ResourceKind::ModuleScript
+        } else if has("preload") {
+            match as_dest.as_deref() {
+                Some("script") => ResourceKind::Script,
+                Some("style") => ResourceKind::Stylesheet,
+                Some("font") => ResourceKind::Font,
+                Some("track") => ResourceKind::Track,
+                Some("fetch") => ResourceKind::Fetch,
+                Some("image") => ResourceKind::Image,
+                _ => continue,
+            }
+        } else if has("prefetch") {
+            ResourceKind::Prefetch
+        } else {
+            continue;
+        };
+        let srcset = link_param(params, "imagesrcset").filter(|_| kind == ResourceKind::Image && !has("modulepreload"));
+        let href = Some(target.trim()).filter(|h| !h.is_empty()).map(str::to_owned);
+        if href.is_none() && srcset.is_none() {
+            continue;
+        }
+        let link = LinkFetch {
+            href,
+            base: base.to_string(),
+            kind,
+            crossorigin: link_param_or_flag(params, "crossorigin").map(str::to_owned),
+            media: link_param(params, "media").map(str::to_owned),
+            srcset: srcset.map(str::to_owned),
+            sizes: link_param(params, "imagesizes").map(str::to_owned),
+            integrity: link_param(params, "integrity").filter(|v| !pyro_webapi::sri::is_empty(v)).map(str::to_owned),
+        };
+        if !out.contains(&link) {
+            out.push(link);
         }
     }
     out
@@ -197,6 +290,18 @@ impl Preloads {
         if self.module_options.len() < MAX_MODULE_OPTIONS {
             self.module_options.entry(key).or_insert(options);
         }
+    }
+
+    /// Notes that the classic script requested at `request` was answered at `response`.
+    pub(crate) fn note_script_response(&mut self, request: &str, response: &str) {
+        if request != response && (self.script_responses.len() < MAX_MODULE_OPTIONS || self.script_responses.contains_key(request)) {
+            self.script_responses.insert(request.to_owned(), response.to_owned());
+        }
+    }
+
+    /// The URL the classic script requested at `request` was answered at, when it differs.
+    pub(crate) fn script_response_url(&self, request: &str) -> Option<String> {
+        self.script_responses.get(request).cloned()
     }
 
     /// HTML "fetch a single module script": a module response's `Referrer-Policy` becomes the
@@ -354,11 +459,12 @@ impl Browser {
             let dictionary = rel.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case("compression-dictionary"));
             (connected && (module || preload || prefetch || dictionary))
                 .then(|| {
-                    // An image preload's source set chooses its URL (the first candidate here: one
-                    // density); no other link fetches from `imagesrcset`.
+                    // An image preload's source set chooses its URL as an `<img>`'s would (`imagesizes`
+                    // the source size, the viewport's pixel ratio the density); no other link fetches
+                    // from `imagesrcset`.
                     let image_preload =
                         preload && !module && attr("as").is_some_and(|a| a.eq_ignore_ascii_case("image"));
-                    let srcset = attr("imagesrcset").filter(|_| image_preload).and_then(|s| first_srcset_url(&s));
+                    let srcset = attr("imagesrcset").filter(|_| image_preload).and_then(|s| image_source(&s, attr("imagesizes").as_deref(), &bindings.viewport()));
                     let href = srcset.or_else(|| attr("href")).filter(|v| !v.trim().is_empty())?;
                     let base = crate::loader::node_base_url(&dom, node).unwrap_or_else(|| frame.base_url.clone());
                     let url = url::Url::parse(&base).ok()?.join(href.trim()).ok()?.to_string();
@@ -446,33 +552,7 @@ impl Browser {
         let cors = module || crossorigin.is_some();
         let finish = move |b: &mut Browser, result: Result<crate::Resource, String>| {
             let _hold = hold;
-            let result = match result {
-                Ok(r) if (200..300).contains(&r.status) => {
-                    // SRI: a mismatching (or opaque) response is a network error.
-                    let origin = b.doc(page).map(|p| p.main_frame.origin.clone()).unwrap_or_default();
-                    match crate::loader::integrity_error(&r, integrity.as_deref(), cors, &origin) {
-                        Some(e) => {
-                            b.report_console_error(page, &e);
-                            Err(e)
-                        }
-                        // A modulepreload is a JavaScript module script:
-                        // strict MIME check, UTF-8 whatever the charset.
-                        None if module => {
-                            match pyro_webapi::module_script::mime_error(
-                                pyro_js::ModuleType::JavaScript,
-                                &r.mime,
-                                &r.url,
-                            ) {
-                                Some(e) => Err(e),
-                                None => Ok(pyro_webapi::module_script::utf8_decode(&r.body)),
-                            }
-                        }
-                        None => Ok(r.text()),
-                    }
-                }
-                Ok(r) => Err(format!("HTTP {} for {}", r.status, r.url)),
-                Err(e) => Err(e),
-            };
+            let result = preload_outcome(b, page, result, integrity.as_deref(), cors, module);
             if bindings.is_disposed() || bindings.document() != doc_id {
                 return;
             }
@@ -490,6 +570,7 @@ impl Browser {
         let mut request = FetchRequest {
             csp: None,
             required_csp: None,
+            purpose: None,
             parser_priority: false,
             credentials: None,
             post: None,
@@ -504,6 +585,7 @@ impl Browser {
             initiator: Some(pyro_webapi::resource_timing::Initiator::Link),
             module: None,
             part: None,
+            accept_signature: None,
         };
         // CSP for the preload's destination, with the link's nonce.
         let Some(finish) = self.element_csp_check(page, &mut request, node, Box::new(finish)) else { return };
@@ -536,6 +618,7 @@ fn dictionary_request(
     FetchRequest {
         csp: None,
         required_csp: None,
+        purpose: None,
         parser_priority: false,
         credentials: None,
         post: None,
@@ -550,13 +633,48 @@ fn dictionary_request(
         initiator: Some(pyro_webapi::resource_timing::Initiator::Link),
         module: None,
         part: None,
+        accept_signature: None,
     }
 }
 
-/// The URL of an `imagesrcset`'s first image candidate.
-fn first_srcset_url(srcset: &str) -> Option<String> {
-    let first = srcset.split(',').map(str::trim).find(|c| !c.is_empty())?;
-    first.split_ascii_whitespace().next().map(str::to_owned)
+/// The URL (as written) an `imagesrcset` with `imagesizes` selects for `viewport`, HTML's "select an
+/// image source".
+fn image_source(srcset: &str, sizes: Option<&str>, viewport: &pyro_dom::media::Viewport) -> Option<String> {
+    let candidates = pyro_dom::picture::parse_srcset(srcset, pyro_dom::picture::source_size(sizes, viewport));
+    pyro_dom::picture::pick_candidate(&candidates, viewport.device_scale_factor).map(|c| c.url.clone())
+}
+
+/// What a preload's response gives its waiter: SRI (a mismatching or opaque response is a network
+/// error, reported to the console), a modulepreload's strict MIME check and UTF-8 decoding, else the
+/// text.
+fn preload_outcome(
+    b: &mut Browser,
+    page: FrameKey,
+    result: Result<crate::Resource, String>,
+    integrity: Option<&str>,
+    cors: bool,
+    module: bool,
+) -> Result<String, String> {
+    match result {
+        Ok(r) if (200..300).contains(&r.status) => {
+            let origin = b.doc(page).map(|p| p.main_frame.origin.clone()).unwrap_or_default();
+            match crate::loader::integrity_error(&r, integrity, cors, &origin) {
+                Some(e) => {
+                    b.report_console_error(page, &e);
+                    Err(e)
+                }
+                // A modulepreload is a JavaScript module script: strict MIME check, UTF-8 whatever
+                // the charset.
+                None if module => match pyro_webapi::module_script::mime_error(pyro_js::ModuleType::JavaScript, &r.mime, &r.url) {
+                    Some(e) => Err(e),
+                    None => Ok(pyro_webapi::module_script::utf8_decode(&r.body)),
+                },
+                None => Ok(r.text()),
+            }
+        }
+        Ok(r) => Err(format!("HTTP {} for {}", r.status, r.url)),
+        Err(e) => Err(e),
+    }
 }
 
 impl Browser {
@@ -590,6 +708,169 @@ impl Browser {
                 cancel.disarm();
             }
         });
+    }
+
+    /// The document's `Link` headers with `rel=preload`, `modulepreload` or `prefetch`
+    /// ([`link_header_fetches`]): each is fetched at once, as its `<link>` would be (its `media`
+    /// against the document's viewport, `imagesrcset` choosing an image, `integrity` and
+    /// `crossorigin` as on the element), under the document's CSP and `Connection-Allowlist`
+    /// (checked by the loader as it is for any request the document makes that no element
+    /// checked). They share the document's preload state with the elements: a header modulepreload
+    /// is the module-map entry a later `<link rel=modulepreload>` or `import()` takes, a header
+    /// prefetch the one a `<link rel=prefetch>` joins. A header preload (as a `<link>`'s) fills
+    /// the HTTP cache the later element's request reads.
+    pub(crate) fn link_headers(&mut self, page: FrameKey, links: Vec<LinkFetch>) {
+        let Some(frame) = self.doc(page).map(|d| d.main_frame.clone()) else { return };
+        let Some(bindings) = frame.page_dom.clone() else { return };
+        let Some(resource_loader) = self.loader_for(page) else { return };
+        let viewport = bindings.viewport();
+        for link in links.into_iter().take(MAX_PRELOADS) {
+            // `media`: a link whose query does not match the viewport is not fetched.
+            if link.media.as_deref().is_some_and(|m| !m.trim().is_empty() && !pyro_dom::media::matches(m, &viewport)) {
+                continue;
+            }
+            let target = link
+                .srcset
+                .as_deref()
+                .and_then(|srcset| image_source(srcset, link.sizes.as_deref(), &viewport))
+                .or_else(|| link.href.clone());
+            let Some(url) = target
+                .and_then(|t| url::Url::parse(&link.base).ok()?.join(t.trim()).ok())
+                .map(|u| u.to_string())
+            else {
+                continue;
+            };
+            match link.kind {
+                ResourceKind::Prefetch => self.prefetch_header(page, &frame, url, link.crossorigin),
+                ResourceKind::ModuleScript => {
+                    let Some(finish) = self.module_header(page, &frame, &url, link.integrity) else { continue };
+                    self.fetch_header(page, &frame, &resource_loader, url, ResourceKind::ModuleScript, link.crossorigin, finish);
+                }
+                kind => {
+                    let cors = link.crossorigin.is_some();
+                    let integrity = link.integrity;
+                    let finish = move |b: &mut Browser, result: Result<crate::Resource, String>| {
+                        // A failed integrity check is reported to the console, as the element's.
+                        let _ = preload_outcome(b, page, result, integrity.as_deref(), cors, false);
+                    };
+                    self.fetch_header(page, &frame, &resource_loader, url, kind, link.crossorigin, Box::new(finish));
+                }
+            }
+        }
+    }
+
+    /// Starts a header link's request (the document's loader checks the CSP and allowlist).
+    #[allow(clippy::too_many_arguments)]
+    fn fetch_header(
+        &mut self,
+        page: FrameKey,
+        frame: &crate::Frame,
+        resource_loader: &Rc<dyn crate::loader::ResourceLoader>,
+        url: String,
+        kind: ResourceKind,
+        crossorigin: Option<String>,
+        finish: crate::loader::FetchDone,
+    ) {
+        let request = FetchRequest {
+            purpose: None,
+            csp: None,
+            required_csp: None,
+            parser_priority: false,
+            credentials: None,
+            post: None,
+            url,
+            kind,
+            page: page.page,
+            referrer: frame.navigation_referrer(),
+            referrer_policy: None,
+            frame_id: Some(frame.id.0.clone()),
+            loader_id: Some(frame.loader_id.0.clone()),
+            crossorigin,
+            initiator: Some(pyro_webapi::resource_timing::Initiator::Link),
+            module: None,
+            part: None,
+            accept_signature: None,
+        };
+        if let Some(cancel) = self.fetch_document_resource(page, resource_loader, request, finish) {
+            cancel.disarm();
+        }
+    }
+
+    /// A header modulepreload of `url`: the module-map entry (`Pending`) a link or an import of the
+    /// URL waits on, and the callback that fills it. `None` when the document already fetched (or
+    /// is fetching) the URL.
+    fn module_header(
+        &mut self,
+        page: FrameKey,
+        frame: &crate::Frame,
+        url: &str,
+        integrity: Option<String>,
+    ) -> Option<crate::loader::FetchDone> {
+        {
+            let mut doc = self.doc_mut(page)?;
+            if doc.preloads.modules.contains_key(url) {
+                return None;
+            }
+            doc.preloads.modules.insert(url.to_owned(), ModuleEntry::Pending(Vec::new()));
+        }
+        let loader = frame.loader_id.clone();
+        let finish_url = url.to_owned();
+        Some(Box::new(move |b: &mut Browser, result: Result<crate::Resource, String>| {
+            // A module preload is a CORS request: SRI needs no opaque response check beyond it.
+            let result = preload_outcome(b, page, result, integrity.as_deref(), true, true);
+            if b.doc(page).is_none_or(|d| d.main_frame.loader_id != loader) {
+                return;
+            }
+            b.module_preloaded(page, &finish_url, result);
+        }))
+    }
+
+    /// A header prefetch of `url`: the document's prefetch entry for the URL (a `<link rel=prefetch>`
+    /// of it joins that fetch's outcome), one fetch per URL.
+    fn prefetch_header(&mut self, page: FrameKey, frame: &crate::Frame, url: String, crossorigin: Option<String>) {
+        {
+            let Some(mut doc) = self.doc_mut(page) else { return };
+            let prefetches = &mut doc.preloads.prefetches;
+            if prefetches.contains_key(&url) || prefetches.len() >= MAX_PRELOADS {
+                return;
+            }
+            prefetches.insert(url.clone(), PrefetchEntry::Pending(Vec::new()));
+        }
+        // Mixed content, as `prefetch_link`'s: a secure document does not prefetch an insecure URL.
+        let blocked = frame.origin.starts_with("https:")
+            && pyro_net::Url::parse(&url).is_ok_and(|u| !pyro_net::secure_context::is_potentially_trustworthy_url(&u));
+        let (loader, finish_url) = (frame.loader_id.clone(), url.clone());
+        let finish = move |b: &mut Browser, result: Result<crate::Resource, String>| {
+            let ok = result.is_ok();
+            let waiters = match b.doc_mut(page) {
+                Some(mut doc) if doc.main_frame.loader_id == loader => match doc.preloads.prefetches.remove(&finish_url) {
+                    Some(PrefetchEntry::Pending(waiters)) => {
+                        if ok {
+                            doc.preloads.prefetches.insert(finish_url.clone(), PrefetchEntry::Done);
+                        }
+                        waiters
+                    }
+                    Some(PrefetchEntry::Done) => {
+                        doc.preloads.prefetches.insert(finish_url.clone(), PrefetchEntry::Done);
+                        Vec::new()
+                    }
+                    None => Vec::new(),
+                },
+                _ => Vec::new(),
+            };
+            for waiter in waiters {
+                waiter(b, ok);
+            }
+        };
+        if blocked {
+            self.scheduler().post(TaskSource::Networking, move |b| finish(b, Err("net::ERR_BLOCKED_BY_CLIENT".into())));
+            return;
+        }
+        let Some(resource_loader) = self.loader_for(page) else {
+            self.scheduler().post(TaskSource::Networking, move |b| finish(b, Err("no resource loader".into())));
+            return;
+        };
+        self.fetch_header(page, frame, &resource_loader, url, ResourceKind::Prefetch, crossorigin, Box::new(finish));
     }
 
     /// The document's `Link` headers with `rel=compression-dictionary`: each is fetched once the
@@ -752,6 +1033,7 @@ impl Browser {
         let mut request = FetchRequest {
             csp: None,
             required_csp: None,
+            purpose: None,
             // Low priority: never ahead of the parser's requests.
             parser_priority: false,
             credentials: None,
@@ -767,6 +1049,7 @@ impl Browser {
             initiator: Some(pyro_webapi::resource_timing::Initiator::Link),
             module: None,
             part: None,
+            accept_signature: None,
         };
         // CSP: default-src or any fetch directive (`RequestDest::Prefetch`), with the link's
         // nonce.
@@ -780,7 +1063,8 @@ impl Browser {
 
 #[cfg(test)]
 mod tests {
-    use super::InlineNonce;
+    use super::{link_header_fetches, InlineNonce};
+    use crate::ResourceKind;
 
     #[test]
     fn the_inline_nonce_is_the_one_every_nonced_inline_script_had() {
@@ -799,5 +1083,22 @@ mod tests {
         assert_eq!(nonce.get(), None);
         nonce.note("abc");
         assert_eq!(nonce.get(), None);
+    }
+
+    #[test]
+    fn link_headers_follow_the_link_element_rules() {
+        let base = url::Url::parse("https://example.test/dir/page").unwrap();
+        let header = "</a.js>; rel=preload; as=script; integrity=\"sha256-x\", </nope>; rel=preload, </bad>; rel=preload; as=bogus, \
+                      </f.woff2>; rel=preload; as=font; crossorigin, </m.js>; rel=modulepreload; media=\"(min-width: 10px)\", \
+                      <>; rel=preload; as=image; imagesrcset=\"i1.png 1x, i2.png 2x\", </a.js>; rel=preload; as=script; integrity=\"sha256-x\"";
+        let links = link_header_fetches(std::iter::once(header), &base);
+        let kinds: Vec<_> = links.iter().map(|l| l.kind).collect();
+        // The preloads without an `as` (or an unknown one) and the repeated one are dropped.
+        assert_eq!(kinds, [ResourceKind::Script, ResourceKind::Font, ResourceKind::ModuleScript, ResourceKind::Image]);
+        assert_eq!(links[0].integrity.as_deref(), Some("sha256-x"));
+        assert_eq!(links[1].crossorigin.as_deref(), Some(""));
+        assert_eq!(links[2].media.as_deref(), Some("(min-width: 10px)"));
+        assert_eq!(links[3].href, None);
+        assert_eq!(links[3].srcset.as_deref(), Some("i1.png 1x, i2.png 2x"));
     }
 }

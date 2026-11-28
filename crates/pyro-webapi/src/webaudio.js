@@ -9,10 +9,14 @@
 // AudioParams compute their automation (and connected inputs) per sample
 // (a-rate) or per quantum (k-rate). An OfflineAudioContext renders when
 // startRendering() runs; a real-time AudioContext has no output device, so
-// it only runs its clock and ends its sources on time.
+// it runs its clock, ends its sources on time and computes the quanta the
+// clock passed only for a worklet node or script processor (on a timer) and,
+// for an analyser, when it is read (the graph is caught up to the clock then;
+// nothing runs while it is not read). Falling more than a bound behind the
+// clock skips ahead. The destination result is dropped.
 (natives => {
   'use strict';
-  const { decode, activated, timer, clearTimer: clearClock, audioWorklet: makeAudioWorklet, secureContext } = natives;
+  const { decode, activated, timer, clearTimer: clearClock, audioWorklet: makeAudioWorklet, secureContext, mediaBlocked, fullyActive, foreignOutputTimestamp } = natives;
   const apply = Reflect.apply;
   const ET = EventTarget;
   const dispatch = ET.prototype.dispatchEvent;
@@ -479,6 +483,8 @@
   // The output of `node` (state) for quantum q at frame f0.
   function pull(n, q, f0, output = 0) {
     const bus = renderNode(n, q, f0);
+    // A worklet node has a bus of its own per output port.
+    if (n.outputPorts) return n.outputPorts[output] ?? silentBus(n.blockSize);
     // A splitter exposes each discrete input channel as its own mono output port.
     return n.splitChannels ? (bus[output] ? [bus[output]] : silentBus(n.blockSize)) : bus;
   }
@@ -550,7 +556,7 @@
         throw new DE('This node supports only explicit or clamped-max channel count.', 'NotSupportedError');
       }
       if (n.fixedMode && mode !== n.mode) {
-        throw new DE(`Failed to set the 'channelCountMode' property on 'AudioNode': ChannelCountMode cannot be changed from '${n.mode}' to '${mode}'`, 'InvalidStateError');
+        throw new DE(`Failed to set the 'channelCountMode' property on 'AudioNode': ChannelCountMode cannot be changed from '${n.mode}' to '${mode}'`, n.modeError ?? 'InvalidStateError');
       }
       n.mode = mode;
     }
@@ -962,6 +968,10 @@
   }
   function readAnalyser(self, array, frequency, bytes) {
     const state = analyserOf(self);
+    // A real-time context computes nothing for an analyser nobody reads: the graph is caught up to the
+    // clock now, only as far back as the history holds.
+    const c = state.ctx;
+    if (c.catchUp && c.pumpOn) c.catchUp(c.currentFrames(), 600, state.history.length + c.quantum);
     const type = bytes ? 'Uint8Array' : 'Float32Array';
     if (apply(arrayKind, array, []) !== type) throw new TypeErrorC(`Expected a ${type}`);
     const buffer = apply(arrayBufferOf, array, []);
@@ -982,11 +992,14 @@
       const { fftSize = 2048, maxDecibels = -30, minDecibels = -100, smoothingTimeConstant = 0.8 } = opts;
       const high = finite(maxDecibels, 'construct', 'AnalyserNode', 'double'), low = finite(minDecibels, 'construct', 'AnalyserNode', 'double');
       if (low >= high) throw new DE('Invalid decibel range.', 'IndexSizeError');
-      const state = { history: new F32(32768), cursor: 0, low, high };
+      const state = { history: new F32(32768), cursor: 0, low, high, ctx: ctxOf(context) };
       analysers.set(this, state);
       this.fftSize = fftSize;
       this.smoothingTimeConstant = smoothingTimeConstant;
-      (ctxOf(context).analyserNodes ??= new Set()).add(new WeakRefC(node));
+      const analysed = ctxOf(context);
+      (analysed.analyserNodes ??= new Set()).add(new WeakRefC(node));
+      // A running real-time context computes samples for it.
+      if (analysed.syncPump) analysed.syncPump();
       node.process = (frame, quantum) => {
         const bus = input(node, quantum, frame) ?? silentBus(node.blockSize);
         const mono = new F32(node.blockSize);
@@ -1749,6 +1762,8 @@
     if (t < 0) throw new RangeErrorC(`Failed to execute 'start' on '${iface}': The start time provided (${t}) is less than the minimum bound (0).`);
     n.start = t;
     const c = ctxOf(n.ctx);
+    // A start time in the past plays from the next quantum on.
+    n.calledAt = c.time();
     c.sources.add(n);
     c.scheduleEnds();
     return n;
@@ -1799,8 +1814,8 @@
       }
       if (v !== null) n.bufferSet = true;
       n.buffer = v;
-      // A buffer set after start() is acquired now.
-      if (n.start >= 0) n.data = v === null ? null : acquire(v);
+      // A buffer set after start() is acquired now, unless the source already ended for having none.
+      if (n.start >= 0 && !n.ended) n.data = v === null ? null : acquire(v);
       ctxOf(n.ctx).scheduleEnds();
     }
     get playbackRate() { return nodeOf(this).playbackRate; }
@@ -1833,6 +1848,12 @@
     const c = ctxOf(n.ctx);
     const rate = c.rate;
     const data = n.data;
+    // Started with no buffer (still none when it first renders): it is finished at once, whatever
+    // its start time, and a buffer set later is not heard.
+    if (!data && n.start >= 0 && !n.ended) {
+      end(n);
+      return silentBus(n.blockSize);
+    }
     const range = activeRange(n, rate, f0);
     if (!range || !data) {
       if (range && range[2]) end(n);
@@ -1846,8 +1867,10 @@
     const step = pr * pow(2, dt / 1200) * data.rate / rate;
     const len = data.length;
     let loopStart = 0, loopEnd = len;
-    if (n.loop && n.loopStart >= 0 && n.loopEnd > 0 && n.loopStart < n.loopEnd) {
-      loopStart = n.loopStart * data.rate;
+    // A negative loopStart is clamped to 0 (Chrome; the spec would play the whole buffer); a loopEnd
+    // that is not positive, or not after the start, plays the whole buffer.
+    if (n.loop && n.loopEnd > 0 && max(n.loopStart, 0) < n.loopEnd) {
+      loopStart = max(n.loopStart, 0) * data.rate;
       loopEnd = min(n.loopEnd * data.rate, len);
     }
     if (n.pos === undefined) {
@@ -2037,12 +2060,365 @@
   }
   webidl(ConstantSourceNode, 'ConstantSourceNode');
 
+  // ---- AudioWorkletNode -----------------------------------------------------------------------------
+  // The node's processor lives in the context's AudioWorkletGlobalScope realm (audio_worklet.rs,
+  // audio_worklet_global.js); `process()` runs there once per render quantum, with copies of the
+  // quantum's input channels and fresh output channels the node reads back. Messages travel over a
+  // MessageChannel of this realm whose far end is bridged to the processor's own `port`.
+  const paramMaps = new WeakMap();
+  function paramMapOf(self) {
+    const m = paramMaps.get(self);
+    if (!m) throw invocation();
+    return m;
+  }
+  class AudioParamMap {
+    constructor(token, entries) {
+      if (token !== secret) throw illegal();
+      paramMaps.set(this, new Map(entries));
+    }
+    get size() { return paramMapOf(this).size; }
+    get(key) {
+      const m = paramMapOf(this);
+      if (arguments.length < 1) throw new TypeErrorC("Failed to execute 'get' on 'AudioParamMap': 1 argument required, but only 0 present.");
+      return m.get(`${key}`);
+    }
+    has(key) {
+      const m = paramMapOf(this);
+      if (arguments.length < 1) throw new TypeErrorC("Failed to execute 'has' on 'AudioParamMap': 1 argument required, but only 0 present.");
+      return m.has(`${key}`);
+    }
+    entries() { return paramMapOf(this).entries(); }
+    keys() { return paramMapOf(this).keys(); }
+    values() { return paramMapOf(this).values(); }
+    forEach(callback, thisArg) {
+      const m = paramMapOf(this);
+      if (arguments.length < 1) throw new TypeErrorC("Failed to execute 'forEach' on 'AudioParamMap': 1 argument required, but only 0 present.");
+      if (typeof callback !== 'function') throw new TypeErrorC("Failed to execute 'forEach' on 'AudioParamMap': parameter 1 is not of type 'Function'.");
+      for (const [key, value] of m) apply(callback, thisArg, [value, key, this]);
+    }
+  }
+  AudioParamMap.prototype[Symbol.iterator] = AudioParamMap.prototype.entries;
+  webidl(AudioParamMap, 'AudioParamMap');
+
+  const ErrorEventC = typeof ErrorEvent === 'function' ? ErrorEvent : Ev;
+  const portPost = typeof MessagePort === 'function' ? MessagePort.prototype.postMessage : null;
+  // Registers a node the render loop pulls every quantum, whether or not anything listens to it
+  // (AudioWorkletNode and ScriptProcessorNode run for their side effects).
+  function addPuller(c, n) {
+    (c.pulled ??= new Set()).add(n);
+    if (c.syncPump) c.syncPump();
+  }
+  // The node's processor failed: `processorerror` is queued as an ErrorEvent, and the node outputs
+  // silence from now on.
+  function processorError(n, error) {
+    n.worklet.dead = true;
+    n.outputPorts = null;
+    const c = ctxOf(n.ctx);
+    if (c.pulled) c.pulled.delete(n);
+    let message = '', filename = '', lineno = 0, colno = 0;
+    try {
+      const object = error !== null && (typeof error === 'object' || typeof error === 'function');
+      message = object && typeof error.message === 'string' ? error.message : `${error}`;
+      if (object) {
+        if (typeof error.sourceURL === 'string') filename = error.sourceURL;
+        if (typeof error.line === 'number') lineno = error.line;
+        if (typeof error.column === 'number') colno = error.column;
+      }
+    } catch {}
+    if (message === '') message = 'The AudioWorkletProcessor failed.';
+    setTimer(() => { apply(dispatch, n.self, [new ErrorEventC('processorerror', { message, filename, lineno, colno, error })]); }, 0);
+  }
+  function processWorklet(n, f0, q) {
+    const size = n.blockSize;
+    const w = n.worklet;
+    const rate = ctxOf(n.ctx).rate;
+    // Every input is pulled (the nodes feeding it keep their own state), an input with no active
+    // connection is an empty array of channels.
+    const inputs = [];
+    let anyActive = false;
+    for (let port = 0; port < n.numberOfInputs; port++) {
+      const sources = n.numberOfInputs > 1 ? n.inputs.filter(s => s.input === port) : n.inputs;
+      const bus = input(n, q, f0, port);
+      const active = bus !== null && sources.some(s => s.node.q === q && s.node.active);
+      inputs.push(active ? bus : []);
+      if (active) anyActive = true;
+    }
+    const silence = () => {
+      n.outputPorts = Array.from({ length: n.numberOfOutputs }, () => silentBus(size));
+      return n.outputPorts[0] ?? silentBus(size);
+    };
+    // A processor that returned false runs again only while an input is active.
+    if (w.dead || (!w.processing && !anyActive)) return silence();
+    const counts = n.outputChannelCount ?? (n.numberOfInputs === 1 && n.numberOfOutputs === 1 ? [max(1, inputs[0].length)] : new Array(n.numberOfOutputs).fill(1));
+    const names = [], values = [];
+    for (const [name, p] of n.workletParams) {
+      let v = paramValues(p, f0, rate, q);
+      if (v.length > 1) {
+        // k-rate, and a-rate that holds one value over the quantum without inputs: one sample.
+        let constant = p.rate === 'k-rate';
+        if (!constant && !p.inputs.length) {
+          constant = true;
+          for (let i = 1; i < v.length; i++) if (v[i] !== v[0]) { constant = false; break; }
+        }
+        if (constant) v = v.subarray(0, 1);
+      }
+      names.push(name);
+      values.push(v);
+    }
+    const r = w.host.process(w.handle, f0, inputs, counts, names, values);
+    if (!r.ok) {
+      processorError(n, r.error);
+      return silence();
+    }
+    w.processing = r.active;
+    n.processingFrame = f0;
+    n.outputPorts = counts.map((count, port) => {
+      const bus = [];
+      const produced = r.outputs[port];
+      for (let ch = 0; ch < count; ch++) {
+        const channel = new F32(size);
+        const source = produced === undefined ? undefined : produced[ch];
+        // A channel whose buffer the processor transferred away is silent.
+        if (source !== undefined && source.length === size) channel.set(source);
+        bus.push(channel);
+      }
+      return bus;
+    });
+    return n.outputPorts[0] ?? silentBus(size);
+  }
+  function workletOptions(options) {
+    const o = options;
+    const inputs = o.numberOfInputs === undefined ? 1 : ulong(o.numberOfInputs);
+    const outputs = o.numberOfOutputs === undefined ? 1 : ulong(o.numberOfOutputs);
+    let counts = null;
+    if (o.outputChannelCount !== undefined) {
+      if (o.outputChannelCount === null || typeof o.outputChannelCount[Symbol.iterator] !== 'function') {
+        throw new TypeErrorC("Failed to construct 'AudioWorkletNode': The provided value cannot be converted to a sequence.");
+      }
+      counts = Array.from(o.outputChannelCount, ulong);
+    }
+    let data = null;
+    if (o.parameterData !== undefined) {
+      const given = o.parameterData;
+      if (given === null || (typeof given !== 'object' && typeof given !== 'function')) {
+        throw new TypeErrorC("Failed to construct 'AudioWorkletNode': The provided value is not of type 'record'.");
+      }
+      data = {};
+      for (const key of Object.keys(given)) data[key] = finite(given[key], 'construct', 'AudioWorkletNode', 'double');
+    }
+    let processorOptions;
+    if (o.processorOptions !== undefined) {
+      if (o.processorOptions === null || (typeof o.processorOptions !== 'object' && typeof o.processorOptions !== 'function')) {
+        throw new TypeErrorC("Failed to construct 'AudioWorkletNode': Failed to read the 'processorOptions' property from 'AudioWorkletNodeOptions': The provided value is not of type 'object'.");
+      }
+      processorOptions = o.processorOptions;
+    }
+    return { inputs, outputs, counts, data, processorOptions };
+  }
+  class AudioWorkletNode extends AudioNode {
+    constructor(context, name, options = undefined) {
+      if (arguments.length < 2) throw new TypeErrorC(`Failed to construct 'AudioWorkletNode': 2 arguments required, but only ${arguments.length} present.`);
+      contextArg(context, 'AudioWorkletNode');
+      const nodeName = `${name}`;
+      const inherited = readNodeOptions(options, 'AudioWorkletNode');
+      const { inputs, outputs, counts, data, processorOptions } = workletOptions(options ?? {});
+      const c = ctxOf(context);
+      const host = c.workletHost === undefined ? undefined : c.workletHost();
+      const descriptors = host === undefined ? undefined : host.lookup(nodeName);
+      if (descriptors === undefined) {
+        throw new DE(`Failed to construct 'AudioWorkletNode': The node name '${nodeName}' is not defined in AudioWorkletGlobalScope.`, 'InvalidStateError');
+      }
+      if (inputs === 0 && outputs === 0) {
+        throw new DE("Failed to construct 'AudioWorkletNode': Number of inputs and number of outputs cannot be both zero.", 'NotSupportedError');
+      }
+      if (inputs > MAX_CHANNELS || outputs > MAX_CHANNELS) {
+        throw new DE(`Failed to construct 'AudioWorkletNode': The number of inputs (${inputs}) or outputs (${outputs}) exceeds the maximum of ${MAX_CHANNELS}.`, 'NotSupportedError');
+      }
+      if (counts !== null) {
+        if (counts.length !== outputs) {
+          throw new DE(`Failed to construct 'AudioWorkletNode': Length of specified outputChannelCount (${counts.length}) does not match the given number of outputs (${outputs}).`, 'IndexSizeError');
+        }
+        for (const count of counts) {
+          if (count < 1 || count > MAX_CHANNELS) {
+            throw new DE(`Failed to construct 'AudioWorkletNode': Channel count (${count}) in outputChannelCount is outside the range [1, ${MAX_CHANNELS}].`, 'NotSupportedError');
+          }
+        }
+      }
+      // StructuredSerialize of the options (a DataCloneError for what cannot be cloned).
+      const record = { numberOfInputs: inputs, numberOfOutputs: outputs };
+      if (counts !== null) record.outputChannelCount = counts;
+      if (data !== null) record.parameterData = data;
+      if (processorOptions !== undefined) record.processorOptions = processorOptions;
+      const serialized = structuredCloneC === null ? record : structuredCloneC(record);
+      super(secret, context, { numberOfInputs: inputs, numberOfOutputs: outputs });
+      const n = nodeOf(this);
+      applyNodeOptions(this, inherited);
+      n.outputChannelCount = counts;
+      const entries = [];
+      n.workletParams = [];
+      for (const d of descriptors) {
+        const param = nodeParam(n, d.defaultValue, d.minValue, d.maxValue, d.automationRate);
+        const state = params.get(param);
+        if (data !== null && Object.prototype.hasOwnProperty.call(data, d.name)) setParamValue(state, fround(data[d.name]), 0);
+        n.workletParams.push([d.name, state]);
+        entries.push([d.name, param]);
+      }
+      n.parameters = new AudioParamMap(secret, entries);
+      // The global's `currentFrame` / `currentTime` outside a render are the context's.
+      host.setClock(() => c.currentFrames());
+      const channel = new MessageChannel();
+      n.port = channel.port1;
+      const far = channel.port2;
+      const send = (message, transfer) => { apply(portPost, far, transfer === undefined ? [message] : [message, transfer]); };
+      const created = host.construct(nodeName, serialized, send, () => { far.close(); });
+      n.deliver = created.deliver;
+      far.onmessage = (event) => { n.deliver(event.data); };
+      n.worklet = { host, handle: created.handle, processing: true, dead: false };
+      // Outputs and inputs follow what the processor reports; its tail is its own business.
+      c.trackConvolverActivity = true;
+      n.process = (f0, q) => processWorklet(n, f0, q);
+      addPuller(c, n);
+      if (!created.ok) processorError(n, created.error);
+    }
+    get parameters() { return nodeOf(this).parameters; }
+    get port() { return nodeOf(this).port; }
+  }
+  handler(AudioWorkletNode, 'processorerror');
+  webidl(AudioWorkletNode, 'AudioWorkletNode');
+
+  // ---- ScriptProcessorNode (deprecated) ---------------------------------------------------------------
+  // Input is collected into a buffer of `bufferSize` frames; each time it fills, `audioprocess` runs
+  // with it and an empty output buffer. What the handler writes plays during the buffer after the
+  // next one (two buffers of latency, as in Chrome), and silence plays until then.
+  class AudioProcessingEvent extends Ev {
+    #playbackTime;
+    #inputBuffer;
+    #outputBuffer;
+    constructor(type, eventInitDict) {
+      if (arguments.length < 2) {
+        throw new TypeErrorC(`Failed to construct 'AudioProcessingEvent': 2 arguments required, but only ${arguments.length} present.`);
+      }
+      const init = eventInitDict;
+      if (init === null || typeof init !== 'object') {
+        throw new TypeErrorC("Failed to construct 'AudioProcessingEvent': The provided value is not of type 'AudioProcessingEventInit'.");
+      }
+      for (const member of ['inputBuffer', 'outputBuffer', 'playbackTime']) {
+        if (init[member] === undefined) {
+          throw new TypeErrorC(`Failed to construct 'AudioProcessingEvent': Failed to read the '${member}' property from 'AudioProcessingEventInit': Required member is undefined.`);
+        }
+      }
+      for (const member of ['inputBuffer', 'outputBuffer']) {
+        if (!buffers.has(init[member])) {
+          throw new TypeErrorC(`Failed to construct 'AudioProcessingEvent': Failed to read the '${member}' property from 'AudioProcessingEventInit': The provided value is not of type 'AudioBuffer'.`);
+        }
+      }
+      const playbackTime = finite(init.playbackTime, 'construct', 'AudioProcessingEvent', 'double');
+      super(type, init);
+      this.#playbackTime = playbackTime;
+      this.#inputBuffer = init.inputBuffer;
+      this.#outputBuffer = init.outputBuffer;
+    }
+    get playbackTime() { return this.#playbackTime; }
+    get inputBuffer() { return this.#inputBuffer; }
+    get outputBuffer() { return this.#outputBuffer; }
+  }
+  webidl(AudioProcessingEvent, 'AudioProcessingEvent');
+
+  const SCRIPT_BUFFER_SIZES = [256, 512, 1024, 2048, 4096, 8192, 16384];
+  function processScript(n, f0, q) {
+    const s = n.script;
+    const size = n.blockSize;
+    const bus = input(n, q, f0);
+    const at = s.index;
+    for (let ch = 0; ch < s.inputChannels; ch++) {
+      if (bus && bus[ch]) s.input[ch].set(bus[ch].subarray(0, size), at);
+    }
+    const out = [];
+    for (let ch = 0; ch < s.outputChannels; ch++) {
+      const channel = new F32(size);
+      channel.set(s.output[s.current][ch].subarray(at, at + size));
+      out.push(channel);
+    }
+    s.index += size;
+    if (s.index >= s.bufferSize) {
+      const c = ctxOf(n.ctx);
+      const inputBuffer = makeBuffer(c.rate, s.input);
+      const outputData = [];
+      for (let ch = 0; ch < max(1, s.outputChannels); ch++) outputData.push(new F32(s.bufferSize));
+      const outputBuffer = makeBuffer(c.rate, outputData);
+      s.input = Array.from({ length: max(1, s.inputChannels) }, () => new F32(s.bufferSize));
+      s.index = 0;
+      // The buffer that plays out next time round is the one the handler fills now.
+      const filled = s.current;
+      s.current = 1 - s.current;
+      const event = new AudioProcessingEvent('audioprocess', { playbackTime: (f0 + size) / c.rate, inputBuffer, outputBuffer });
+      apply(dispatch, n.self, [event]);
+      s.output[filled] = outputData;
+    }
+    return s.outputChannels ? out : silentBus(size);
+  }
+  class ScriptProcessorNode extends AudioNode {
+    constructor(token, ctx, bufferSize, inputChannels, outputChannels) {
+      if (token !== secret) throw illegal();
+      super(secret, ctx, {
+        channelCount: inputChannels, mode: 'explicit', modeError: 'NotSupportedError', fixedMode: true,
+        checkCount(count) {
+          if (count !== inputChannels) {
+            throw new DE(`Failed to set the 'channelCount' property on 'AudioNode': channelCount cannot be changed from ${inputChannels} to ${count}`, 'NotSupportedError');
+          }
+        },
+      });
+      const n = nodeOf(this);
+      n.script = {
+        bufferSize, inputChannels, outputChannels, index: 0, current: 0,
+        input: Array.from({ length: max(1, inputChannels) }, () => new F32(bufferSize)),
+        output: [0, 1].map(() => Array.from({ length: max(1, outputChannels) }, () => new F32(bufferSize))),
+      };
+      n.process = (f0, q) => processScript(n, f0, q);
+      const c = ctxOf(ctx);
+      addPuller(c, n);
+    }
+    get bufferSize() { return nodeOf(this).script.bufferSize; }
+  }
+  handler(ScriptProcessorNode, 'audioprocess');
+  webidl(ScriptProcessorNode, 'ScriptProcessorNode');
+  function createScriptProcessor(context, bufferSize, inputChannels, outputChannels) {
+    const c = ctxOf(context);
+    const method = "Failed to execute 'createScriptProcessor' on 'BaseAudioContext'";
+    const inputs = ulong(inputChannels), outputs = ulong(outputChannels);
+    let size = ulong(bufferSize);
+    if (size === 0) size = c.offline ? 16384 : 512;
+    else if (!SCRIPT_BUFFER_SIZES.includes(size)) {
+      throw new DE(`${method}: buffer size (${size}) must be 0 or a power of two between 256 and 16384.`, 'IndexSizeError');
+    }
+    if (inputs === 0 && outputs === 0) throw new DE(`${method}: number of input channels and output channels cannot both be zero.`, 'IndexSizeError');
+    if (inputs > MAX_CHANNELS) throw new DE(`${method}: number of input channels (${inputs}) exceeds maximum (${MAX_CHANNELS}).`, 'IndexSizeError');
+    if (outputs > MAX_CHANNELS) throw new DE(`${method}: number of output channels (${outputs}) exceeds maximum (${MAX_CHANNELS}).`, 'IndexSizeError');
+    // The buffer is made of whole render quanta.
+    if (size % c.quantum !== 0) throw new DE(`${method}: buffer size (${size}) is not a multiple of the render quantum size (${c.quantum}).`, 'NotSupportedError');
+    return new ScriptProcessorNode(secret, context, size, inputs, outputs);
+  }
+
   // ---- Contexts ------------------------------------------------------------------
   const contexts = new WeakMap();
   function ctxOf(self) {
     const c = contexts.get(self);
     if (!c) throw invocation();
     return c;
+  }
+  // HTML "fully active": a context of a document that was replaced or whose frame was removed is
+  // closed, its constructors throw and its promise methods reject, all InvalidStateError.
+  function requireActive(iface) {
+    if (!fullyActive()) throw new DE(`Failed to construct '${iface}': The document is not fully active.`, 'InvalidStateError');
+  }
+  function rejectInactive(method, iface) {
+    return fullyActive() ? null : PromiseC.reject(new DE(`Failed to execute '${method}' on '${iface}': The document is not fully active.`, 'InvalidStateError'));
+  }
+  function closeIfDetached(c) {
+    if (c.state === 'closed' || fullyActive()) return;
+    if (c.timer !== undefined) { clearClock(c.timer); c.timer = undefined; }
+    if (c.pumpTimer !== undefined) { clearClock(c.pumpTimer); c.pumpTimer = undefined; }
+    c.state = 'closed';
   }
   function renderQuantum(hint) {
     if (typeof hint === 'number') return ulong(hint);
@@ -2073,11 +2449,18 @@
     // Its own AudioWorklet (paint_worklet.js, audio_worklet.rs), made on first use.
     get audioWorklet() {
       const c = ctxOf(this);
-      if (c.audioWorklet === undefined) c.audioWorklet = makeAudioWorklet(c.rate);
+      if (c.audioWorklet === undefined) {
+        // [the AudioWorklet, a function returning the worklet global's host once its realm exists]
+        const made = makeAudioWorklet(c.rate, c.quantum);
+        if (made !== undefined) {
+          c.audioWorklet = made[0];
+          c.workletHost = made[1];
+        }
+      }
       return c.audioWorklet;
     }
     get listener() { return contextListener(this); }
-    get state() { return ctxOf(this).state; }
+    get state() { const c = ctxOf(this); closeIfDetached(c); return c.state; }
     createBuffer(numberOfChannels, length, sampleRate) {
       ctxOf(this);
       if (arguments.length < 3) throw new TypeErrorC(`Failed to execute 'createBuffer' on 'BaseAudioContext': 3 arguments required, but only ${arguments.length} present.`);
@@ -2118,8 +2501,13 @@
       return new PeriodicWave(this, {real: cosine, imag: sine, disableNormalization: constraints?.disableNormalization});
     }
     createConstantSource() { return new ConstantSourceNode(this); }
+    createScriptProcessor(bufferSize = 0, numberOfInputChannels = 2, numberOfOutputChannels = 2) {
+      return createScriptProcessor(this, bufferSize, numberOfInputChannels, numberOfOutputChannels);
+    }
     decodeAudioData(audioData, successCallback, errorCallback) {
       const c = ctxOf(this);
+      const detached = rejectInactive('decodeAudioData', 'BaseAudioContext');
+      if (detached !== null) return detached;
       if (arguments.length < 1) {
         return PromiseC.reject(new TypeErrorC("Failed to execute 'decodeAudioData' on 'BaseAudioContext': 1 argument required, but only 0 present."));
       }
@@ -2155,10 +2543,12 @@
   handler(BaseAudioContext, 'statechange');
   webidl(BaseAudioContext, 'BaseAudioContext');
   if (!secureContext) delete BaseAudioContext.prototype.audioWorklet;
+  // The state changes now; `statechange` is a task of its own, after the promise of the call that
+  // caused the change settled (a suspend() right after resume() is two changes, seen in order).
   function setState(c, state) {
     if (c.state === state) return;
     c.state = state;
-    fire(c.self, 'statechange');
+    setTimer(() => { fire(c.self, 'statechange'); }, 0);
   }
   function flushEnded(c) {
     const ended = c.endedQueue;
@@ -2219,6 +2609,7 @@
   // A real-time context: no output device, a clock while running.
   class AudioContext extends BaseAudioContext {
     constructor(options) {
+      requireActive('AudioContext');
       const o = contextOptions(options, 'AudioContext');
       const latency = o.latencyHint;
       if (typeof latency === 'string' && !['interactive', 'balanced', 'playback'].includes(latency)) {
@@ -2243,16 +2634,58 @@
         const elapsed = (now() - c.started) / 1000 * c.rate;
         return c.frames + floor(elapsed / quantum) * quantum;
       };
+      // There is no output device: the graph is computed (so that script processors, worklets and
+      // analysers see real samples) for the quanta the clock has passed: on a timer while a worklet
+      // node or script processor exists (`c.pulled`), and up to the clock when an analyser is read
+      // (`readAnalyser`); the destination's result is dropped.
+      c.rendered = 0; // next frame to compute
+      c.pumpOn = false;
+      c.pumpTimer = undefined;
+      // Behind the clock by more than `bound` frames: skip ahead instead of computing them all.
+      c.catchUp = (target, limit, bound) => {
+        const floorFrame = floor((target - bound) / quantum) * quantum;
+        if (c.rendered < floorFrame) c.rendered = floorFrame;
+        c.graphEpoch = (c.graphEpoch ?? 0) + 1;
+        for (let done = 0; c.rendered <= target && done < limit; done++) {
+          renderBlock(c, c.rendered);
+          c.rendered += quantum;
+        }
+        flushEnded(c);
+      };
+      c.syncPump = () => {
+        const observed = c.state === 'running' && !!(c.pulled?.size || c.analyserNodes?.size);
+        // The graph computes from now on (sources end where they really stop, in the render).
+        if (observed && !c.pumpOn) { c.pumpOn = true; c.rendered = max(c.rendered, c.currentFrames()); }
+        // Only a node that runs for its side effects needs the timer; an analyser is caught up on a read.
+        if (!observed || !c.pulled?.size) {
+          if (c.pumpTimer !== undefined) { clearClock(c.pumpTimer); c.pumpTimer = undefined; }
+          return;
+        }
+        if (c.pumpTimer === undefined) {
+          c.pumpTimer = timer(max(1, quantum * 1000 / rate), () => {
+            c.pumpTimer = undefined;
+            if (c.state !== 'running') return;
+            // A node that throws does not stop the clock of the others.
+            try { c.catchUp(c.currentFrames(), 64, 2 * rate); } finally { c.syncPump(); }
+          });
+        }
+      };
       c.run = () => {
         if (c.state === 'running' || c.state === 'closed') return;
         c.started = now();
         setState(c, 'running');
         c.scheduleEnds();
+        c.syncPump();
       };
       c.halt = (state) => {
         if (!c.statsLocked) refreshDuration(c);
-        if (c.state === 'running') c.frames = c.currentFrames();
+        if (c.state === 'running') {
+          // What the clock has passed is computed before it stops.
+          if (c.pumpOn) c.catchUp(c.currentFrames(), 2048, 2 * c.rate);
+          c.frames = c.currentFrames();
+        }
         if (c.timer !== undefined) { clearClock(c.timer); c.timer = undefined; }
+        if (c.pumpTimer !== undefined) { clearClock(c.pumpTimer); c.pumpTimer = undefined; }
         setState(c, state);
       };
       // The sources' ends, on the clock.
@@ -2274,8 +2707,11 @@
           c.timer = timer(max(0, delay) + 1, () => { c.timer = undefined; c.scheduleEnds(); });
         }
       };
-      // Chrome's autoplay policy: a context made after a user gesture runs.
-      if (activated()) setTimer(() => c.run(), 0);
+      realtime.add(new WeakRefC(c));
+      // Chrome's autoplay policy: a context made after a user gesture runs; one whose frame is
+      // not rendered under a `media-playback-while-not-visible` policy that disables it is
+      // interrupted instead (and runs when the frame is rendered, `frameRendered`).
+      if (activated()) setTimer(() => { if (mediaBlocked()) c.halt('interrupted'); else c.run(); }, 0);
     }
     get baseLatency() {
       const c = ctxOf(this);
@@ -2288,12 +2724,29 @@
       return c.playbackStats ??= new AudioPlaybackStats(secret, c);
     }
     getOutputTimestamp() {
-      const c = ctxOf(this);
-      return { contextTime: c.time(), performanceTime: c.state === 'running' ? now() : 0 };
+      // A method of another realm's AudioContext works on a context of this one.
+      if (!contexts.has(this)) {
+        const foreign = foreignOutputTimestamp === undefined ? undefined : foreignOutputTimestamp(this);
+        if (foreign === undefined) throw invocation();
+        return { contextTime: foreign.contextTime, performanceTime: foreign.performanceTime };
+      }
+      const stamp = localOutputTimestamp(this);
+      if (stamp === undefined) throw invocation();
+      return stamp;
     }
     resume() {
       const c = ctxOf(this);
+      const detached = rejectInactive('resume', 'AudioContext');
+      if (detached !== null) return detached;
       if (c.state === 'closed') return PromiseC.reject(new DE("Failed to execute 'resume' on 'AudioContext': Cannot resume a context that has been closed.", 'InvalidStateError'));
+      // iframe-media-pausing: not rendered under a policy that disables it, the context is
+      // interrupted and the promise rejects.
+      if (mediaBlocked()) {
+        return new PromiseC((resolve, reject) => setTimer(() => {
+          if (c.state !== 'closed') c.halt('interrupted');
+          reject(new DE("Failed to execute 'resume' on 'AudioContext': Cannot resume a context whose frame is not visible.", 'InvalidStateError'));
+        }, 0));
+      }
       return new PromiseC((resolve) => {
         // Without a user gesture the promise waits for one (Chrome).
         if (!activated()) { c.pendingResumes.push(resolve); return; }
@@ -2308,26 +2761,50 @@
     }
     suspend() {
       const c = ctxOf(this);
+      const detached = rejectInactive('suspend', 'AudioContext');
+      if (detached !== null) return detached;
       if (c.state === 'closed') return PromiseC.reject(new DE("Failed to execute 'suspend' on 'AudioContext': Cannot suspend a context that has been closed.", 'InvalidStateError'));
       return new PromiseC((resolve) => setTimer(() => { if (c.state !== 'closed') c.halt('suspended'); resolve(); }, 0));
     }
     close() {
       const c = ctxOf(this);
+      const detached = rejectInactive('close', 'AudioContext');
+      if (detached !== null) return detached;
       if (c.state === 'closed') return PromiseC.reject(new DE("Failed to execute 'close' on 'AudioContext': Cannot close a context that is being closed or has already been closed.", 'InvalidStateError'));
       return new PromiseC((resolve) => setTimer(() => { c.halt('closed'); resolve(); }, 0));
     }
   }
   webidl(AudioContext, 'AudioContext');
+  function localOutputTimestamp(self) {
+    const c = contexts.get(self);
+    if (c === undefined || c.offline) return undefined;
+    return { contextTime: c.time(), performanceTime: c.state === 'running' ? now() : 0 };
+  }
+  // The real-time contexts of this realm (weakly), for `frameRendered`.
+  const realtime = new Set();
+  // The frame became not rendered (false) or rendered (true) while the document's policy
+  // disables `media-playback-while-not-visible` (webaudio.rs `frame_rendered_changed`): running
+  // contexts are interrupted, interrupted ones run again. A suspended context is left alone.
+  function frameRendered(rendered) {
+    for (const ref of realtime) {
+      const c = ref.deref();
+      if (c === undefined || c.state === 'closed') { realtime.delete(ref); continue; }
+      if (!rendered) { if (c.state === 'running') c.halt('interrupted'); }
+      else if (c.state === 'interrupted') c.run();
+    }
+  }
   // When a source of a running real-time context stops (context time).
   function sourceEnd(n, rate) {
     if (n.ended || n.start < 0) return Infinity;
+    // A context that computes its quanta (`c.pumpOn`) ends a source where it really stops, in the render.
+    if (ctxOf(n.ctx).pumpOn) return n.stop;
     let at = n.stop;
     const b = n.buffer && buffers.get(n.buffer);
     if (b && !n.loop) {
       const pr = params.get(n.playbackRate).value * pow(2, params.get(n.detune).value / 1200);
       if (pr > 0) {
         const remaining = min(n.duration === undefined ? Infinity : n.duration, max(0, b.length / b.rate - (n.offset || 0)));
-        at = min(at, n.start + remaining / pr);
+        at = min(at, max(n.start, n.calledAt ?? 0) + remaining / pr);
       }
     }
     return at;
@@ -2336,6 +2813,7 @@
   // An offline context renders its graph into a buffer.
   class OfflineAudioContext extends BaseAudioContext {
     constructor(numberOfChannels, length, sampleRate) {
+      requireActive('OfflineAudioContext');
       let channels, frames, rate, quantum = DEFAULT_QUANTUM;
       if (arguments.length === 1 && numberOfChannels !== null && typeof numberOfChannels === 'object') {
         const o = numberOfChannels;
@@ -2366,6 +2844,8 @@
     get length() { return ctxOf(this).length; }
     startRendering(chunkSize = null) {
       const c = ctxOf(this);
+      const detached = rejectInactive('startRendering', 'OfflineAudioContext');
+      if (detached !== null) return detached;
       return new PromiseC((resolve, reject) => {
         const size = chunkSize === null ? null : ulong(chunkSize);
         if (c.closing || c.state === 'closed' || c.committed === c.length) throw new DE('No further frames can be rendered.', 'InvalidStateError');
@@ -2385,6 +2865,8 @@
     }
     close() {
       const c = ctxOf(this);
+      const detached = rejectInactive('close', 'OfflineAudioContext');
+      if (detached !== null) return detached;
       if (c.closing || c.state === 'closed') return PromiseC.reject(new DE('Context is already closed.', 'InvalidStateError'));
       c.closing = true;
       return new PromiseC(resolve => {
@@ -2403,6 +2885,8 @@
     }
     resume() {
       const c = ctxOf(this);
+      const detached = rejectInactive('resume', 'OfflineAudioContext');
+      if (detached !== null) return detached;
       if (c.closing || c.state === 'closed') return PromiseC.reject(new DE("Failed to execute 'resume' on 'OfflineAudioContext': Cannot resume a context that has been closed.", 'InvalidStateError'));
       if (!c.rendering) return PromiseC.reject(new DE("Failed to execute 'resume' on 'OfflineAudioContext': Cannot resume a context that has not started.", 'InvalidStateError'));
       if (c.state === 'suspended') {
@@ -2414,6 +2898,8 @@
     }
     suspend(suspendTime) {
       const c = ctxOf(this);
+      const detached = rejectInactive('suspend', 'OfflineAudioContext');
+      if (detached !== null) return detached;
       if (arguments.length < 1) return PromiseC.reject(new TypeErrorC("Failed to execute 'suspend' on 'OfflineAudioContext': 1 argument required, but only 0 present."));
       const t = +suspendTime;
       if (!(t >= 0)) return PromiseC.reject(new DE(`Failed to execute 'suspend' on 'OfflineAudioContext': negative suspend time (${t}) is not allowed`, 'InvalidStateError'));
@@ -2435,13 +2921,48 @@
   handler(OfflineAudioContext, 'complete');
   webidl(OfflineAudioContext, 'OfflineAudioContext');
 
+  // One render quantum of the graph at frame f0: what reaches the destination (returned), and
+  // everything that runs whether or not it feeds the destination: started sources, analysers, the
+  // history of fed convolvers and delays, and the nodes pulled automatically (worklets, script
+  // processors). `take(bus)` gets the destination's quantum before anything else runs.
+  function renderBlock(c, f0, take) {
+    const q = f0 / c.quantum;
+    const bus = pull(nodes.get(c.destination), q, f0);
+    if (take) take(bus);
+    // Started sources nothing pulled still play (and end) on time.
+    for (const n of c.sources) if (n.q !== q) pull(n, q, f0);
+    if (c.analyserNodes) for (const ref of c.analyserNodes) {
+      const node = ref.deref();
+      if (!node) c.analyserNodes.delete(ref);
+      else if (node.q !== q) pull(node, q, f0);
+    }
+    // Preserve a fed convolver's history even while its output is disconnected.
+    if (c.convolverNodes) for (const ref of c.convolverNodes) {
+      const n = ref.deref();
+      if (!n) c.convolverNodes.delete(ref);
+      else if (n.convolve && n.q !== q && (n.inputs.length || n.tail)) pull(n, q, f0);
+    }
+    // A fed delay keeps the signal it will output even while downstream is
+    // disconnected. A weak registration does not keep an unused node alive.
+    if (c.delayNodes) for (const ref of c.delayNodes) {
+      const n = ref.deref();
+      if (!n) c.delayNodes.delete(ref);
+      else if (n.q !== q && (n.inputs.length || n.blocks.size)) pull(n, q, f0);
+    }
+    if (c.pulled) for (const n of c.pulled) if (n.q !== q) pull(n, q, f0);
+    if (c.delayWriters?.size) {
+      for (const n of c.delayWriters) writeDelay(n, q, f0);
+      c.delayWriters.clear();
+    }
+    return bus;
+  }
+
   // Renders quanta until the end or a suspend point.
   function render(c) {
     const chunk = c.chunks[0];
     if (!chunk || c.closing) return;
     setState(c, 'running');
     c.graphEpoch = (c.graphEpoch ?? 0) + 1;
-    const dest = nodes.get(c.destination);
     const sliceEnd = min(chunk.end, c.frames + min(128 * c.quantum, 16384));
     while (c.frames < sliceEnd) {
       const pause = c.suspends.get(c.frames);
@@ -2453,34 +2974,10 @@
         return;
       }
       const f0 = c.frames;
-      const q = f0 / c.quantum;
-      const bus = pull(dest, q, f0);
-      const count = min(c.quantum, chunk.end - f0);
-      for (let ch = 0; ch < c.channels; ch++) chunk.output[ch].set(count === c.quantum ? bus[ch] : bus[ch].subarray(0, count), f0 - chunk.start);
-      // Started sources nothing pulled still play (and end) on time.
-      for (const n of c.sources) if (n.q !== q) pull(n, q, f0);
-      if (c.analyserNodes) for (const ref of c.analyserNodes) {
-        const node = ref.deref();
-        if (!node) c.analyserNodes.delete(ref);
-        else if (node.q !== q) pull(node, q, f0);
-      }
-      // Preserve a fed convolver's history even while its output is disconnected.
-      if (c.convolverNodes) for (const ref of c.convolverNodes) {
-        const n = ref.deref();
-        if (!n) c.convolverNodes.delete(ref);
-        else if (n.convolve && n.q !== q && (n.inputs.length || n.tail)) pull(n, q, f0);
-      }
-      // A fed delay keeps the signal it will output even while downstream is
-      // disconnected. A weak registration does not keep an unused node alive.
-      if (c.delayNodes) for (const ref of c.delayNodes) {
-        const n = ref.deref();
-        if (!n) c.delayNodes.delete(ref);
-        else if (n.q !== q && (n.inputs.length || n.blocks.size)) pull(n, q, f0);
-      }
-      if (c.delayWriters?.size) {
-        for (const n of c.delayWriters) writeDelay(n, q, f0);
-        c.delayWriters.clear();
-      }
+      renderBlock(c, f0, (bus) => {
+        const count = min(c.quantum, chunk.end - f0);
+        for (let ch = 0; ch < c.channels; ch++) chunk.output[ch].set(count === c.quantum ? bus[ch] : bus[ch].subarray(0, count), f0 - chunk.start);
+      });
       c.frames += c.quantum;
     }
     if (c.frames < chunk.end) {
@@ -2518,8 +3015,9 @@
   webidl(OfflineAudioCompletionEvent, 'OfflineAudioCompletionEvent');
 
   return {
-    localImpulseInfo, BaseAudioContext, AudioContext, AudioPlaybackStats, OfflineAudioContext, AudioBuffer, AudioParam, AudioNode,
+    localImpulseInfo, localOutputTimestamp, frameRendered, BaseAudioContext, AudioContext, AudioPlaybackStats, OfflineAudioContext, AudioBuffer, AudioParam, AudioNode,
     AudioDestinationNode, AudioScheduledSourceNode, AudioBufferSourceNode, OscillatorNode, PeriodicWave,
     ConstantSourceNode, GainNode, WaveShaperNode, AnalyserNode, DelayNode, ConvolverNode, DynamicsCompressorNode, AudioListener, PannerNode, StereoPannerNode, BiquadFilterNode, IIRFilterNode, ChannelMergerNode, ChannelSplitterNode, OfflineAudioCompletionEvent,
+    AudioParamMap, AudioWorkletNode, AudioProcessingEvent, ScriptProcessorNode,
   };
 })

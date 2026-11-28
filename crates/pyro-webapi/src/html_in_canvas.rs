@@ -20,7 +20,7 @@
 //! canvases on a full rescan; a drawable canvas made only by `cloneNode` is
 //! not noticed until some element is given `content=drawable`.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use pyro_dom::html_in_canvas::Touch;
@@ -47,6 +47,9 @@ pub(crate) struct State {
     /// `updateElementGeometry` transforms: (canvas, element, the matrix's 6
     /// (2D) or 16 values).
     transforms: Vec<(NodeId, NodeId, Vec<f64>)>,
+    /// `updateElementGeometry` clips: (canvas, element, x, y, width, height), the rectangle in the
+    /// coordinate space of the element's canvas transform (a negative size already normalised).
+    clips: Vec<(NodeId, NodeId, [f64; 4])>,
     /// The elements hit testing finds in their canvas, oldest first: drawn
     /// (or given a transform) since; a later draw puts one last (on top).
     hittable: Vec<(NodeId, NodeId)>,
@@ -133,6 +136,21 @@ impl State {
     }
 }
 
+/// Whether the journal's touches are only insertions that were removed again before the frame: each
+/// such element left two `Children` touches (its insertion and its removal) and one `Inserted` for a
+/// node that is no longer connected, and nothing else was touched. The rendering is as it was.
+fn cancelled_insertions(dom: &Dom, list: &[(NodeId, Touch)]) -> bool {
+    let (mut children, mut gone) = (0usize, 0usize);
+    for (node, touch) in list {
+        match touch {
+            Touch::Children => children += 1,
+            Touch::Inserted if !dom.is_connected(*node).unwrap_or(false) => gone += 1,
+            _ => return false,
+        }
+    }
+    gone > 0 && children == 2 * gone
+}
+
 /// `canvas.requestPaint()`: the canvas owes a `paint` event in the next
 /// frame, which is requested.
 pub(crate) fn request_paint(page: &Rc<PageDom>, canvas: NodeId) {
@@ -154,6 +172,10 @@ pub fn run_paint_step(page: &Rc<PageDom>) {
     if !page.dom.borrow().drawable_canvas_seen() {
         return;
     }
+    // HTML "update the rendering": the ResizeObserver step comes before the `paint` events
+    // (WPT html-in-canvas `onpaint-fires-post-resize-observer`). (An IntersectionObserver's
+    // observations are made at a task's end here, and delivered from a task of their own.)
+    crate::resize_observer::rendering_step(page);
     let events = {
         let layout = page.layout();
         let dom = page.dom.borrow();
@@ -180,6 +202,27 @@ pub fn run_paint_step(page: &Rc<PageDom>) {
         };
         let first = state.seen.is_none();
         state.seen = Some(version);
+        // Changes inside the document of a frame (an `<iframe>` in a canvas's subtree) are no node of
+        // the canvas's subtree: the frame element stands for them.
+        let mut in_frames: Vec<NodeId> = Vec::new();
+        if let Some(list) = touched.as_ref().filter(|list| !list.is_empty() && !state.canvases.is_empty()) {
+            for canvas in state.canvases.clone() {
+                let frames: Vec<NodeId> = dom
+                    .descendants(canvas)
+                    .into_iter()
+                    .flatten()
+                    .filter(|&n| dom.element(n).is_ok_and(|e| e.is_html() && &*e.name.local == "iframe"))
+                    .collect();
+                for iframe in frames {
+                    let Some(frame_doc) = page.frame_document(iframe) else { continue };
+                    if list.iter().any(|(node, _)| dom.owner_document(*node).ok().flatten() == Some(frame_doc)) {
+                        in_frames.push(iframe);
+                    }
+                }
+            }
+        }
+        // An insertion undone within the frame (an element added and removed again) changed nothing.
+        let touched = touched.map(|list| if cancelled_insertions(&dom, &list) { Vec::new() } else { list });
         match touched {
             None => {
                 // First look, or the journal no longer covers the last one:
@@ -212,6 +255,30 @@ pub fn run_paint_step(page: &Rc<PageDom>) {
         // Forget canvases that left the document or stopped being drawable
         // (one reconnected later counts as new).
         state.canvases.retain(|&c| dom.is_connected(c).unwrap_or(false) && is_drawable_canvas(&dom, c));
+        for iframe in in_frames {
+            state.attribute(&dom, &rendered, iframe, false);
+        }
+        // A running CSS animation or transition repaints its element each frame, with no write to
+        // the DOM for the journal to show (a paused or finished one does not).
+        if !state.canvases.is_empty() {
+            let moving: Vec<NodeId> = page
+                .animation_events
+                .try_timelines()
+                .map(|(animations, transitions)| {
+                    animations
+                        .iter()
+                        .chain(transitions.iter())
+                        .filter(|t| t.is_live() && !t.has_ended() && !t.is_paused())
+                        .map(|t| t.el())
+                        .collect()
+                })
+                .unwrap_or_default();
+            for el in moving {
+                if dom.is_connected(el).unwrap_or(false) {
+                    state.attribute(&dom, &rendered, el, false);
+                }
+            }
+        }
         let known = state.canvases.clone();
         state.ready.retain(|c| known.contains(c));
         let mut events: Vec<(NodeId, Vec<NodeId>)> = std::mem::take(&mut state.pending)
@@ -280,7 +347,7 @@ pub(crate) struct ElementImage {
     /// The pixels (`None`: nothing to paint, an empty box).
     pub pixels: Option<(u32, u32, Vec<u8>)>,
     /// The paint may hold content the page must not read back (an image of unknown origin, a
-    /// nested document, a visited link): drawing it makes the canvas not origin-clean.
+    /// nested document): drawing it makes the canvas not origin-clean.
     pub taints: bool,
 }
 
@@ -295,6 +362,24 @@ fn invalid_state(message: &str) -> pyro_js::JsError {
 /// or is in the top layer below it, or when either is not rendered
 /// (`display: none`).
 pub(crate) fn element_image(page: &Rc<PageDom>, canvas: NodeId, element: NodeId) -> pyro_js::JsResult<ElementImage> {
+    // An element holding a frame (`<iframe>`, `<object>`, `<embed>`) is painted with the document
+    // the frame shows, which the renderer's snapshot has only once the embedder gave it: that is
+    // asked first, with no borrow of the DOM held.
+    let owners: Vec<NodeId> = {
+        let dom = page.dom.borrow();
+        dom.descendants(element)
+            .map(|nodes| {
+                nodes
+                    .filter(|&node| dom.element(node).is_ok_and(|e| e.is_html() && matches!(&*e.name.local, "iframe" | "object" | "embed" | "frame")))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    if !owners.is_empty() {
+        if let Some(hooks) = page.hooks() {
+            hooks.refresh_frame_documents(&owners);
+        }
+    }
     let layout = page.layout();
     let dom = page.dom.borrow();
     check_painted(page, &layout, &dom, canvas, element)?;
@@ -367,7 +452,14 @@ impl pyro_js::JsClass for ElementImageClass {
     const NAME: &'static str = "ElementImage";
     type Data = ElementSnapshot;
     type Parent = pyro_js::NoParent;
-    fn define(_def: &mut pyro_js::ClassDef<Self>) {}
+    fn define(def: &mut pyro_js::ClassDef<Self>) {
+        // `close()`: the image is released; drawing it or asking for its size throws
+        // InvalidStateError from then on (the pixels are dropped with the wrapper).
+        def.method("close", 0, |s, image, _a| {
+            image.closed.set(true);
+            Ok(s.undefined())
+        });
+    }
 }
 
 /// The data of an [`ElementImageClass`].
@@ -377,6 +469,19 @@ pub struct ElementSnapshot {
     pub height: f64,
     pub pixels: Option<(u32, u32, Rc<Vec<u8>>)>,
     pub taints: bool,
+    /// `close()` was called.
+    pub closed: Cell<bool>,
+    /// The canvas it was captured from ([`owner_key`]): only that canvas, or an OffscreenCanvas
+    /// holding its control, may draw or measure it.
+    pub owner: (usize, NodeId),
+    /// The element it was captured from: `updateElementGeometry` and `clearElementGeometry` take
+    /// the ElementImage for it.
+    pub element: NodeId,
+}
+
+/// `canvas` of `page` as an [`ElementSnapshot`] records its owner.
+pub(crate) fn owner_key(page: &PageDom, canvas: NodeId) -> (usize, NodeId) {
+    (Rc::as_ptr(&page.dom) as *const () as usize, canvas)
 }
 
 pub(crate) fn register(engine: &pyro_js::Engine) {
@@ -425,6 +530,9 @@ pub(crate) fn capture<'s>(s: &Scope<'s>, page: &Rc<PageDom>, canvas: NodeId, ele
         height,
         pixels: image.pixels.map(|(w, h, data)| (w, h, Rc::new(data))),
         taints: image.taints,
+        closed: Cell::new(false),
+        owner: owner_key(page, canvas),
+        element,
     };
     Ok(s.wrap::<ElementImageClass>(snapshot, None)?.value())
 }
@@ -439,6 +547,12 @@ pub(crate) fn default_size<'s>(s: &Scope<'s>, page: &Rc<PageDom>, canvas: NodeId
             if !is_drawable_canvas(&dom, canvas) {
                 return Err(invalid_state("The canvas's content is not drawable."));
             }
+            if image.closed.get() {
+                return Err(invalid_state("The ElementImage is closed."));
+            }
+            if image.owner != owner_key(page, canvas) {
+                return Err(invalid_state("The ElementImage was captured from a different canvas."));
+            }
             (image.width, image.height)
         }
         None => {
@@ -451,6 +565,35 @@ pub(crate) fn default_size<'s>(s: &Scope<'s>, page: &Rc<PageDom>, canvas: NodeId
     let out = s.object();
     out.set_atom("width", s.number(width * sx))?;
     out.set_atom("height", s.number(height * sy))?;
+    Ok(out.value())
+}
+
+/// `OffscreenCanvas.getElementImageDefaultSize(elementImage)`: an ElementImage of the canvas whose
+/// control this OffscreenCanvas took (`canvas`), in that canvas grid's units. An Element is the
+/// canvas element's to measure, and a standalone OffscreenCanvas has no canvas: InvalidStateError.
+pub(crate) fn offscreen_default_size<'s>(s: &Scope<'s>, page: &Rc<PageDom>, canvas: Option<NodeId>, target: Value<'s>) -> pyro_js::JsResult<Value<'s>> {
+    let Some(image) = s.unwrap::<ElementImageClass>(target) else {
+        return Err(match element_of(s, page, target) {
+            Ok(_) => invalid_state("An Element can only be measured by its <canvas>."),
+            Err(error) => error,
+        });
+    };
+    let Some(canvas) = canvas else { return Err(invalid_state("The OffscreenCanvas has no canvas to take the ElementImage from.")) };
+    let layout = page.layout();
+    let dom = page.dom.borrow();
+    if !is_drawable_canvas(&dom, canvas) {
+        return Err(invalid_state("The canvas's content is not drawable."));
+    }
+    if image.closed.get() {
+        return Err(invalid_state("The ElementImage is closed."));
+    }
+    if image.owner != owner_key(page, canvas) {
+        return Err(invalid_state("The ElementImage was captured from a different canvas."));
+    }
+    let (sx, sy) = grid_scale(&layout, &dom, canvas);
+    let out = s.object();
+    out.set_atom("width", s.number(image.width * sx))?;
+    out.set_atom("height", s.number(image.height * sy))?;
     Ok(out.value())
 }
 
@@ -488,36 +631,106 @@ pub(crate) fn get_transform<'s>(s: &Scope<'s>, page: &Rc<PageDom>, canvas: NodeI
     Ok(matrix.value())
 }
 
-/// `canvas.updateElementGeometry(element, {canvasTransform})`: keeps the
-/// transform (a DOMMatrixInit, validated as `DOMMatrix.fromMatrix` does).
+/// The element `updateElementGeometry` and `clearElementGeometry` take: an Element of this page, or an
+/// ElementImage captured from `canvas` (the element it captured).
+pub(crate) fn geometry_target(s: &Scope<'_>, page: &Rc<PageDom>, canvas: NodeId, value: Value<'_>) -> pyro_js::JsResult<NodeId> {
+    if let Some(image) = s.unwrap::<ElementImageClass>(value) {
+        if image.owner != owner_key(page, canvas) {
+            return Err(JsError::dom("InvalidStateError", "The ElementImage was captured from a different canvas."));
+        }
+        return Ok(image.element);
+    }
+    element_of(s, page, value)
+}
+
+/// A member of a DOMRectInit: its number, 0 when absent or not finite.
+fn rect_member(init: &pyro_js::Object<'_>, name: &'static str) -> pyro_js::JsResult<f64> {
+    let value = init.get_atom(name)?;
+    if value.is_undefined() {
+        return Ok(0.0);
+    }
+    let number = value.to_number()?;
+    Ok(if number.is_finite() { number } else { 0.0 })
+}
+
+/// `canvas.updateElementGeometry(element, {canvasTransform, canvasClip, preserveHitTestOrder})`: keeps
+/// the transform (a DOMMatrixInit, validated as `DOMMatrix.fromMatrix` does; kept as it was when
+/// omitted) and the clip (a DOMRectInit in the coordinate space of the transform, its negative size
+/// normalised; kept when omitted), and puts the element on top of the hit testing order unless
+/// `preserveHitTestOrder` and it is in it already.
 pub(crate) fn update_geometry(s: &Scope<'_>, page: &Rc<PageDom>, canvas: NodeId, element: NodeId, options: Value<'_>) -> pyro_js::JsResult<()> {
-    let init = match options.as_object() {
-        Some(o) => o.get_atom("canvasTransform")?,
-        None => s.undefined(),
+    let object = options.as_object();
+    let (init, clip_init, preserve_order) = match &object {
+        Some(o) => (o.get_atom("canvasTransform")?, o.get_atom("canvasClip")?, o.get_atom("preserveHitTestOrder")?.to_bool()),
+        None => (s.undefined(), s.undefined(), false),
     };
-    let ctor = dom_matrix(s)?;
-    let from = ctor.get_atom("fromMatrix")?.as_object().ok_or_else(|| JsError::Type("DOMMatrix.fromMatrix is not available.".into()))?;
-    let matrix = from.call(Some(ctor), &[init])?;
+    let matrix = if init.is_undefined() {
+        None
+    } else {
+        let ctor = dom_matrix(s)?;
+        let from = ctor.get_atom("fromMatrix")?.as_object().ok_or_else(|| JsError::Type("DOMMatrix.fromMatrix is not available.".into()))?;
+        Some(from.call(Some(ctor), &[init])?)
+    };
+    let clip = match clip_init.as_object() {
+        Some(rect) => {
+            let (mut x, mut y, mut w, mut h) = (rect_member(&rect, "x")?, rect_member(&rect, "y")?, rect_member(&rect, "width")?, rect_member(&rect, "height")?);
+            if w < 0.0 {
+                x += w;
+                w = -w;
+            }
+            if h < 0.0 {
+                y += h;
+                h = -h;
+            }
+            Some([x, y, w, h])
+        }
+        None => None,
+    };
     check_owned(&page.dom.borrow(), canvas, element)?;
-    let matrix = matrix.as_object().ok_or_else(|| JsError::Type("DOMMatrix.fromMatrix returned no matrix.".into()))?;
-    let is_2d = matrix.get_atom("is2D")?.to_bool();
-    let array = matrix.get_atom("toFloat64Array")?.as_object().ok_or_else(|| JsError::Type("toFloat64Array is not available.".into()))?.call(Some(matrix), &[])?;
-    let array = array.as_object().ok_or_else(|| JsError::Type("toFloat64Array returned no array.".into()))?;
-    let all: Vec<f64> = (0..16).map(|i| array.get_index(i).and_then(|v| v.to_number())).collect::<pyro_js::JsResult<_>>()?;
-    // A 2D matrix as its six values (a, b, c, d, e, f): read back as 2D.
-    let values = if is_2d { vec![all[0], all[1], all[4], all[5], all[12], all[13]] } else { all };
-    // Hittable only once the geometry is accepted (a throwing call above records nothing).
-    note_drawn(page, canvas, element);
+    let values = match matrix {
+        Some(matrix) => {
+            let matrix = matrix.as_object().ok_or_else(|| JsError::Type("DOMMatrix.fromMatrix returned no matrix.".into()))?;
+            let is_2d = matrix.get_atom("is2D")?.to_bool();
+            let array = matrix.get_atom("toFloat64Array")?.as_object().ok_or_else(|| JsError::Type("toFloat64Array is not available.".into()))?.call(Some(matrix), &[])?;
+            let array = array.as_object().ok_or_else(|| JsError::Type("toFloat64Array returned no array.".into()))?;
+            let all: Vec<f64> = (0..16).map(|i| array.get_index(i).and_then(|v| v.to_number())).collect::<pyro_js::JsResult<_>>()?;
+            // A 2D matrix as its six values (a, b, c, d, e, f): read back as 2D.
+            Some(if is_2d { vec![all[0], all[1], all[4], all[5], all[12], all[13]] } else { all })
+        }
+        None => None,
+    };
+    // Hittable only once the geometry is accepted (a throwing call above records nothing); an
+    // element already in the order keeps its place when asked to.
+    let in_order = page.html_in_canvas.borrow().hittable.iter().any(|&(c, e)| c == canvas && e == element);
+    if !(preserve_order && in_order) {
+        note_drawn(page, canvas, element);
+    }
     let mut state = page.html_in_canvas.borrow_mut();
-    state.transforms.retain(|(c, e, _)| !(*c == canvas && *e == element));
-    state.transforms.push((canvas, element, values));
+    let has_transform = state.transforms.iter().any(|(c, e, _)| *c == canvas && *e == element);
+    match values {
+        Some(values) => {
+            state.transforms.retain(|(c, e, _)| !(*c == canvas && *e == element));
+            state.transforms.push((canvas, element, values));
+        }
+        // (Omitted: the transform it has stays; an element without one gets the identity.)
+        None if !has_transform => state.transforms.push((canvas, element, vec![1.0, 0.0, 0.0, 1.0, 0.0, 0.0])),
+        None => {}
+    }
+    if let Some(clip) = clip {
+        state.clips.retain(|(c, e, _)| !(*c == canvas && *e == element));
+        state.clips.push((canvas, element, clip));
+    }
     Ok(())
 }
 
-/// `canvas.clearElementGeometry(element)`.
+/// `canvas.clearElementGeometry(element)`: its transform and clip, and its place in the hit testing
+/// order, are gone.
 pub(crate) fn clear_geometry(page: &Rc<PageDom>, canvas: NodeId, element: NodeId) -> pyro_js::JsResult<()> {
     check_owned(&page.dom.borrow(), canvas, element)?;
-    page.html_in_canvas.borrow_mut().transforms.retain(|(c, e, _)| !(*c == canvas && *e == element));
+    let mut state = page.html_in_canvas.borrow_mut();
+    state.transforms.retain(|(c, e, _)| !(*c == canvas && *e == element));
+    state.clips.retain(|(c, e, _)| !(*c == canvas && *e == element));
+    state.hittable.retain(|&(c, e)| !(c == canvas && e == element));
     Ok(())
 }
 
@@ -539,18 +752,36 @@ pub(crate) fn set_drawn_transform(page: &Rc<PageDom>, canvas: NodeId, element: N
     let (sx, sy) = {
         let layout = page.layout();
         let dom = page.dom.borrow();
-        grid_scale(&layout, &dom, canvas)
+        let (sx, sy) = grid_scale(&layout, &dom, canvas);
+        // The canvas box's rect holds the zoom of the canvas; the grid's scale
+        // per CSS px of the element does not (WPT canvas-transform-update, "not affected by zoom").
+        let zoom = effective_zoom(&layout, &dom, canvas);
+        (sx * zoom, sy * zoom)
     };
     let (sx, sy) = (if sx > 0.0 { sx } else { 1.0 }, if sy > 0.0 { sy } else { 1.0 });
+    // The transform in the element's CSS px: the grid transform conjugated by the grid's scale
+    // (S^-1 * M * S), so an element drawn at its default size, which is its CSS size in grid
+    // units, is not scaled, and a translation is in CSS px.
     let values = if values.len() == 6 {
         let v = &values;
-        vec![v[0] / sx, v[1] / sy, v[2] / sx, v[3] / sy, v[4] / sx, v[5] / sy]
+        vec![v[0], v[1] * sx / sy, v[2] * sy / sx, v[3], v[4] / sx, v[5] / sy]
     } else {
         values
     };
     let mut state = page.html_in_canvas.borrow_mut();
     state.transforms.retain(|(c, e, _)| !(*c == canvas && *e == element));
     state.transforms.push((canvas, element, values));
+}
+
+/// The computed `zoom` of `el` (1 where the engine reports none). Not its ancestors': `zoom` is
+/// not inherited.
+fn effective_zoom(layout: &pyro_dom::layout::Layout, dom: &Dom, el: NodeId) -> f64 {
+    layout
+        .style()
+        .computed_value(dom, el, "zoom")
+        .and_then(|v| v.trim().parse::<f64>().ok())
+        .filter(|z| z.is_finite() && *z > 0.0)
+        .unwrap_or(1.0)
 }
 
 /// HTML-in-Canvas geometry: the client rect `rect` of `el` as its canvas
@@ -601,6 +832,43 @@ pub(crate) fn transformed_rect(page: &PageDom, el: NodeId, rect: pyro_dom::layou
     pyro_dom::layout::Rect { x: origin.0 + min_x, y: origin.1 + min_y, width: max_x - min_x, height: max_y - min_y }
 }
 
+/// Whether client point (`x`, `y`) is inside the clip `updateElementGeometry` gave `element` (true
+/// without one): the point in the element's own coordinate space, which its canvas transform maps
+/// from (`laid_out`, its rect as laid out, stands for the transform when it has none).
+fn inside_clip(page: &PageDom, canvas: NodeId, element: NodeId, laid_out: &pyro_dom::layout::Rect, x: f64, y: f64) -> bool {
+    let (clip, values) = {
+        let state = page.html_in_canvas.borrow();
+        let Some(&(_, _, clip)) = state.clips.iter().find(|(c, e, _)| *c == canvas && *e == element) else { return true };
+        (clip, state.transforms.iter().find(|(c, e, _)| *c == canvas && *e == element).map(|(_, _, v)| v.clone()))
+    };
+    let local = match values {
+        None => (x - laid_out.x, y - laid_out.y),
+        Some(values) => {
+            let [a, b, c, d, e, f] = match values.len() {
+                6 => [values[0], values[1], values[2], values[3], values[4], values[5]],
+                16 => [values[0], values[1], values[4], values[5], values[12], values[13]],
+                _ => return false,
+            };
+            use pyro_dom::geometry::{LEFT, TOP};
+            let layout = page.layout();
+            let dom = page.dom.borrow();
+            let source = layout.synced_geometry_source(&dom);
+            let canvas_rect = layout.bounding_client_rect(&dom, canvas);
+            let (inset_x, inset_y) = source
+                .and_then(|source| source.element_box(pyro_dom::snapshot::render_key(canvas)))
+                .map_or((0.0, 0.0), |b| (b.border[LEFT] + b.padding[LEFT], b.border[TOP] + b.padding[TOP]));
+            let (px, py) = (x - (canvas_rect.x + inset_x) - e, y - (canvas_rect.y + inset_y) - f);
+            let det = a * d - b * c;
+            if det.abs() < 1e-12 {
+                return false;
+            }
+            ((d * px - c * py) / det, (-b * px + a * py) / det)
+        }
+    };
+    let [cx, cy, cw, ch] = clip;
+    local.0 >= cx && local.0 < cx + cw && local.1 >= cy && local.1 < cy + ch
+}
+
 /// HTML-in-Canvas hit testing over `hits` (topmost first) at client point
 /// (`x`, `y`): a canvas's children are not hit where they are laid out; the
 /// elements drawn into a drawable canvas (or given a canvas transform) are hit
@@ -626,8 +894,9 @@ pub(crate) fn adjust_hits(page: &PageDom, x: f64, y: f64, hits: Vec<NodeId>) -> 
             }
             layout.bounding_client_rect(&dom, element)
         };
+        let laid_out = rect;
         let rect = transformed_rect(page, element, rect);
-        if x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height {
+        if x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height && inside_clip(page, canvas, element, &laid_out, x, y) {
             placed.push((canvas, element));
         }
     }

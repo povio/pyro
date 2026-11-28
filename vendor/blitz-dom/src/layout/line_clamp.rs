@@ -119,14 +119,35 @@ impl LayoutPassState<'_> {
                     None => break,
                 }
             }
+            let wm = self.nodes[block].writing_mode();
             self.nodes[block].data.downcast_element().and_then(|el| el.inline_layout_data.as_deref()).and_then(|text| {
                 let kept = text.clamp.as_ref()?.lines as usize;
                 let line = text.layout.get(kept.checked_sub(1)?)?;
-                Some(top + text.line_box_top + line.metrics().baseline / scale)
+                let m = line.metrics();
+                let sideways_inverted = wm.is_vertical() && wm.is_sideways() && wm.intersects(stylo_taffy::WritingMode::LINE_INVERTED);
+                let baseline = if sideways_inverted { m.block_min_coord + m.block_max_coord - m.baseline } else { m.baseline };
+                // pyro: and in a vertical mode with a central dominant baseline (text not sideways), the kept
+                // line's central one, as `compute_inline_layout` exports the last line's (WPT css-flexbox
+                // `flex-align-baseline-line-clamp-002`, `-003`).
+                let dominant = (wm.is_vertical() && !wm.is_sideways()).then(|| {
+                    let ascent = ((m.baseline - m.content_block_min_coord) / scale).round();
+                    let descent = ((m.content_block_max_coord - m.baseline) / scale).round();
+                    let central = m.content_block_min_coord / scale + (ascent + descent) / 2.0;
+                    let central = if wm.intersects(stylo_taffy::WritingMode::LINE_INVERTED) {
+                        (m.block_min_coord + m.block_max_coord) / scale - central
+                    } else {
+                        central
+                    };
+                    top + text.line_box_top + central
+                });
+                Some((top + text.line_box_top + baseline / scale, dominant))
             })
         };
-        if let Some(baseline) = clamp_baseline {
+        if let Some((baseline, dominant)) = clamp_baseline {
             output.baselines.last = Some(baseline);
+            if output.baselines.dominant_last.is_some() {
+                output.baselines.dominant_last = dominant.or(output.baselines.dominant_last);
+            }
         }
         let bottom = self.end_blocks_at_clamp(root, block, bottom);
         // pyro: what was discarded adds no scrollable overflow: the content ends at the clamp

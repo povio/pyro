@@ -372,10 +372,8 @@ function walkMarkup(dir, out = []) {
 // What a page needs from wptserve that serve.mjs does not do: substitutions, pipes, Python handlers, other hosts.
 const SERVER_NAME = /\.(sub|https|h2|www)\./;
 const SERVER_CONTENT = /\.py\b|[?&]pipe=|\.sub\.(html|htm|xht|xhtml|svg|css|js)\b/;
-// A page wptrunner loads over HTTP/2 (`.h2.` in its name). wptserve.mjs runs wptserve with --no-h2, so reftests and
-// crashtests that need it stay out under both servers, counted under this reason (none at the pinned revision).
-export const H2_NAME = /\.h2\./;
-export const NEEDS_H2 = 'needs HTTP/2 (wptserve runs with --no-h2)';
+// A page wptrunner loads over HTTP/2 (`.h2.` in its name) is served by wptserve's HTTP/2 server (wptserve.mjs); SERVER_NAME
+// leaves it out under `--server static`, with the other names that need wptserve.
 
 // Every reftest under `dirs` that serve.mjs can serve, as WPT's manifest classifies files: a markup file with
 // <link rel=match|mismatch href> that is not a manual, visual, crash or print test, not a testharness page and not
@@ -430,8 +428,6 @@ export function discoverReftests(wpt, dirs, { reasons, wptserve = false, testdri
       const files = [rel, ...refs.map((r) => r.url)];
       const ps = files.map((u) => parse(u.replace(/[?#].*$/, '')));
       if (ps.some((x) => !x)) { exclude('reference not in the checkout'); continue; }
-      // wptserve runs without its HTTP/2 server (wptserve.mjs, --no-h2): a `.h2.` page would load over HTTP/1.1.
-      if (files.some((u) => H2_NAME.test(u.replace(/[?#].*$/, '').split('/').pop()))) { exclude(NEEDS_H2); continue; }
       if (!wptserve && (files.some((u) => SERVER_NAME.test(u) || /[?&]pipe=/.test(u)) || ps.some((x) => SERVER_CONTENT.test(x.src)))) { exclude('needs wptserve (substitution, pipe, Python handler)'); continue; }
       if (!testdriver && ps.some((x) => x.scripts.some((a) => /(^|\/)resources\/testdriver(-vendor)?\.js$/.test(a.src ?? '')))) { exclude('needs testdriver'); continue; }
       if (metaOf(p.metas, 'device-pixel-ratio').length) { exclude('needs another device pixel ratio'); continue; }

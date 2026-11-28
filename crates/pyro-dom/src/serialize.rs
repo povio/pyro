@@ -478,6 +478,15 @@ impl Dom {
                         let tag = self.serialized_tag(n);
                         out.push('<');
                         out.push_str(&tag);
+                        // HTML fragment serialization: an is value without an `is` attribute is
+                        // written as one, before the other attributes (step 4 of "serializing HTML fragments" precedes the attribute loop).
+                        if let Some(is) = &e.is_value {
+                            if !e.attrs.iter().any(|a| a.name.ns == ns!() && &*a.name.local == "is") {
+                                out.push_str(" is=\"");
+                                escape(out, is, true);
+                                out.push('"');
+                            }
+                        }
                         for a in &e.attrs {
                             out.push(' ');
                             let ns = &a.name.ns;
@@ -500,15 +509,6 @@ impl Dom {
                             out.push_str("=\"");
                             escape(out, &a.value, true);
                             out.push('"');
-                        }
-                        // HTML fragment serialization: an is value without an `is` attribute is
-                        // written as one.
-                        if let Some(is) = &e.is_value {
-                            if !e.attrs.iter().any(|a| a.name.ns == ns!() && &*a.name.local == "is") {
-                                out.push_str(" is=\"");
-                                escape(out, is, true);
-                                out.push('"');
-                            }
                         }
                         out.push('>');
                         if e.is_html() && is_void(&e.name.local) {

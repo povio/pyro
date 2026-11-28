@@ -15,7 +15,7 @@ fn clip(rect: Rect, bounds: Rect, x: bool, y: bool) -> Option<Rect> {
 /// Clips `rect` (client coordinates of `node`'s document) by the overflow
 /// clips of `node`'s ancestors below `root` (HTML "compute the intersection",
 /// step 3).
-fn clip_by_ancestors(dom: &pyro_dom::Dom, layout: &pyro_dom::layout::Layout, node: NodeId, root: Option<NodeId>, rect: Rect, margin: f64) -> Option<Rect> {
+fn clip_by_ancestors(dom: &pyro_dom::Dom, layout: &pyro_dom::layout::Layout, node: NodeId, root: Option<NodeId>, rect: Rect, margin: &[options::Margin; 4]) -> Option<Rect> {
     let mut intersection = Some(rect);
     let mut ancestor = dom.parent_element(node).ok().flatten();
     while let (Some(node), Some(rect)) = (ancestor, intersection) {
@@ -26,14 +26,60 @@ fn clip_by_ancestors(dom: &pyro_dom::Dom, layout: &pyro_dom::layout::Layout, nod
         if !layout.is_root_container(dom, node) {
             let axes = layout.style().overflow_clip_axes(dom, node);
             if axes.x || axes.y {
+                // An overflow clip is the padding box: the border box inset by the border widths.
                 let b = layout.bounding_client_rect(dom, node);
-                let b = Rect { x: b.x - margin, y: b.y - margin, width: b.width + 2.0 * margin, height: b.height + 2.0 * margin };
+                let (bl, bt) = (layout.client_left(dom, node), layout.client_top(dom, node));
+                // (A table's overflow applies to its wrapper box, which has no border: CSS Tables "global style
+                // overrides"; its clip is the table's border box, WPT root-is-table-with-overflow-scroll.)
+                let table = matches!(layout.computed_style_value(dom, node, "display").trim(), "table" | "inline-table");
+                let b = if table {
+                    b
+                } else {
+                    Rect { x: b.x + bl, y: b.y + bt, width: layout.client_width(dom, node), height: layout.client_height(dom, node) }
+                };
+                let b = options::expand(b, margin);
                 intersection = clip(rect, b, axes.x, axes.y);
             }
         }
         ancestor = dom.parent_element(node).ok().flatten();
     }
     intersection
+}
+
+/// Whether `root` is in the containing block chain of `target` (IntersectionObserver
+/// "compute the intersection": otherwise the target does not intersect). An absolutely
+/// positioned box skips to its nearest positioned (or transformed) ancestor; a fixed one
+/// has the viewport as its containing block.
+fn in_containing_block_chain(dom: &pyro_dom::Dom, layout: &pyro_dom::layout::Layout, root: NodeId, target: NodeId) -> bool {
+    // The containing block of an absolute box: a positioned ancestor or one that contains fixed boxes
+    // (a transform, perspective, filter, `contain: layout | paint`, or `will-change` of those: a table
+    // root with `will-change: transform` is one though its transform computes to none).
+    let contains_absolute = |el: NodeId| layout.style().computed(dom, el).is_some_and(|c| c.contains_absolute);
+    let contains_fixed = |el: NodeId| layout.style().computed(dom, el).is_some_and(|c| c.contains_fixed);
+    let mut current = target;
+    loop {
+        let Some(mut parent) = dom.parent_element(current).ok().flatten() else { return false };
+        match layout.computed_style_value(dom, current, "position").trim() {
+            // A fixed box's containing block is the viewport unless an ancestor contains fixed boxes.
+            "fixed" => {
+                while !contains_fixed(parent) {
+                    let Some(next) = dom.parent_element(parent).ok().flatten() else { return false };
+                    parent = next;
+                }
+            }
+            "absolute" => {
+                while !contains_absolute(parent) {
+                    let Some(next) = dom.parent_element(parent).ok().flatten() else { return false };
+                    parent = next;
+                }
+            }
+            _ => {}
+        }
+        if parent == root {
+            return true;
+        }
+        current = parent;
+    }
 }
 
 fn viewport(dom: &pyro_dom::Dom, layout: &pyro_dom::layout::Layout) -> Rect {
@@ -56,7 +102,7 @@ fn geometry(bounds: Rect, target_rect: Rect, intersection: Option<Rect>) -> Geom
     } else {
         0.0
     };
-    Geometry { bounds, target: target_rect, intersection: rect, intersecting, ratio }
+    Geometry { bounds, target: target_rect, intersection: rect, intersecting, ratio, visible: false }
 }
 
 /// The observation of `target` (of `target_page`'s document) by an observer
@@ -70,22 +116,72 @@ fn geometry(bounds: Rect, target_rect: Rect, intersection: Option<Rect>) -> Geom
 /// target document's coordinates (IntersectionObserver "compute the
 /// intersection"). A document no longer shown in a page intersects nothing.
 pub(super) fn measure(page: &PageDom, options: &options::Options, target_page: &PageDom, target: NodeId) -> Geometry {
+    let mut geometry = measure_geometry(page, options, target_page, target);
+    geometry.visible = options.track_visibility && geometry.intersecting && is_visible(target_page, target, geometry.intersection);
+    geometry
+}
+
+/// Whether a tracked target is "visible" (IntersectionObserver v2): no opacity below 1, filter
+/// or transform other than a 2D translation on it or an ancestor, and the hit test inside its
+/// intersection finds it (or a descendant) at the centre and the quarter points. Occlusion
+/// that only paints (box-shadow, filters, 3D z-order) cannot be seen by a hit test.
+fn is_visible(page: &PageDom, target: NodeId, intersection: Rect) -> bool {
+    let dom = page.dom.borrow();
+    let layout = page.layout();
+    let mut node = Some(target);
+    while let Some(el) = node {
+        let value = |name: &str| layout.computed_style_value(&dom, el, name);
+        let opacity = value("opacity");
+        if !opacity.is_empty() && opacity.parse::<f64>().map_or(false, |o| o != 1.0) {
+            return false;
+        }
+        if ["filter", "rotate", "scale"].into_iter().any(|name| !matches!(value(name).trim(), "" | "none")) {
+            return false;
+        }
+        let transform = value("transform");
+        let transform = transform.trim();
+        if !matches!(transform, "" | "none") {
+            let numbers: Option<Vec<f64>> = transform
+                .strip_prefix("matrix(")
+                .and_then(|rest| rest.strip_suffix(')'))
+                .map(|list| list.split(',').filter_map(|n| n.trim().parse().ok()).collect());
+            // matrix(a, b, c, d, tx, ty) with the linear part the identity: a translation.
+            if !numbers.is_some_and(|n| n.len() == 6 && n[0] == 1.0 && n[1] == 0.0 && n[2] == 0.0 && n[3] == 1.0) {
+                return false;
+            }
+        }
+        node = dom.parent_element(el).ok().flatten();
+    }
+    if intersection.width <= 0.0 || intersection.height <= 0.0 {
+        return true;
+    }
+    [(0.5, 0.5), (0.25, 0.25), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75)].into_iter().all(|(fx, fy)| {
+        let (x, y) = (intersection.x + intersection.width * fx, intersection.y + intersection.height * fy);
+        // A point the hit test cannot answer for (outside the viewport) does not count as covered.
+        layout.element_from_point(&dom, x, y).map_or(true, |hit| hit == target || dom.contains(target, hit).unwrap_or(false))
+    })
+}
+
+fn measure_geometry(_page: &PageDom, options: &options::Options, target_page: &PageDom, target: NodeId) -> Geometry {
     let dom = target_page.dom.borrow();
     let layout = target_page.layout();
     let connected = dom.is_connected(target).unwrap_or(false);
     let target_rect = if connected { layout.bounding_client_rect(&dom, target) } else { Rect::default() };
     let visible = connected && layout.is_visible(&dom, target);
-    if let Some(root) = options.root.as_ref().map(|r| r.id) {
-        let same_document = target_page.id() == page.id() || dom.node_document(root).ok() == dom.node_document(target).ok();
+    if let Some(root_lease) = options.root.as_ref() {
+        let root = root_lease.id;
+        // The root's own document (an explicit root may belong to another document than the observer).
+        let Some(root_page) = root_lease.page.upgrade() else { return geometry(Rect::default(), target_rect, None) };
+        let same_document = target_page.id() == root_page.id();
         // A Document root is its viewport.
         let root_is_document = dom.node_type(root).ok() == Some(pyro_dom::NodeType::Document);
         let root_rect = match (same_document, root_is_document) {
             (true, true) => viewport(&dom, &layout),
             (true, false) => layout.observer_root_rect(&dom, root),
-            (false, true) => viewport(&page.dom.borrow(), &page.layout()),
+            (false, true) => viewport(&root_page.dom.borrow(), &root_page.layout()),
             (false, false) => {
-                let pdom = page.dom.borrow();
-                page.layout().observer_root_rect(&pdom, root)
+                let pdom = root_page.dom.borrow();
+                root_page.layout().observer_root_rect(&pdom, root)
             }
         };
         let bounds = options::expand(root_rect, &options.margin);
@@ -93,9 +189,10 @@ pub(super) fn measure(page: &PageDom, options: &options::Options, target_page: &
             && visible
             && root != target
             && dom.contains(root, target).unwrap_or(false)
+            && (root_is_document || in_containing_block_chain(&dom, &layout, root, target))
             && (root_is_document || (dom.is_connected(root).unwrap_or(false) && layout.is_visible(&dom, root)));
         let intersection = valid
-            .then(|| clip_by_ancestors(&dom, &layout, target, Some(root), target_rect, options.scroll_margin))
+            .then(|| clip_by_ancestors(&dom, &layout, target, Some(root), target_rect, &options.scroll_margin))
             .flatten()
             .and_then(|rect| clip(rect, bounds, true, true));
         return geometry(bounds, target_rect, intersection);
@@ -103,7 +200,7 @@ pub(super) fn measure(page: &PageDom, options: &options::Options, target_page: &
     let document = target_page.document();
     let in_document = dom.node_document(target).ok() == Some(document);
     let mut intersection = (visible && in_document)
-        .then(|| clip_by_ancestors(&dom, &layout, target, None, target_rect, options.scroll_margin))
+        .then(|| clip_by_ancestors(&dom, &layout, target, None, target_rect, &options.scroll_margin))
         .flatten();
     // Up through the frames, in the coordinates of each document in turn.
     let (mut dx, mut dy) = (0.0, 0.0);
@@ -137,7 +234,7 @@ pub(super) fn measure(page: &PageDom, options: &options::Options, target_page: &
                 intersection = intersection
                     .map(|r| Rect { x: r.x + x, y: r.y + y, ..r })
                     .and_then(|r| clip(r, content, true, true))
-                    .and_then(|r| clip_by_ancestors(&pdom, &playout, owner, None, r, options.scroll_margin));
+                    .and_then(|r| clip_by_ancestors(&pdom, &playout, owner, None, r, &options.scroll_margin));
                 if !playout.is_visible(&pdom, owner) || !pdom.is_connected(owner).unwrap_or(false) {
                     intersection = None;
                 }

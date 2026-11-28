@@ -215,6 +215,9 @@ impl ElementCx<'_, '_> {
             GenericImage::None => return false,
             GenericImage::Gradient(gradient) => Source::Gradient(gradient),
             GenericImage::Url(_) => match self.element.border_images.get(values.image) {
+                // pyro: HTML-in-Canvas privacy: an image from an opaque response is left out
+                // (the border shows as it does without the image).
+                Some(Some(data)) if self.context.privacy.is_some() && super::Privacy::opaque(&data.image) => return false,
                 Some(Some(data)) => match &data.image {
                     ImageData::Raster(raster)
                         if raster.orientation != 1 && blitz_dom::util::image_unoriented(&self.style) =>
@@ -729,9 +732,14 @@ impl PiecePainter<'_, '_, '_, '_> {
             pixels.extend_from_slice(data.get(start..start + cw * 4)?);
         }
         let quality: ImageQuality = to_image_quality(self.cx.style.clone_image_rendering());
+        let pixels: peniko::Blob<u8> = peniko::Blob::from(pixels);
+        // pyro: HTML-in-Canvas privacy: this piece of an image that was not left out is allowed.
+        if let Some(privacy) = &self.cx.context.privacy {
+            privacy.allowed.borrow_mut().push(pixels.id());
+        }
         let brush = ImageBrush {
             image: peniko::ImageData {
-                data: peniko::Blob::from(pixels),
+                data: pixels,
                 format: peniko::ImageFormat::Rgba8,
                 width: cw as u32,
                 height: ch as u32,

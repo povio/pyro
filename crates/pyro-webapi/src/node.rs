@@ -13,6 +13,7 @@ use pyro_js::{Args, ClassDef, JsClass, JsError, JsResult, Object, Scope, Value};
 use crate::collections::{self, CollectionKind};
 use crate::names::NameArg;
 use crate::page::PageDom;
+use crate::sanitizer_options::ParseMode;
 use crate::target::{page_of, EventTarget, EventTargetData};
 use crate::util::*;
 
@@ -66,6 +67,11 @@ impl NodeData {
     pub fn page(&self) -> &Rc<PageDom> {
         &self.target.page
     }
+}
+
+/// Whether `n` is an Attr node.
+fn is_attr_node(n: &NodeData) -> bool {
+    n.page().dom.borrow().node(n.id).is_ok_and(|x| x.kind.node_type() == NodeType::Attribute)
 }
 
 impl Drop for NodeData {
@@ -349,6 +355,9 @@ pub(crate) fn handler_attribute_changed(s: &Scope<'_>, n: &NodeData, name: &str,
             // onvisibilitychange) are none.
             Ok(e) if !(crate::handlers::GLOBAL.contains(&ty)
                 || crate::handlers::FULLSCREEN.contains(&ty)
+                || (e.namespace() == &markup5ever::ns!(svg)
+                    && matches!(&*e.name.local, "animate" | "set" | "animateMotion" | "animateTransform")
+                    && crate::handlers::SVG_ANIMATION_ATTRIBUTES.iter().any(|(_, event)| *event == ty))
                 || (e.is_html() && crate::handlers::element_handler(&e.name.local, ty))
                 || (e.is_html() && matches!(&*e.name.local, "body" | "frameset") && crate::handlers::WINDOW.contains(&ty))) =>
             {
@@ -435,7 +444,13 @@ impl JsClass for Node {
                     None => s.null(),
                 })
             },
-            |_s, n, v| {
+            |s, n, v| {
+                // An Attr's value is a Trusted Types sink when its element's attribute is; the
+                // policy can run script, so no borrow is held across it.
+                if is_attr_node(n) {
+                    let text = if v.is_null() { String::new() } else { dom_string(v)? };
+                    return collections::set_attr_value_checked(s, n, &text);
+                }
                 let set = |text: &str| {
                     let mut dom = n.page().dom.borrow_mut();
                     let kind = &dom.node(n.id).js()?.kind;
@@ -469,14 +484,20 @@ impl JsClass for Node {
                 // as a property key can swap its buffer for an atom's, and a
                 // GC can then free the old one.
                 let blur = || crate::input::blur_before_removal(n.page(), n.id, true);
-                let set = |text: &str| n.page().dom.borrow_mut().set_text_content(n.id, text).js();
-                // A `<script>`'s text is a Trusted Types sink when the document requires them, and
-                // the script is trusted with it ([[ScriptText]]) whether or not they are.
-                if crate::trusted_types::is_html_script(n.page(), n.id) {
-                    let text = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Script, v, "HTMLScriptElement textContent", true)?;
-                    n.page().dom.borrow_mut().set_script_text(n.id, &text);
-                    return set(&text);
+                let set = |text: &str| {
+                    let mut dom = n.page().dom.borrow_mut();
+                    // Trusted Types: this path trusts nothing, so a script loses its [[ScriptText]]
+                    // (a text equal to it must not stay trusted). A no-op for any other node.
+                    dom.set_script_text(n.id, "");
+                    dom.set_text_content(n.id, text).js()
+                };
+                // An Attr's textContent is its value: a Trusted Types sink as `Attr.value` is.
+                if is_attr_node(n) {
+                    let text = if v.is_nullish() { String::new() } else { dom_string(v)? };
+                    return collections::set_attr_value_checked(s, n, &text);
                 }
+                // (`HTMLScriptElement.textContent` is its own accessor, the Trusted Types sink: this
+                // one, reached as `Node.prototype.textContent`, sets the text untrusted.)
                 // A string (the usual value) needs no nullish test first.
                 if v.is_string() {
                     blur();
@@ -1184,7 +1205,7 @@ fn get_html<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>>
     Ok(s.string(&n.page().dom.borrow().get_html(n.id, serializable, &roots).js()?))
 }
 
-/// `setHTMLUnsafe(html)` on `Element` and `ShadowRoot`.
+/// `setHTMLUnsafe(html, options)` on `Element` and `ShadowRoot`.
 fn set_html_unsafe<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
     a.require(1, "setHTMLUnsafe")?;
     let shadow = n.page().dom.borrow().node(n.id).is_ok_and(|node| matches!(node.kind, pyro_dom::node::NodeKind::Fragment(_)));
@@ -1196,6 +1217,47 @@ fn set_html_unsafe<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Val
     Ok(s.undefined())
 }
 
+/// `setHTML(html, options)` on `Element` and `ShadowRoot`: "set and filter HTML" with the safe
+/// flag. The options hold only a `sanitizer` (`runScripts` is not read); the default
+/// configuration and the built-in safe baseline apply. On a `script` element (HTML or SVG) it does nothing.
+fn set_html<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
+    a.require(1, "setHTML")?;
+    let shadow = n.page().dom.borrow().node(n.id).is_ok_and(|node| matches!(node.kind, pyro_dom::node::NodeKind::Fragment(_)));
+    let sink = if shadow { "ShadowRoot setHTML" } else { "Element setHTML" };
+    let input = crate::trusted_types::HtmlInput::convert(s, a.get(0))?;
+    let (html, options) = input.for_html_insertion_as(s, n.page(), a.get(1), sink, ParseMode::Safe)?;
+    if crate::positional_html::is_script_element(&n.page().dom.borrow(), n.id) {
+        return Ok(s.undefined());
+    }
+    crate::input::blur_before_removal(n.page(), n.id, true);
+    pyro_dom::parse::set_html_unsafe_with(&mut n.page().dom.borrow_mut(), n.id, &html, false, options.filter).js()?;
+    Ok(s.undefined())
+}
+
+/// `Document.parseHTML(html, options)` and `Document.parseHTMLUnsafe(html, options)`: a new
+/// document, parsed with declarative shadow roots; the safe one filters with the default
+/// sanitizer and the built-in safe baseline.
+fn parse_html_document<'s>(s: &Scope<'s>, a: Args<'s>, safe: bool) -> JsResult<Value<'s>> {
+    let (method, sink) = if safe {
+        ("Document.parseHTML", "Document parseHTML")
+    } else {
+        ("Document.parseHTMLUnsafe", "Document parseHTMLUnsafe")
+    };
+    a.require(1, method)?;
+    // Trusted Types: the markup is a TrustedHTML sink, as `setHTMLUnsafe` is.
+    let input = crate::trusted_types::HtmlInput::convert(s, a.get(0))?;
+    let page = page_of(s)?;
+    let mode = if safe { ParseMode::Safe } else { ParseMode::UnsafeDocument };
+    let (html, options) = input.for_html_insertion_as(s, &page, a.get(1), sink, mode)?;
+    let doc = if safe {
+        let filter = options.filter.unwrap_or_else(|| std::rc::Rc::new(pyro_dom::sanitizer_defaults::safe_default()));
+        pyro_dom::parse::parse_html_with(&page.dom, &html, filter)
+    } else {
+        pyro_dom::parse::parse_html_unsafe_with(&page.dom, &html, options.filter)
+    };
+    Ok(wrap_node(s, &page, doc)?.value())
+}
+
 pub struct ShadowRoot;
 impl JsClass for ShadowRoot {
     const NAME: &'static str = "ShadowRoot";
@@ -1204,8 +1266,12 @@ impl JsClass for ShadowRoot {
     fn define(def: &mut ClassDef<Self>) {
         def.getter("customElementRegistry", |s, n| crate::custom::node_registry(s, n.page(), n.id));
         crate::positional_html::define_parent_methods(def);
+        // Chrome's non-standard `ShadowRoot.getSelection()`: the document's Selection object.
+        def.method("getSelection", 0, |s, n, _a| crate::range::get_selection(s, n.page()));
         // Fullscreen API: the document's fullscreen element, retargeted against this shadow root.
         def.accessor("fullscreenElement", |s, n| crate::fullscreen::element_for(s, n.page(), n.id), |_s, _n, _v| Ok(()));
+        // Pointer Lock API: the lock target, retargeted against this shadow root.
+        def.getter("pointerLockElement", |s, n| crate::pointer_lock::element_for(s, n.page(), n.id));
         def.getter("host", |s, n| {
             let h = n.page().dom.borrow().fragment_host(n.id).js()?;
             node_value(s, n.page(), h)
@@ -1240,6 +1306,7 @@ impl JsClass for ShadowRoot {
             Ok(s.string(if flags & pyro_dom::shadow_flags::MANUAL_SLOTS != 0 { "manual" } else { "named" }))
         });
         def.method("getHTML", 0, get_html);
+        def.method("setHTML", 1, set_html);
         def.method("setHTMLUnsafe", 1, set_html_unsafe);
         def.method("getAnimations", 0, |s, n, _a| {
             let root = wrap_node(s, n.page(), n.id)?.value();
@@ -1262,12 +1329,12 @@ impl JsClass for ShadowRoot {
             "innerHTML",
             |s, n| Ok(s.string(&n.page().dom.borrow().inner_html(n.id).js()?)),
             |s, n, v| {
-                let html = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Html, v, "ShadowRoot innerHTML", true)?;
+                let (html, options) = crate::trusted_types::legacy_html(s, n.page(), v, "ShadowRoot innerHTML", true, false)?;
                 crate::handlers::drain_inline_before_fragment(n.page());
                 {
                     let mut dom = n.page().dom.borrow_mut();
                     let host = dom.fragment_host(n.id).js()?.ok_or(JsError::Type("detached shadow root".into()))?;
-                    let frag = pyro_dom::parse::parse_setter_fragment_in(&mut dom, host, n.id, &html).js()?;
+                    let frag = pyro_dom::parse::parse_setter_fragment_in_with(&mut dom, host, n.id, &html, options.run_scripts, options.filter).js()?;
                     dom.replace_all(n.id, Some(frag)).js()?;
                 }
                 crate::handlers::drain_inline_after_fragment(s, n.page());
@@ -1297,13 +1364,25 @@ impl JsClass for Element {
     type Parent = Node;
     fn define(def: &mut ClassDef<Self>) {
         def.getter("customElementRegistry", |s, n| crate::custom::node_registry(s, n.page(), n.id));
+        // Element Timing: `elementTiming` reflects the `elementtiming` attribute.
+        if crate::perf::element::ENABLED {
+            crate::perf::element::define_attribute(def);
+        }
         crate::positional_html::define_parent_methods(def);
         define_parent_node(def);
         define_child_node(def);
         define_non_doctype_child(def);
         // Fullscreen API (`crate::fullscreen`): granted with transient activation, denied otherwise.
         crate::handlers::define_fullscreen(def);
-        def.promise_method("requestFullscreen", 0, |s, n, _a| crate::fullscreen::request(s, n.page(), n.id));
+        def.promise_method("requestFullscreen", 0, |s, n, a| {
+            crate::fullscreen::check_options(a.get(0))?;
+            crate::fullscreen::request(s, n.page(), n.id)
+        });
+        // Pointer Lock API (`crate::pointer_lock`).
+        def.promise_method("requestPointerLock", 0, |s, n, a| {
+            let unadjusted = crate::pointer_lock::unadjusted_option(a.get(0))?;
+            crate::pointer_lock::request(s, n.page(), n.id, unadjusted)
+        });
         def.method("pseudo", 1, |s, n, a| {
             a.require(1, "Element.pseudo")?;
             let el = crate::node::wrap_node(s, n.page(), n.id)?.value();
@@ -1415,7 +1494,17 @@ impl JsClass for Element {
                 })
             },
         );
-        def.getter("part", |s, n| Ok(collections::token_list(s, n.page(), n.id, "part")?.value()));
+        def.pure_accessor_typed(
+            "part",
+            pyro_js::GetterResult::ObjectOrNull,
+            |s, n| Ok(collections::token_list(s, n.page(), n.id, "part")?.value()),
+            // [PutForwards=value]
+            |_s, n, v| {
+                with_str(v, |value| {
+                    n.page().dom.borrow_mut().set_attribute_local(n.id, &markup5ever::local_name!("part"), value).js()
+                })
+            },
+        );
         def.getter("attributes", |s, n| Ok(collections::named_node_map(s, n.page(), n.id)?.value()));
         def.pure_method("hasAttributes", 0, |s, n, _a| {
             Ok(s.boolean(!n.page().dom.borrow().attributes(n.id).js()?.is_empty()))
@@ -1605,10 +1694,10 @@ impl JsClass for Element {
                 Ok(s.string(&if xml { dom.xml_inner(n.id) } else { dom.inner_html(n.id) }.js()?))
             },
             |s, n, v| {
-                let html = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Html, v, "Element innerHTML", true)?;
+                let (html, options) = crate::trusted_types::legacy_html(s, n.page(), v, "Element innerHTML", true, false)?;
                 crate::input::blur_before_removal(n.page(), n.id, true);
                 crate::handlers::drain_inline_before_fragment(n.page());
-                pyro_dom::parse::set_inner_html(&mut n.page().dom.borrow_mut(), n.id, &html).js()?;
+                pyro_dom::parse::set_inner_html_with(&mut n.page().dom.borrow_mut(), n.id, &html, options.run_scripts, options.filter).js()?;
                 crate::handlers::drain_inline_after_fragment(s, n.page());
                 Ok(())
             },
@@ -1622,7 +1711,7 @@ impl JsClass for Element {
                 Ok(s.string(&if xml { dom.xml_serialize(n.id) } else { dom.outer_html(n.id) }.js()?))
             },
             |s, n, v| {
-                let html = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Html, v, "Element outerHTML", true)?;
+                let (html, options) = crate::trusted_types::legacy_html(s, n.page(), v, "Element outerHTML", true, false)?;
                 let has_parent = n.page().dom.borrow().parent(n.id).js()?.is_some();
                 if has_parent {
                     crate::input::blur_before_removal(n.page(), n.id, false);
@@ -1641,7 +1730,7 @@ impl JsClass for Element {
                     let doc = dom.node_document(n.id).js()?;
                     dom.create_element(doc, "body").js()?
                 };
-                let frag = pyro_dom::parse::parse_setter_fragment(&mut dom, ctx, &html).js()?;
+                let frag = pyro_dom::parse::parse_setter_fragment_with(&mut dom, ctx, &html, options.run_scripts, options.filter).js()?;
                 dom.replace_child(parent, frag, n.id).js()?;
                 Ok(())
             },
@@ -1649,7 +1738,7 @@ impl JsClass for Element {
         def.method("insertAdjacentHTML", 2, |s, n, a| {
             a.require(2, "Element.insertAdjacentHTML")?;
             let pos = dom_string(a.get(0))?.to_ascii_lowercase();
-            let html = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Html, a.get(1), "Element insertAdjacentHTML", false)?;
+            let (html, options) = crate::trusted_types::legacy_html(s, n.page(), a.get(1), "Element insertAdjacentHTML", false, false)?;
             let mut dom = n.page().dom.borrow_mut();
             let parent = dom.parent(n.id).js()?;
             let ctx = match pos.as_str() {
@@ -1665,7 +1754,7 @@ impl JsClass for Element {
                     ));
                 }
             };
-            let frag = pyro_dom::parse::parse_insertion_fragment(&mut dom, ctx, &html).js()?;
+            let frag = pyro_dom::parse::parse_insertion_fragment_with(&mut dom, ctx, &html, options.run_scripts, options.filter).js()?;
             insert_adjacent(&mut dom, n.id, &pos, frag)?;
             Ok(s.undefined())
         });
@@ -1756,6 +1845,7 @@ impl JsClass for Element {
         });
         def.getter("assignedSlot", assigned_slot);
         def.method("getHTML", 0, get_html);
+        def.method("setHTML", 1, set_html);
         def.method("setHTMLUnsafe", 1, set_html_unsafe);
         crate::html::define_element_extras(def);
     }
@@ -1884,6 +1974,14 @@ impl JsClass for Document {
         def.accessor("fullscreenEnabled", |s, n| Ok(s.boolean(n.id == n.page().document() && n.page().dom.borrow().is_in_active_document(n.id) && crate::fullscreen::enabled(n.page()))), |_s, _n, _v| Ok(()));
         def.accessor("fullscreen", |s, n| Ok(s.boolean(n.id == n.page().document() && crate::fullscreen::element(n.page()).is_some())), |_s, _n, _v| Ok(()));
         def.accessor("fullscreenElement", |s, n| if n.id == n.page().document() { crate::fullscreen::element_for(s, n.page(), n.id) } else { Ok(s.null()) }, |_s, _n, _v| Ok(()));
+        // Pointer Lock API (`crate::pointer_lock`); `pointerLockElement` is null in a document without a browsing context.
+        def.getter("pointerLockElement", |s, n| if n.id == n.page().document() { crate::pointer_lock::element_for(s, n.page(), n.id) } else { Ok(s.null()) });
+        def.method("exitPointerLock", 0, |s, n, _a| {
+            if n.id == n.page().document() {
+                crate::pointer_lock::exit(n.page());
+            }
+            Ok(s.undefined())
+        });
         def.promise_method("exitFullscreen", 0, |s, n, _a| {
             if n.id == n.page().document() {
                 return crate::fullscreen::exit(s, n.page());
@@ -1893,19 +1991,18 @@ impl JsClass for Document {
             d.reject(s, JsError::Type("Document not active or no fullscreen element".into()).to_value(s))?;
             Ok(promise)
         });
+        // Storage Access API (`crate::storage_access`); `hasUnpartitionedCookieAccess` is Chrome's alias.
+        def.promise_method("hasStorageAccess", 0, |s, n, _a| crate::storage_access::has(s, n.page(), n.id));
+        def.promise_method("hasUnpartitionedCookieAccess", 0, |s, n, _a| crate::storage_access::has(s, n.page(), n.id));
+        def.promise_method("requestStorageAccess", 0, |s, n, a| crate::storage_access::request(s, n.page(), n.id, a.get(0)));
         crate::html::define_document_reflection(def);
         def.constructor(0, |s, nt, _a| {
             let page = page_of(s)?;
             let id = page.dom.borrow_mut().create_document(DocumentKind::Xml, "about:blank");
             wrap_new_node::<Document>(s, &page, id, nt)
         });
-        def.static_method("parseHTMLUnsafe", 1, |s, a| {
-            a.require(1, "Document.parseHTMLUnsafe")?;
-            let html = dom_string(a.get(0))?;
-            let page = page_of(s)?;
-            let doc = pyro_dom::parse::parse_html_unsafe(&page.dom, &html);
-            Ok(wrap_node(s, &page, doc)?.value())
-        });
+        def.static_method("parseHTMLUnsafe", 1, |s, a| parse_html_document(s, a, false));
+        def.static_method("parseHTML", 1, |s, a| parse_html_document(s, a, true));
         // `documentElement`, `head` and `body` are kept on the document's
         // data as its tree changes: one load each, on the lean dispatch.
         def.pure_getter_typed("documentElement", pyro_js::GetterResult::ObjectOrNull, |s, n| {
@@ -1937,6 +2034,7 @@ impl JsClass for Document {
         });
         def.getter("styleSheets", crate::css::style_sheets);
         def.getter("timeline", |s, n| crate::animations::timeline(s, n.page()));
+        def.getter("fragmentDirective", |s, n| crate::highlights::fragment_directive(s, n.page()));
         def.method("getAnimations", 0, |s, n, _a| {
             let root = wrap_node(s, n.page(), n.id)?.value();
             crate::animations::root_animations(s, n.page(), root)
@@ -1958,6 +2056,13 @@ impl JsClass for Document {
                 node_value(s, n.page(), e)
             },
             |s, n, v| {
+                // `HTMLElement? body`: null (and undefined, as no argument) is converted, then it is not a body.
+                if v.is_nullish() {
+                    return Err(JsError::dom(
+                        "HierarchyRequestError",
+                        "The new body element is null. It must be either a 'BODY' or 'FRAMESET' element.",
+                    ));
+                }
                 let new = node_arg(s, v, "body")?;
                 let mut dom = n.page().dom.borrow_mut();
                 // HTML: only a body or frameset element can be the body; setting the current one
@@ -2043,7 +2148,7 @@ impl JsClass for Document {
             node_value(s, n.page(), f)
         });
         def.pure_method("hasFocus", 0, |s, n, _a| Ok(s.boolean(n.page().document() == n.id && !n.page().is_detached())));
-        def.getter("currentScript", |s, n| node_value(s, n.page(), n.page().current_script()));
+        def.getter("currentScript", |s, n| node_value(s, n.page(), n.page().current_script_of(n.id)));
         def.getter("implementation", |s, n| Ok(crate::html::dom_implementation(s, n)?.value()));
         def.getter("forms", |s, n| {
             Ok(collections::collection(s, n.page(), n.id, CollectionKind::TagName("form".into()))?.value())
@@ -2357,13 +2462,25 @@ impl JsClass for Document {
             let root = node_value(s, n.page(), root)?;
             crate::view_transition::start(s, n.page(), doc, root, a.get(0))
         });
-        def.method("getSelection", 0, |s, _n, _a| {
+        def.method("getSelection", 0, |s, n, _a| {
+            // A document without a browsing context (createHTMLDocument, DOMParser) has a null defaultView and so no selection.
+            if n.page().document() != n.id {
+                return Ok(s.null());
+            }
             s.global().get_atom("getSelection")?.as_object().map_or(Ok(s.null()), |f| f.call(None, &[]))
         });
         def.method("execCommand", 1, |s, n, a| {
             editing_document_only(n, "execCommand")?;
             let command = arg_string(&a, 0, "Document.execCommand")?;
-            let value = if a.get(2).is_undefined() { String::new() } else { dom_string(a.get(2))? };
+            // Trusted Types: the value of "insertHTML" is a TrustedHTML sink ("Document execCommand"); other commands take a plain string.
+            let value = if command.eq_ignore_ascii_case("insertHTML") {
+                let html = if a.get(2).is_undefined() { s.string("") } else { a.get(2) };
+                crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Html, html, "Document execCommand", false)?
+            } else if a.get(2).is_undefined() {
+                String::new()
+            } else {
+                dom_string(a.get(2))?
+            };
             Ok(s.boolean(crate::edit_commands::exec_command(n.page(), n.id, &command, &value)))
         });
         def.method("queryCommandSupported", 1, |s, n, a| {

@@ -144,23 +144,20 @@ impl FrameHost {
         if !self.focus_chain_current(&chain, token) {
             return false;
         }
-        // HTML focus update steps: `blur` at the Window of each document that left the focus
-        // chain (deepest first), then `focus` at each that entered it (outermost first).
+        // Window `blur`/`focus` follow the focused frame (the leaf), as in Chrome: the previous
+        // focused frame's Window gets `blur` even when it stays an ancestor of the new one
+        // (focus-event-after-iframe-gets-focus.html expects `outerlog:windowblur`), and only the
+        // new focused frame's Window gets `focus`, not each ancestor that entered the chain.
         if previous_target != destination {
             let old = self.focus_chain(previous_target).unwrap_or_default();
-            for link in old.iter().rev() {
-                if !chain.iter().any(|l| l.key == link.key) {
-                    if let Some(page) = &link.page_dom {
-                        pyro_webapi::lifecycle::window_focus(page, false);
-                    }
-                }
+            if let Some(page) = old.last().and_then(|link| link.page_dom.as_ref()) {
+                pyro_webapi::lifecycle::window_focus(page, false);
             }
-            for link in &chain {
-                if !old.iter().any(|l| l.key == link.key) {
-                    if let Some(page) = &link.page_dom {
-                        pyro_webapi::lifecycle::window_focus(page, true);
-                    }
-                }
+            if !self.focus_chain_current(&chain, token) {
+                return false;
+            }
+            if let Some(page) = chain.last().and_then(|link| link.page_dom.as_ref()) {
+                pyro_webapi::lifecycle::window_focus(page, true);
             }
             if !self.focus_chain_current(&chain, token) {
                 return false;

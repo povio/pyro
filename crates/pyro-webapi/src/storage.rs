@@ -259,6 +259,29 @@ impl StorageNamespace {
         value
     }
 
+    /// Bounce Tracking Mitigations: removes everything stored by the origins at `site` (a registrable
+    /// domain): Web Storage, IndexedDB databases no connection holds, Cache Storage, the origin private
+    /// file system and named storage buckets. Returns whether anything was there.
+    pub fn clear_site(&self, site: &str) -> bool {
+        let mut cleared = false;
+        for (origin, area) in self.0.origins.borrow().iter() {
+            if crate::bounce_tracking::site_of_url(origin).as_deref() != Some(site) {
+                continue;
+            }
+            // (An area script is reading right now is left: the run is a task of its own, so none is.)
+            if let Ok(mut area) = area.try_borrow_mut() {
+                cleared |= !area.entries.is_empty();
+                area.entries = Vec::new();
+                area.bytes = 0;
+            }
+        }
+        cleared |= self.0.indexed_db.clear_site(site);
+        cleared |= self.0.caches.clear_site(site);
+        cleared |= self.0.opfs.clear_site(site);
+        cleared |= self.0.buckets.delete_site(site);
+        cleared
+    }
+
     /// UTF-16 bytes stored under `origin` (keys and values), as counted
     /// against the quota; `navigator.storage.estimate()` reports it.
     pub(crate) fn usage(&self, origin: &str) -> usize {

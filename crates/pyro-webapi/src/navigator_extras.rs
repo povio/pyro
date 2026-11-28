@@ -4,7 +4,7 @@
 //! nothing. Permissions and the clipboard belong to the browser context
 //! ([`ContextServices`], shared by its pages); client hints come from the
 //! page's user agent override.
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::fmt::Write as _;
 use std::rc::Rc;
 use std::sync::{Arc, RwLock};
@@ -203,8 +203,17 @@ struct OriginPermissions {
 type ClipboardEntry = (String, String, bool);
 
 /// Permissions follow a browser context across its owner and worker threads.
+///
+/// The table also holds the context's storage access rules (WebDriver "Set Storage Access"):
+/// they follow the context the same way, and `Browser.resetPermissions` leaves them alone.
 #[derive(Clone, Default)]
-pub(crate) struct PermissionTable(Arc<RwLock<FxHashMap<Option<String>, OriginPermissions>>>);
+pub(crate) struct PermissionTable(
+    Arc<RwLock<FxHashMap<Option<String>, OriginPermissions>>>,
+    Arc<RwLock<Arc<Vec<pyro_net::cookies::CookieAccessRule>>>>,
+    /// Whether the storage access rules are not empty: every request asks it, and a context without rules
+    /// (the default) answers with this load alone, not the lock and the `Arc` clone of the list.
+    Arc<std::sync::atomic::AtomicBool>,
+);
 
 /// State a browser context's pages share: its permission table and its
 /// clipboard (in memory; nothing reaches the system clipboard).
@@ -212,13 +221,27 @@ pub(crate) struct PermissionTable(Arc<RwLock<FxHashMap<Option<String>, OriginPer
 pub struct ContextServices {
     pub(crate) permissions: PermissionTable,
     pub(crate) web_locks: crate::web_locks::LockService,
+    /// The context's Compute Pressure sources (`crate::pressure`).
+    pressure: crate::pressure::PressureHub,
     clipboard: RefCell<Vec<ClipboardEntry>>,
+    /// Counts the clipboard's changes: a `ClipboardItem` read earlier is stale once it moved on.
+    clipboard_generation: Cell<u64>,
     /// Documents with PermissionStatus change listeners.
     watchers: RefCell<Vec<std::rc::Weak<PageDom>>>,
     /// `Emulation.setGeolocationOverride`. Outer `None`: no override.
     geolocation: RefCell<Option<Option<GeolocationFix>>>,
     /// Service worker registrations and clients (`crate::service_worker`).
     pub(crate) service_workers: crate::service_worker::Registry,
+    /// The `Report-To` groups the context's responses delivered, by origin
+    /// (`crate::reporting_store`).
+    pub(crate) report_to: RefCell<crate::reporting_store::ReportToStore>,
+    /// The context's WebAuthn virtual authenticators (`crate::webauthn`).
+    pub(crate) webauthn: RefCell<crate::webauthn::State>,
+    /// The virtual sensors (`crate::sensors`).
+    pub(crate) sensors: RefCell<crate::sensors::SensorHub>,
+    /// Bounce Tracking Mitigations: the sites its top-level navigations bounced through and the ones
+    /// the user activated (`crate::bounce_tracking`).
+    pub(crate) bounce: RefCell<crate::bounce_tracking::BounceTracker>,
 }
 
 /// A position `navigator.geolocation` reports. CDP's optional coordinates are
@@ -235,8 +258,13 @@ pub struct GeolocationFix {
 }
 
 impl ContextServices {
-    pub(crate) fn for_worker(permissions: PermissionTable, web_locks: crate::web_locks::LockService) -> Self {
-        Self { permissions, web_locks, ..Self::default() }
+    pub(crate) fn for_worker(permissions: PermissionTable, web_locks: crate::web_locks::LockService, pressure: crate::pressure::PressureHub) -> Self {
+        Self { permissions, web_locks, pressure, ..Self::default() }
+    }
+
+    /// The context's pressure sources: what `PressureObserver` reads and `Emulation.setPressure*Override` drives.
+    pub fn pressure(&self) -> &crate::pressure::PressureHub {
+        &self.pressure
     }
 
     /// Whether loads of this context's frames may go through a service
@@ -258,6 +286,50 @@ impl ContextServices {
     /// `Browser.setPermission`: one permission's setting for `origin`.
     pub fn set(&self, origin: Option<String>, name: &str, setting: PermissionSetting) {
         self.permissions.0.write().unwrap_or_else(|e| e.into_inner()).entry(origin).or_default().settings.insert(name.to_owned(), setting);
+    }
+
+    /// `Browser.setStorageAccess`: a rule blocking or allowing the unpartitioned cookies of a
+    /// third-party origin under an embedding site. A later rule with the same two patterns
+    /// replaces the earlier; of the rest the latest that matches decides. A list that blocks
+    /// nothing is dropped, so a context whose rules were all lifted is as free as one without.
+    pub fn set_cookie_access(&self, rule: pyro_net::cookies::CookieAccessRule) {
+        let mut rules = self.permissions.1.write().unwrap_or_else(|e| e.into_inner());
+        let mut next: Vec<_> = rules.iter().filter(|r| !r.same_patterns(&rule)).cloned().collect();
+        next.push(rule);
+        if next.iter().all(|r| !r.blocked) {
+            next.clear();
+        }
+        // (Under the write lock: a reader of the flag then finds the list it announces.)
+        self.permissions.2.store(!next.is_empty(), std::sync::atomic::Ordering::Release);
+        *rules = Arc::new(next);
+    }
+
+    /// Whether the context has any storage access rule: false for a context without one, by one atomic load.
+    pub(crate) fn has_cookie_access_rules(&self) -> bool {
+        self.permissions.2.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// The context's storage access rules (empty: no document is a third party for cookies).
+    pub(crate) fn cookie_access_rules(&self) -> Arc<Vec<pyro_net::cookies::CookieAccessRule>> {
+        self.permissions.1.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// The `storage-access` permission of a document of origin `own` embedded under `top`. The
+    /// setting is made for the top-level origin (testdriver's `set_permission` is the top-level
+    /// context's) or for the embedded one (a window of that origin, as top-level, set it): the
+    /// document's own entry decides first, then the embedding's, then the every-origin one.
+    pub(crate) fn storage_access_state(&self, own: Option<&str>, top: Option<&str>) -> PermissionSetting {
+        let table = self.permissions.0.read().unwrap_or_else(|e| e.into_inner());
+        let keys = [own.map(|o| Some(o.to_owned())), top.map(|t| Some(t.to_owned())), Some(None)];
+        for entry in keys.iter().flatten().filter_map(|k| table.get(k)) {
+            if let Some(setting) = entry.settings.get("storage-access") {
+                return *setting;
+            }
+            if entry.deny_others {
+                return PermissionSetting::Denied;
+            }
+        }
+        PermissionSetting::Prompt
     }
 
     /// `Browser.resetPermissions`.
@@ -326,6 +398,17 @@ impl ContextServices {
         *self.geolocation.borrow_mut() = fix;
     }
 
+    /// A CDP `WebAuthn.<method>` command on the context's virtual authenticators.
+    pub fn webauthn_command(&self, method: &str, params: &serde_json::Value) -> Result<serde_json::Value, crate::webauthn::WebAuthnError> {
+        self.webauthn.borrow_mut().run(method, params)
+    }
+
+    /// The `WebAuthn.credentialAdded` / `credentialAsserted` / `credentialUpdated` / `credentialDeleted`
+    /// events (method, params) the virtual authenticators raised since the last call.
+    pub fn take_webauthn_events(&self) -> Vec<(&'static str, serde_json::Value)> {
+        self.webauthn.borrow_mut().take_events()
+    }
+
     /// The clipboard's `text/plain` entry (CDP-side inspection and tests).
     pub fn clipboard_text(&self) -> Option<String> {
         self.clipboard.borrow().iter().find(|e| e.0 == "text/plain").map(|e| e.1.clone())
@@ -339,6 +422,7 @@ impl ContextServices {
     /// Replaces the clipboard with text entries (copy, cut).
     pub(crate) fn write_clipboard_strings(&self, items: Vec<(String, String)>) {
         *self.clipboard.borrow_mut() = items.into_iter().map(|(ty, data)| (ty, data, false)).collect();
+        self.clipboard_generation.set(self.clipboard_generation.get() + 1);
     }
 }
 
@@ -379,6 +463,13 @@ fn make<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
         Ok(s.string(permission_state(&page, &name).as_str()))
     })?;
     native.set_atom("permissionState", state.value())?;
+    // policy(feature): whether the document's permissions policy lets it use `feature`; a refusal is
+    // also reported (`crate::permissions_policy::check_feature`).
+    let policy = s.function("policy", |s, _, args| {
+        let page = crate::target::page_of(s)?;
+        Ok(s.boolean(crate::permissions_policy::check_feature(s, &page, &args.get(0).to_string()?)))
+    })?;
+    native.set_atom("policy", policy.value())?;
     let watch = s.function("watchPermissions", |s, _, args| {
         let page = crate::target::page_of(s)?;
         let refresh = args.get(0);
@@ -422,10 +513,22 @@ fn make<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
                 entry.get_index(2)?.to_bool(),
             ));
         }
-        *page.context_services().clipboard.borrow_mut() = entries;
+        let services = page.context_services();
+        *services.clipboard.borrow_mut() = entries;
+        services.clipboard_generation.set(services.clipboard_generation.get() + 1);
         Ok(s.undefined())
     })?;
     native.set_atom("clipboardWrite", write.value())?;
+    let generation = s.function("clipboardGeneration", |s, _, _| {
+        let page = crate::target::page_of(s)?;
+        Ok(s.number(page.context_services().clipboard_generation.get() as f64))
+    })?;
+    native.set_atom("clipboardGeneration", generation.value())?;
+    // Reading or writing the clipboard from a document that is no longer in a frame does nothing.
+    let detached = s.function("detached", |s, _, _| Ok(s.boolean(crate::target::page_of(s)?.is_detached())))?;
+    native.set_atom("detached", detached.value())?;
+    // ClipboardItems are shared by same-origin realms: an iframe's clipboard writes its parent's items.
+    native.set_atom("itemSlot", crate::streams::shared_slot(s, &*crate::target::page_of(s)?, "ClipboardItem")?)?;
     let position = s.function("geolocationPosition", |s, _, _| {
         let page = crate::target::page_of(s)?;
         let services = page.context_services();
@@ -454,6 +557,13 @@ fn make<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
 }
 
 pub(crate) fn permission_state(page: &PageDom, name: &str) -> PermissionSetting {
+    if name == "storage-access" {
+        // What `query()` reports: a denial is hidden behind "prompt" (Storage Access API, privacy).
+        return match crate::storage_access::permission(page) {
+            PermissionSetting::Denied => PermissionSetting::Prompt,
+            state => state,
+        };
+    }
     let origin = crate::storage::document_origin(page);
     page.context_services().state(origin.as_deref(), name)
 }

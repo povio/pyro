@@ -271,6 +271,10 @@ fn range_text(r: &RangeData, rendered: bool) -> JsResult<String> {
         if !matches!(dom.node_type(n), Ok(NodeType::Text | NodeType::CDataSection)) {
             continue;
         }
+        // Rendered text (Selection.toString) leaves out what is inert: it cannot be selected.
+        if rendered && dom.parent_element(n).ok().flatten().is_some_and(|p| page.layout().style().is_inert(&dom, p)) {
+            continue;
+        }
         let len = dom.char_length(n).js()?;
         // A text node contributes only where its interval intersects the range;
         // compare_points handles offsets into ancestor containers at any depth.
@@ -671,8 +675,10 @@ impl JsClass for Range {
             ))
         });
         def.method("createContextualFragment", 1, |s, r, a| {
-            let html = arg_string(&a, 0, "Range.createContextualFragment")?;
+            a.require(1, "Range.createContextualFragment")?;
             let page = r.page();
+            // Trusted Types: the markup is a TrustedHTML sink ("Range createContextualFragment").
+            let (html, options) = crate::trusted_types::legacy_html(s, &page, a.get(0), "Range createContextualFragment", false, true)?;
             let ctx = {
                 let dom = page.dom.borrow();
                 let sn = points(r).0;
@@ -683,7 +689,7 @@ impl JsClass for Range {
                     _ => sn,
                 }
             };
-            let frag = pyro_dom::parse::parse_contextual_fragment(&mut page.dom.borrow_mut(), ctx, &html).js()?;
+            let frag = pyro_dom::parse::parse_contextual_fragment_with(&mut page.dom.borrow_mut(), ctx, &html, options.run_scripts, options.filter).js()?;
             Ok(wrap_node(s, &page, frag)?.value())
         });
         def.method("getBoundingClientRect", 0, |s, r, _a| crate::layout_api::range_rect(s, &r.page(), points(r)));
@@ -699,10 +705,13 @@ impl JsClass for Range {
         });
         def.method("extractContents", 0, |s, r, _a| {
             let frag = extract(r, &mut r.page.dom.borrow_mut())?;
+            crate::custom::upgrade_clone(s, &r.page, frag);
             Ok(wrap_node(s, &r.page, frag)?.value())
         });
         def.method("cloneContents", 0, |s, r, _a| {
             let frag = contents(&mut r.page.dom.borrow_mut(), r.live.start(), r.live.end(), false)?;
+            // The cloned custom elements are created and upgraded (DOM "clone a node": create an element).
+            crate::custom::upgrade_clone(s, &r.page, frag);
             Ok(wrap_node(s, &r.page, frag)?.value())
         });
         def.method("insertNode", 1, |s, r, a| {
@@ -809,11 +818,41 @@ impl JsClass for OpaqueRange {
         // (WPT dom/ranges/tentative/OpaqueRange-basic.html).
         def.getter("startContainer", |s, _range| Ok(s.undefined()));
         def.getter("endContainer", |s, _range| Ok(s.undefined()));
+        // The control's value text is not a DOM tree: its geometry comes from the layout of the
+        // value (a disconnected range, a removed or `display: none` control has none).
+        def.method("getBoundingClientRect", 0, |s, range, _| {
+            let page = crate::target::page_of(s)?;
+            let rects = opaque_range_rects(&page, range);
+            let bounds = rects.iter().copied().reduce(|a, b| {
+                let (x, y) = (a.left().min(b.left()), a.top().min(b.top()));
+                pyro_dom::layout::Rect { x, y, width: a.right().max(b.right()) - x, height: a.bottom().max(b.bottom()) - y }
+            });
+            crate::canvas::rect_value(s, &page, false, bounds.unwrap_or_default())
+        });
+        def.method("getClientRects", 0, |s, range, _| {
+            let page = crate::target::page_of(s)?;
+            let mut rects = opaque_range_rects(&page, range);
+            // A collapsed range (a caret) has a bounding rect but no client rects.
+            if range.offsets().0 == range.offsets().1 {
+                rects.clear();
+            }
+            let values = rects.iter().map(|r| crate::canvas::rect_value(s, &page, false, *r)).collect::<JsResult<Vec<_>>>()?;
+            crate::canvas::rect_list(s, &page, &values)
+        });
         def.method("disconnect", 0, |s, range, _| {
             range.disconnect();
             Ok(s.undefined())
         });
     }
+}
+
+/// The rects of an `OpaqueRange` in `page`'s document: none once disconnected.
+fn opaque_range_rects(page: &PageDom, range: &pyro_dom::forms::OpaqueRange) -> Vec<pyro_dom::layout::Rect> {
+    let Some(el) = range.element() else { return Vec::new() };
+    let (start, end) = range.offsets();
+    let layout = page.layout();
+    let rects = layout.value_range_rects(&page.dom.borrow(), el, start, end);
+    rects
 }
 
 /// The page and boundary points of a `Range` or `StaticRange` receiver.
@@ -1024,6 +1063,39 @@ fn node_or_null<'s>(s: &Scope<'s>, page: &Rc<PageDom>, n: Option<NodeId>) -> JsR
     }
 }
 
+/// The legacy anchor/focus endpoints "shadow-adjusted" against the document tree (Chrome's
+/// `DOMSelection`): a boundary inside a tree that script cannot reach (a closed shadow root, or a
+/// shadow tree inside one) is reported as the position of the outermost such host in its parent,
+/// so the API never leaks nodes of a closed shadow tree. A boundary in an open shadow tree is
+/// reported as it is (`host.shadowRoot` reaches it anyway); a selection across trees is collapsed
+/// by the selection itself (`editing::legacy_endpoints`).
+fn adjusted_endpoints(page: &Rc<PageDom>) -> JsResult<Option<(Point, Point)>> {
+    let Some((a, f)) = crate::editing::legacy_endpoints(page) else { return Ok(None) };
+    let dom = page.dom.borrow();
+    let backward = composed_order(&dom, a, f)? > 0;
+    Ok(Some((hide_closed_shadow(&dom, a, backward)?, hide_closed_shadow(&dom, f, !backward)?)))
+}
+
+/// `point` moved out of every closed shadow tree it is in (outward to the host's position in the
+/// host's parent; `end` puts it after the host), leaving open shadow trees alone.
+fn hide_closed_shadow(dom: &Dom, mut point: Point, end: bool) -> JsResult<Point> {
+    loop {
+        // The host of the innermost closed shadow root enclosing the point, if any.
+        let mut root = dom.root_node(point.0, false).js()?;
+        let mut closed_host = None;
+        while let Some(host) = dom.fragment_host(root).js()? {
+            if dom.shadow_root_mode(root).js()? == Some(pyro_dom::ShadowRootMode::Closed) {
+                closed_host = Some(host);
+                break;
+            }
+            root = dom.root_node(host, false).js()?;
+        }
+        let Some(host) = closed_host else { return Ok(point) };
+        let parent = dom.parent(host).js()?.ok_or_else(wrong_document)?;
+        point = (parent, dom.index_in_parent(host).js()? + u32::from(end));
+    }
+}
+
 pub struct Selection;
 impl JsClass for Selection {
     const NAME: &'static str = "Selection";
@@ -1042,10 +1114,10 @@ impl JsClass for Selection {
             }))
         });
         def.getter("isCollapsed", |s, sel| Ok(s.boolean(editing::legacy_endpoints(&sel.page).is_none_or(|(a, f)| a == f))));
-        def.getter("anchorNode", |s, sel| node_or_null(s, &sel.page, editing::legacy_endpoints(&sel.page).map(|(a, _)| a.0)));
-        def.getter("anchorOffset", |s, sel| Ok(s.number(editing::legacy_endpoints(&sel.page).map_or(0, |(a, _)| a.1) as f64)));
-        def.getter("focusNode", |s, sel| node_or_null(s, &sel.page, editing::legacy_endpoints(&sel.page).map(|(_, f)| f.0)));
-        def.getter("focusOffset", |s, sel| Ok(s.number(editing::legacy_endpoints(&sel.page).map_or(0, |(_, f)| f.1) as f64)));
+        def.getter("anchorNode", |s, sel| node_or_null(s, &sel.page, adjusted_endpoints(&sel.page)?.map(|(a, _)| a.0)));
+        def.getter("anchorOffset", |s, sel| Ok(s.number(adjusted_endpoints(&sel.page)?.map_or(0, |(a, _)| a.1) as f64)));
+        def.getter("focusNode", |s, sel| node_or_null(s, &sel.page, adjusted_endpoints(&sel.page)?.map(|(_, f)| f.0)));
+        def.getter("focusOffset", |s, sel| Ok(s.number(adjusted_endpoints(&sel.page)?.map_or(0, |(_, f)| f.1) as f64)));
         def.getter("direction", |s, sel| {
             Ok(s.string(match editing::selection(&sel.page) {
                 None => "none",
@@ -1064,6 +1136,7 @@ impl JsClass for Selection {
         });
         def.method("getComposedRanges", 0, |s, sel, args| composed_ranges(s, &sel.page, args.get(0)));
         def.method("getRangeAt", 1, |s, sel, a| {
+            a.require(1, "Selection.getRangeAt")?;
             if editing::selection(&sel.page).is_none() || to_u32(a.get(0)).ok() != Some(0) {
                 return Err(JsError::dom("IndexSizeError", "The index provided is not a valid range index."));
             }
@@ -1112,6 +1185,7 @@ impl JsClass for Selection {
             Ok(s.undefined())
         });
         def.method("collapse", 1, |s, sel, a| {
+            a.require(1, "Selection.collapse")?;
             if a.get(0).is_null() || a.get(0).is_undefined() {
                 editing::clear_selection(&sel.page);
                 return Ok(s.undefined());
@@ -1123,6 +1197,7 @@ impl JsClass for Selection {
             Ok(s.undefined())
         });
         def.method("setPosition", 1, |s, sel, a| {
+            a.require(1, "Selection.setPosition")?;
             if a.get(0).is_null() || a.get(0).is_undefined() {
                 editing::clear_selection(&sel.page);
                 return Ok(s.undefined());
@@ -1192,14 +1267,21 @@ impl JsClass for Selection {
             let dom = sel.page.dom.borrow();
             Ok(s.boolean(dom.contains(sn, node).js()? || dom.contains(en, node).js()?))
         });
-        def.method("toString", 0, |s, sel, _a| match editing::selection_range(&sel.page) {
-            Some((start, end)) => {
-                let r = RangeData::new(&sel.page, start.0)?;
-                set_point(&r, start.0, start.1, true)?;
-                set_point(&r, end.0, end.1, false)?;
-                Ok(s.string(&range_text(&r, true)?))
+        def.method("toString", 0, |s, sel, _a| {
+            // Text selected inside a focused text control is what the selection reports (Chrome): the control's own
+            // selection is not part of the document's.
+            if let Some(text) = crate::clipboard::focused_control_selection(&sel.page) {
+                return Ok(s.string(&text));
             }
-            None => Ok(s.string("")),
+            match editing::selection_range(&sel.page) {
+                Some((start, end)) => {
+                    let r = RangeData::new(&sel.page, start.0)?;
+                    set_point(&r, start.0, start.1, true)?;
+                    set_point(&r, end.0, end.1, false)?;
+                    Ok(s.string(&range_text(&r, true)?))
+                }
+                None => Ok(s.string("")),
+            }
         });
         def.method("deleteFromDocument", 0, |s, sel, _a| {
             if let Some((anchor, focus)) = editing::legacy_endpoints(&sel.page) {

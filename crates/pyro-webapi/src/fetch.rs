@@ -112,6 +112,11 @@ struct Wire {
     closed: bool,
     scheduled: bool,
     null_body: bool,
+    /// A service worker's fetch: an opaque response keeps its bytes (script sees a null body,
+    /// but `respondWith` hands the body on to the page, `Body::read_internal`).
+    keep_opaque: bool,
+    /// The response is opaque and `keep_opaque` holds its bytes: [`Body::is_null`] is still true.
+    opaque: bool,
     /// A `response.body` reader exists: data chunks wake the page so reads
     /// resolve as bytes arrive.
     streaming: bool,
@@ -140,6 +145,8 @@ struct Job {
     /// `integrity` metadata: the response is held until the whole body has
     /// arrived and matched (SRI), then delivered.
     integrity: Option<crate::integrity::Integrity>,
+    /// The Ed25519 keys of the request's integrity metadata ([`FetchExtras::signature_keys`]).
+    signature_keys: Vec<crate::signature_sri::Key>,
     held_head: RefCell<Option<ResponseHead>>,
     /// The request's CSP guard: what its redirect checks found is reported as it progresses.
     csp: Option<Arc<pyro_net::csp::RequestCsp>>,
@@ -190,6 +197,9 @@ pub(crate) enum ReadKind {
     /// The body's pieces as they are, in a `cache_storage::StoredBody`: what
     /// `cache.put` keeps, without a copy.
     Chunks,
+    /// An opaque response's bytes, for the service worker that answers a request with it
+    /// (`Body::read_internal`): script never sees them.
+    Internal,
 }
 /// Package fully read bytes using the consuming Request or Response's own
 /// current headers. Clones can share body bytes but have separate header lists.
@@ -238,6 +248,17 @@ fn read_result<'s>(s: &Scope<'s>, value: Value<'s>, done: bool) -> JsResult<Valu
     result.set_atom("done", s.boolean(done))?;
     Ok(result.value())
 }
+/// One `response.body` stream over a native [`Body`]: a Response and its clone each have their
+/// own over the one body, each with the position it has delivered up to.
+#[derive(Default)]
+pub(crate) struct StreamState {
+    /// The stream holds a consumer until it closes, errors or is canceled.
+    open: Cell<bool>,
+    /// Bytes the stream delivered while another consumer (a clone that will
+    /// read the whole body) kept the chunks: they stay buffered for it.
+    cursor: Cell<usize>,
+}
+
 pub(crate) struct Body {
     wire: Arc<Mutex<Wire>>,
     visible_terminal: RefCell<Option<Result<(), NetError>>>,
@@ -246,12 +267,10 @@ pub(crate) struct Body {
     realm_id: RealmId,
     readers: RefCell<Vec<Reader>>,
     /// Pending `ReadableStreamDefaultReader.read()` promises, in order.
-    stream_reads: RefCell<Vec<(WeakRealm, Deferred)>>,
-    /// The stream holds a consumer until it closes, errors or is canceled.
-    stream_open: Cell<bool>,
-    /// Bytes the stream delivered while another consumer (a clone that will
-    /// read the whole body) kept the chunks: they stay buffered for it.
-    stream_cursor: Cell<usize>,
+    stream_reads: RefCell<Vec<(WeakRealm, Deferred, Rc<StreamState>)>>,
+    /// The body's open streams (a Response and its clone each have one over the one native
+    /// body): each holds a consumer until it closes, errors or is canceled.
+    streams: RefCell<Vec<Rc<StreamState>>>,
     consumers: Cell<usize>,
     abort_registration: RefCell<Option<AbortRegistration>>,
     /// The aborting signal's own wrapper reference, for its reason. None without a signal.
@@ -357,7 +376,8 @@ impl PageDom {
         }
         Some(url)
     }
-    pub(crate) fn document_url(&self) -> String {
+    /// The document's URL as a string (empty when it has none).
+    pub fn document_url(&self) -> String {
         self.dom.borrow().document_data(self.document()).map(|d| d.url.to_string()).unwrap_or_default()
     }
     /// Active network jobs and logical retained body bytes (diagnostics).
@@ -522,6 +542,9 @@ pub(crate) fn attach_blob(page: &PageDom, request: &mut Request) {
 /// What a fetch does beyond its `pyro_net::Request`.
 pub(crate) struct FetchExtras {
     integrity: Option<crate::integrity::Integrity>,
+    /// The Ed25519 keys of the `integrity` metadata (Signature-based SRI): a signature of one of
+    /// them must have verified ([`crate::signature_sri`]).
+    signature_keys: Vec<crate::signature_sri::Key>,
     /// Keepalive: the reserved body bytes, held until the request ends.
     keepalive: Option<KeepaliveGuard>,
 }
@@ -630,7 +653,7 @@ pub(crate) fn parse_request<'s>(
         }
         let bytes: Vec<u8> = value.chars().map(|c| c as u8).collect();
         let key = HeaderName::from_bytes(name.as_bytes()).map_err(|_| JsError::Type("Invalid header".into()))?;
-        let value = HeaderValue::from_bytes(&bytes).map_err(|_| JsError::Type("Invalid header value".into()))?;
+        let value = headers::request_header_value(bytes).ok_or_else(|| JsError::Type("Invalid header value".into()))?;
         request.headers.append(key, value);
     }
     let body = option(s, init, "body")?;
@@ -710,6 +733,15 @@ pub(crate) fn parse_request<'s>(
             return Err(JsError::Type("Failed to fetch: integrity metadata on a no-cors request".into()));
         }
     }
+    let signature_keys = crate::signature_sri::parse_keys(&integrity);
+    if !signature_keys.is_empty() && request.mode == RequestMode::NoCors {
+        return Err(JsError::Type("Failed to fetch: integrity metadata on a no-cors request".into()));
+    }
+    // Signature-based SRI: the request asks for a signature by those keys (added after the CORS
+    // checks of the author's headers: it takes no preflight).
+    if let Some(value) = crate::signature_sri::accept_signature(&signature_keys).and_then(|v| v.parse().ok()) {
+        request.headers.insert(pyro_net::http::HeaderName::from_static("accept-signature"), value);
+    }
     let keepalive = match option(s, init, "keepalive")? {
         v if v.is_undefined() => request_input.as_ref().is_some_and(|r| r.keepalive),
         v => v.to_bool(),
@@ -723,7 +755,9 @@ pub(crate) fn parse_request<'s>(
     } else {
         None
     };
-    let extras = FetchExtras { integrity: crate::integrity::Integrity::parse(&integrity), keepalive };
+    request.keepalive = keepalive.is_some();
+    request.integrity.clone_from(&integrity);
+    let extras = FetchExtras { integrity: crate::integrity::Integrity::parse(&integrity), signature_keys, keepalive };
     request.cache = match string_option(s, init, "cache", &default_string("cache", "default"))?.as_str() {
         "default" => pyro_net::CacheMode::Default,
         "no-store" => pyro_net::CacheMode::NoStore,
@@ -805,6 +839,12 @@ pub(crate) fn send_beacon(s: &Scope<'_>, page: &Rc<PageDom>, url: pyro_net::Url,
         extract_body(s, data)?
     };
     let Some(net) = page.net.borrow().clone() else { return Ok(false) };
+    // Mixed Content: a beacon the fetch would block is not queued, and the call says so (Chrome
+    // returns false; WPT beacon/headers `header-referrer-*.https` treats that as "blocked").
+    let insecure = page.insecure_policy();
+    if insecure.prohibits_mixed && !insecure.upgrade && url.scheme() == "http" && !pyro_net::is_potentially_trustworthy_url(&url) {
+        return Ok(false);
+    }
     // CSP `connect-src`: a blocked beacon is never sent (no request is made; its violation is
     // reported), and the call still returns true, as the queued beacon's fetch would fail
     // later in Chrome.
@@ -971,6 +1011,13 @@ fn fetch_call<'s>(
         }
         let (mut request, signal, extras) = parse_request(s, &page, args.get(0), args.get(1), false)?;
         request.body_from_stream = request.body.is_some() && settled == Some(true);
+        // An engine-internal request has its own Fetch destination (`Sec-Fetch-Dest`).
+        match csp_dest {
+            Some(pyro_net::csp::RequestDest::AudioWorklet) => request.destination = Destination::AudioWorklet,
+            Some(pyro_net::csp::RequestDest::PaintWorklet) => request.destination = Destination::PaintWorklet,
+            Some(pyro_net::csp::RequestDest::Font) => request.destination = Destination::Font,
+            _ => {}
+        }
         // Init conversion can execute script, including embedder teardown.
         if page.is_disposed() {
             return Err(JsError::ContextDestroyed);
@@ -1014,6 +1061,8 @@ fn fetch_call<'s>(
                 closed: false,
                 scheduled: false,
                 null_body: request.method == Method::HEAD,
+                keep_opaque: s.global_data::<crate::worker_scope::ServiceWorkerGlobalScope>().is_some(),
+                opaque: false,
                 streaming: false,
                 budget: page.fetch_state.budget.clone(),
             }));
@@ -1025,8 +1074,7 @@ fn fetch_call<'s>(
                 realm_id: s.realm_id(),
                 readers: RefCell::new(Vec::new()),
                 stream_reads: RefCell::new(Vec::new()),
-                stream_open: Cell::new(false),
-                stream_cursor: Cell::new(0),
+                streams: RefCell::new(Vec::new()),
                 consumers: Cell::new(0),
                 abort_registration: RefCell::new(None),
                 abort_signal: RefCell::new(None),
@@ -1054,10 +1102,11 @@ fn fetch_call<'s>(
                 credentials: request.credentials,
                 body,
                 integrity: extras.integrity,
+                signature_keys: extras.signature_keys,
                 held_head: RefCell::new(None),
                 csp: request.csp.clone(),
             });
-            if job.integrity.is_some() {
+            if job.integrity.is_some() || !job.signature_keys.is_empty() {
                 // Nothing is delivered before the whole body is checked.
                 job.body.wire.lock().unwrap().streaming = false;
             }
@@ -1139,9 +1188,11 @@ fn receive(
             ResponseEvent::Redirect { .. } => false,
             ResponseEvent::Response(head) => {
                 wire.frontier.response = true;
-                wire.null_body |=
-                    matches!(head.kind, pyro_net::ResponseKind::Opaque | pyro_net::ResponseKind::OpaqueRedirect)
-                        || matches!(head.status.as_u16(), 204 | 205 | 304);
+                let opaque = head.kind == pyro_net::ResponseKind::Opaque;
+                wire.null_body |= head.kind == pyro_net::ResponseKind::OpaqueRedirect
+                    || matches!(head.status.as_u16(), 204 | 205 | 304)
+                    || (opaque && !wire.keep_opaque);
+                wire.opaque = opaque && !wire.null_body;
                 wire.head = Some(Box::new(head));
                 true
             }
@@ -1232,26 +1283,41 @@ fn pump(page_id: u64, id: RequestId) {
     if page.is_disposed() || job.body.disposed.get() || job.body.aborted.get() {
         return;
     }
-    let head = match &job.integrity {
-        None => head,
-        Some(integrity) => {
-            if let Some(head) = head {
-                if matches!(head.kind, pyro_net::ResponseKind::Opaque | pyro_net::ResponseKind::OpaqueRedirect) {
+    // SRI (`integrity` metadata, Ed25519 keys) and the response's own `Unencoded-Digest` and
+    // `Signature` headers: the response is held until the whole body has arrived and passed,
+    // then delivered. A response with neither is not touched.
+    let asserted = job.integrity.is_some() || !job.signature_keys.is_empty();
+    let checked = asserted
+        || job.held_head.borrow().is_some()
+        || head.as_ref().is_some_and(|head| crate::signature_sri::wants_check(&head.headers));
+    let head = if !checked {
+        head
+    } else {
+        if let Some(head) = head {
+            if asserted && matches!(head.kind, pyro_net::ResponseKind::Opaque | pyro_net::ResponseKind::OpaqueRedirect) {
+                fail_integrity(&s, &page, &job, id);
+                return;
+            }
+            *job.held_head.borrow_mut() = Some(head);
+        }
+        if matches!(terminal, Some(Ok(()))) {
+            let held = job.held_head.borrow_mut().take();
+            if let Some(held) = &held {
+                let wire = job.body.wire.lock().unwrap();
+                let body: Vec<&[u8]> = wire.chunks.iter().map(|chunk| &chunk[..]).collect();
+                let matched = job.integrity.as_ref().is_none_or(|integrity| integrity.matches(&wire.chunks));
+                if !matched
+                    || !crate::signature_sri::verify(&held.url, held.status.as_u16(), &held.headers, &body, &job.signature_keys)
+                {
+                    drop(body);
+                    drop(wire);
                     fail_integrity(&s, &page, &job, id);
                     return;
                 }
-                *job.held_head.borrow_mut() = Some(head);
             }
-            if matches!(terminal, Some(Ok(()))) {
-                let held = job.held_head.borrow_mut().take();
-                if held.is_some() && !integrity.matches(&job.body.wire.lock().unwrap().chunks) {
-                    fail_integrity(&s, &page, &job, id);
-                    return;
-                }
-                held
-            } else {
-                None
-            }
+            held
+        } else {
+            None
         }
     };
     if let Some(head) = head {
@@ -1343,6 +1409,8 @@ impl Body {
             closed: true,
             scheduled: false,
             null_body,
+            keep_opaque: false,
+            opaque: false,
             streaming: false,
             // Private budget pre-charged with this body so clear_body balances.
             budget: Arc::new(Budget { used: AtomicUsize::new(len), limit: AtomicUsize::new(usize::MAX) }),
@@ -1355,8 +1423,7 @@ impl Body {
             realm_id: s.realm_id(),
             readers: RefCell::new(Vec::new()),
             stream_reads: RefCell::new(Vec::new()),
-            stream_open: Cell::new(false),
-            stream_cursor: Cell::new(0),
+            streams: RefCell::new(Vec::new()),
             consumers: Cell::new(0),
             abort_registration: RefCell::new(None),
             abort_signal: RefCell::new(None),
@@ -1376,12 +1443,12 @@ impl Body {
         }
     }
     pub(crate) fn add_consumer(&self) {
-        if !self.is_null() {
+        if !self.no_bytes() {
             self.consumers.set(self.consumers.get() + 1);
         }
     }
     pub(crate) fn release_consumer(&self) {
-        if self.is_null() {
+        if self.no_bytes() {
             self.release_if_unused();
             return;
         }
@@ -1407,8 +1474,22 @@ impl Body {
             drop(self.abort_registration.take());
         }
     }
+    /// What script sees: no body (a null one, or an opaque response's, whose bytes stay for the
+    /// service worker that hands it on).
     pub(crate) fn is_null(&self) -> bool {
+        let wire = self.wire.lock().unwrap();
+        wire.null_body || wire.opaque
+    }
+    /// No bytes at all (a null body): nothing to count a consumer for. (An opaque response's body
+    /// is null to script only: [`Body::is_null`].)
+    pub(crate) fn no_bytes(&self) -> bool {
         self.wire.lock().unwrap().null_body
+    }
+    /// The body of an opaque response read back from a cache: its bytes stay for the service
+    /// worker that answers with it, and are hidden from script.
+    pub(crate) fn mark_opaque(&self) {
+        let mut wire = self.wire.lock().unwrap();
+        wire.opaque = !wire.null_body;
     }
     fn abort_error<'s>(&self, s: &Scope<'s>) -> Value<'s> {
         // The signal's reason when its wrapper is still alive; otherwise (no signal, or the
@@ -1440,7 +1521,7 @@ impl Body {
     ) -> JsResult<Value<'s>> {
         let deferred = s.deferred()?;
         let promise = deferred.promise.get(s);
-        let ready = self.is_null() || self.visible_terminal.borrow().is_some();
+        let ready = (self.is_null() && !matches!(kind, ReadKind::Internal | ReadKind::Chunks)) || self.visible_terminal.borrow().is_some();
         if already_used {
             deferred.reject(s, JsError::Type("Response body has already been consumed".into()).to_value(s))?;
         } else if let Some(error) = self.error(s) {
@@ -1480,11 +1561,16 @@ impl Body {
             Vec::new()
         } else {
             let wire = self.wire.lock().unwrap();
-            let mut bytes = Vec::with_capacity(wire.bytes);
+            // An opaque response's body is empty to script.
+            if wire.opaque && !matches!(kind, ReadKind::Internal) {
+                Vec::new()
+            } else {
+                let mut bytes = Vec::with_capacity(wire.bytes);
             for chunk in &wire.chunks {
                 bytes.extend_from_slice(chunk);
             }
             bytes
+            }
         };
         let result = match kind {
             ReadKind::Chunks => {
@@ -1507,7 +1593,7 @@ impl Body {
                     Ok(unsafe { Value::from_raw(s.ctx(), raw) })
                 }
             }
-            ReadKind::ArrayBuffer => crate::encoding::array_buffer(s, &bytes),
+            ReadKind::ArrayBuffer | ReadKind::Internal => crate::encoding::array_buffer(s, &bytes),
             ReadKind::Bytes => crate::encoding::uint8_array(s, &bytes),
             ReadKind::Blob | ReadKind::FormData => package_body(s, kind, bytes, headers),
         };
@@ -1578,51 +1664,75 @@ impl Body {
         }
         drop(readers);
         drop(self.stream_reads.take());
-        self.close_stream();
+        self.close_streams();
     }
 
     // ----- response.body (ReadableStream) ------------------------------------
 
     /// Starts streaming delivery for a `response.body` reader. The stream
     /// takes over the Response's body consumer.
-    pub(crate) fn open_stream(&self) {
-        self.stream_open.set(true);
+    pub(crate) fn open_stream(&self, stream: &Rc<StreamState>) {
+        if !stream.open.replace(true) {
+            self.streams.borrow_mut().push(stream.clone());
+        }
         self.wire.lock().unwrap().streaming = true;
     }
-    fn close_stream(&self) {
-        if self.stream_open.replace(false) {
-            self.wire.lock().unwrap().streaming = false;
+    fn close_stream(&self, stream: &Rc<StreamState>) {
+        if stream.open.replace(false) {
+            stream.cursor.set(0);
+            let none_left = {
+                let mut streams = self.streams.borrow_mut();
+                streams.retain(|s| !Rc::ptr_eq(s, stream));
+                streams.is_empty()
+            };
+            if none_left {
+                self.wire.lock().unwrap().streaming = false;
+            }
             self.release_consumer();
         }
     }
+    /// Every stream of the body closes (the body is gone).
+    fn close_streams(&self) {
+        let streams = self.streams.borrow().clone();
+        for stream in &streams {
+            self.close_stream(stream);
+        }
+    }
     /// `ReadableStreamDefaultReader.read()`: the bytes received since the
-    /// previous read, `done` once the body completed, or the body's error.
-    pub(crate) fn stream_read<'s>(&self, s: &Scope<'s>) -> JsResult<Value<'s>> {
+    /// previous read of this stream, `done` once the body completed, or the body's error.
+    pub(crate) fn stream_read<'s>(&self, s: &Scope<'s>, stream: &Rc<StreamState>) -> JsResult<Value<'s>> {
         let deferred = s.deferred()?;
         let promise = deferred.promise.get(s);
-        if !self.stream_open.get() {
+        if !stream.open.get() {
             deferred.resolve(s, read_result(s, s.undefined(), true)?)?;
             return Ok(promise);
         }
-        self.stream_reads.borrow_mut().push((s.realm().downgrade(), deferred));
+        self.stream_reads.borrow_mut().push((s.realm().downgrade(), deferred, stream.clone()));
         self.settle_stream_reads();
         Ok(promise)
     }
     /// Resolves pending reads from buffered chunks, then completion or error.
     pub(crate) fn settle_stream_reads(&self) {
+        // The read at `at`; a read that cannot be answered yet stays where it is, and the ones
+        // after it (another stream's, over the same body) are still tried.
+        let mut at = 0;
         loop {
-            if self.stream_reads.borrow().is_empty() {
-                return;
-            }
-            let (weak, deferred) = self.stream_reads.borrow_mut().remove(0);
+            let entry = {
+                let mut reads = self.stream_reads.borrow_mut();
+                if at >= reads.len() {
+                    return;
+                }
+                reads.remove(at)
+            };
+            let (weak, deferred, stream) = entry;
             let Some(realm) = weak.upgrade() else { continue };
             let Ok(s) = realm.scope() else { continue };
-            // A clone of the Response still reads the whole body: the stream
+            // Another consumer (a clone of the Response) still reads the body: the stream
             // copies what it has not delivered and leaves the chunks buffered.
             let shared = self.consumers.get() > 1;
             let chunk = {
                 let mut wire = self.wire.lock().unwrap();
-                let skip = self.stream_cursor.get();
+                let skip = stream.cursor.get();
                 if wire.chunks.is_empty() || wire.bytes <= skip {
                     None
                 } else if shared {
@@ -1635,14 +1745,14 @@ impl Body {
                         }
                         offset = end;
                     }
-                    self.stream_cursor.set(wire.bytes);
+                    stream.cursor.set(wire.bytes);
                     Some(bytes)
                 } else {
                     let chunks = std::mem::take(&mut wire.chunks);
                     let len: usize = chunks.iter().map(Bytes::len).sum();
                     wire.bytes = wire.bytes.saturating_sub(len);
                     wire.budget.used.fetch_sub(len, Ordering::AcqRel);
-                    self.stream_cursor.set(0);
+                    stream.cursor.set(0);
                     let mut bytes = Vec::with_capacity(len);
                     for c in &chunks {
                         bytes.extend_from_slice(c);
@@ -1654,8 +1764,9 @@ impl Body {
             let error = self.error(&s);
             let done = self.is_null() || matches!(*self.visible_terminal.borrow(), Some(Ok(())));
             if chunk.is_none() && error.is_none() && !done {
-                self.stream_reads.borrow_mut().insert(0, (weak, deferred));
-                return;
+                self.stream_reads.borrow_mut().insert(at, (weak, deferred, stream));
+                at += 1;
+                continue;
             }
             let settled = (|| -> JsResult<()> {
                 if let Some(bytes) = chunk.filter(|_| error.is_none()) {
@@ -1663,15 +1774,15 @@ impl Body {
                     deferred.resolve(&s, read_result(&s, value, false)?)?;
                 } else if let Some(error) = error {
                     deferred.reject(&s, error)?;
-                    self.close_stream();
+                    self.close_stream(&stream);
                 } else {
                     deferred.resolve(&s, read_result(&s, s.undefined(), true)?)?;
-                    self.close_stream();
+                    self.close_stream(&stream);
                 }
                 Ok(())
             })();
             if settled.is_err() {
-                self.close_stream();
+                self.close_stream(&stream);
             }
         }
     }
@@ -1679,18 +1790,17 @@ impl Body {
     /// consumer (a clone of the Response) still reads the whole body, which
     /// keeps the bytes; this stream just closes, its pending reads dropped
     /// (the canceled stream ignores them) and its cursor reset.
-    pub(crate) fn cancel_consumer_stream(&self) {
+    pub(crate) fn cancel_consumer_stream(&self, stream: &Rc<StreamState>) {
         if self.consumers.get() > 1 {
-            drop(self.stream_reads.take());
-            self.stream_cursor.set(0);
-            self.close_stream();
+            self.stream_reads.borrow_mut().retain(|(_, _, s)| !Rc::ptr_eq(s, stream));
+            self.close_stream(stream);
             return;
         }
-        self.cancel_stream();
+        self.cancel_stream(stream);
     }
     /// `ReadableStream.cancel()` / reader `cancel()`: stops the request,
     /// drops buffered bytes and finishes pending reads as done.
-    pub(crate) fn cancel_stream(&self) {
+    pub(crate) fn cancel_stream(&self, stream: &Rc<StreamState>) {
         {
             let mut wire = self.wire.lock().unwrap();
             wire.closed = true;
@@ -1709,7 +1819,7 @@ impl Body {
             page.fetch_state.jobs.borrow_mut().remove(&self.id);
         }
         self.settle_stream_reads();
-        self.close_stream();
+        self.close_stream(stream);
     }
 }
 
@@ -1763,6 +1873,8 @@ mod tests {
             closed: false,
             scheduled: false,
             null_body: false,
+            keep_opaque: false,
+            opaque: false,
             streaming: false,
             budget: budget.clone(),
         }));

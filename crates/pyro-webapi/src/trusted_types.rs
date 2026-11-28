@@ -15,7 +15,7 @@ use pyro_js::{JsError, JsResult, Object, Scope, Value};
 use crate::page::PageDom;
 
 use crate::lazy_module::LazyModule;
-use crate::sanitizer_options::ParserOptions;
+use crate::sanitizer_options::{ParseMode, ParserOptions};
 
 pub(crate) static MODULE: LazyModule = LazyModule {
     key: "lpTrustedTypes",
@@ -106,7 +106,16 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         let invalid_receiver = || JsError::Type("Expected a TrustedTypePolicy receiver".into());
         let policy = a.get(0).as_object().ok_or_else(invalid_receiver)?;
         let callback = s.get_hidden(policy, POLICY_CALLBACK)?.and_then(|v| v.as_object()).ok_or_else(invalid_receiver)?;
-        let result = callback.call(None, &[a.get(1), a.get(2)])?;
+        // The policy callback's input: the options as a `TrustedHTMLParserOptions` dictionary,
+        // `runScripts` and, when given, `sanitizer` as a new Sanitizer (the caller's stays untouched).
+        let (given, sanitizer) = ParserOptions::convert_full(s, a.get(1), ParseMode::Unsafe)?;
+        let input = s.object();
+        input.set_atom("runScripts", s.boolean(given.run_scripts))?;
+        if let Some(config) = sanitizer {
+            let page = crate::target::page_of(s)?;
+            input.set_atom("sanitizer", crate::sanitizer::instance(s, &page, config)?)?;
+        }
+        let result = callback.call(None, &[input.value(), a.get(2)])?;
         let options = ParserOptions::convert(s, result)?;
         let proto = s.get_hidden(policy, OPTIONS_PROTOTYPE)?.ok_or_else(invalid_receiver)?;
         if let Some(realm) = s.object_realm(policy).filter(|r| r.id() != s.realm_id() && !r.is_disposed()) {
@@ -172,6 +181,14 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         Ok(s.undefined())
     })?;
     natives.set_atom("installCompileHooks", install.value())?;
+    // isEventHandler(name) -> whether `name` (lowercase, `onclick`) is an event handler content
+    // attribute of some element: GlobalEventHandlers, WindowEventHandlers (`<body>`), the
+    // Fullscreen and SVG animation handlers and the elements' own, for `getAttributeType`.
+    let is_handler = s.function("isEventHandler", |s, _this, a| {
+        let name = crate::util::dom_string(a.get(0))?;
+        Ok(s.boolean(is_event_handler_name(&name)))
+    })?;
+    natives.set_atom("isEventHandler", is_handler.value())?;
     // ttLevel() -> Trusted Types' own eval level (the hooks also run for CSP's).
     let tt = s.function("ttLevel", |s, _this, _a| {
         let level = crate::target::page_of(s).map_or(0, |page| tt_level(&page));
@@ -347,9 +364,19 @@ pub fn script_source_unverified(page: &PageDom, el: pyro_dom::NodeId, text: &str
     requires_for_script_in(page, doc) && page.dom.borrow().script_text(el) != text
 }
 
-/// Whether `el` is an HTML `<script>` (its text and `src` are Trusted Types sinks).
-pub(crate) fn is_html_script(page: &PageDom, el: pyro_dom::NodeId) -> bool {
-    page.dom.borrow().element(el).is_ok_and(|e| e.is_html() && &*e.name.local == "script")
+/// Whether `local` (case-sensitive: `onclick`) names an event handler content attribute of some
+/// element: GlobalEventHandlers, WindowEventHandlers (not only on `<body>`), the Fullscreen,
+/// SVG animation, permission element, canvas and media element (EME) handlers. Trusted Types decides by the name alone
+/// (`getAttributeType` and `setAttribute` agree), not by the element it is set on.
+pub(crate) fn is_event_handler_name(local: &str) -> bool {
+    let Some(ty) = local.strip_prefix("on") else { return false };
+    crate::handlers::GLOBAL.contains(&ty)
+        || crate::handlers::WINDOW.contains(&ty)
+        || crate::handlers::FULLSCREEN.contains(&ty)
+        || crate::handlers::PERMISSION_ELEMENT.contains(&ty)
+        || crate::handlers::CANVAS_ELEMENT.contains(&ty)
+        || crate::handlers::MEDIA_ELEMENT.contains(&ty)
+        || crate::handlers::SVG_ANIMATION_ATTRIBUTES.iter().any(|(name, _)| *name == ty)
 }
 
 /// Trusted Types "get Trusted Types-compliant attribute value": the kind an attribute of `el`
@@ -365,15 +392,9 @@ pub(crate) fn attribute_kind(page: &PageDom, el: pyro_dom::NodeId, local: &str, 
     let svg = e.namespace() == &markup5ever::ns!(svg);
     let mathml = e.namespace() == &markup5ever::ns!(mathml);
     match ns.filter(|ns| !ns.is_empty()) {
-        None if (html || svg || mathml) && !local.bytes().any(|b| b.is_ascii_uppercase()) && {
-            // The element's event handler content attributes: GlobalEventHandlers, and
-            // WindowEventHandlers on `<body>` and `<frameset>`, and a permission element's own.
-            let ty = local.strip_prefix("on").unwrap_or("");
-            crate::handlers::GLOBAL.contains(&ty)
-                || (html && crate::handlers::element_handler(tag, ty))
-                || (html && matches!(tag, "body" | "frameset") && crate::handlers::WINDOW.contains(&ty))
-        } =>
-        {
+        // An event handler content attribute of any HTML, SVG or MathML element: the name alone
+        // decides, whatever the element (Chrome, and `getAttributeType("dummy", "onunload")`).
+        None if (html || svg || mathml) && is_event_handler_name(local) => {
             Some((Kind::Script, format!("Element {local}")))
         }
         None if html && tag == "iframe" && local == "srcdoc" => Some((Kind::Html, "HTMLIFrameElement srcdoc".into())),
@@ -433,7 +454,27 @@ impl HtmlInput {
         options: Value<'_>,
         sink: &str,
     ) -> JsResult<(String, ParserOptions)> {
-        let (options, vetted) = parser_options(s, page, options, sink, false)?;
+        self.for_html_insertion_as(s, page, options, sink, ParseMode::Unsafe)
+    }
+
+    /// [`Self::for_html_insertion`] for the method `mode` names: a safe method's (`setHTML`,
+    /// `appendHTML`, ...) options carry no `runScripts` and always filter (the default sanitizer,
+    /// the built-in safe baseline).
+    pub(crate) fn for_html_insertion_as(
+        self,
+        s: &Scope<'_>,
+        page: &Rc<PageDom>,
+        options: Value<'_>,
+        sink: &str,
+        mode: ParseMode,
+    ) -> JsResult<(String, ParserOptions)> {
+        // The safe methods are not Trusted Types sinks: the sanitizer makes their markup safe, so
+        // neither the default policy's `createHTML` nor its `createParserOptions` is consulted.
+        if mode == ParseMode::Safe {
+            let options = ParserOptions::convert_with(s, options, mode)?;
+            return Ok((match self { Self::Trusted(html) | Self::String(html) => html }, options));
+        }
+        let (options, vetted) = parser_options_with(s, page, options, sink, false, mode)?;
         if vetted {
             return Ok((match self { Self::Trusted(html) | Self::String(html) => html }, options));
         }
@@ -456,19 +497,82 @@ impl HtmlInput {
 pub(crate) fn parser_options(
     s: &Scope<'_>, page: &Rc<PageDom>, value: Value<'_>, sink: &str, streaming: bool,
 ) -> JsResult<(ParserOptions, bool)> {
+    parser_options_with(s, page, value, sink, streaming, ParseMode::Unsafe)
+}
+
+/// [`parser_options`] for the method `mode` names: a safe method does not read `runScripts` and
+/// the built-in safe baseline applies to every sanitizer.
+pub(crate) fn parser_options_with(
+    s: &Scope<'_>, page: &Rc<PageDom>, value: Value<'_>, sink: &str, streaming: bool, mode: ParseMode,
+) -> JsResult<(ParserOptions, bool)> {
+    parser_options_inner(s, page, value, sink, streaming, mode, None)
+}
+
+/// The markup and parser options of a legacy HTML sink (`innerHTML`, `outerHTML`,
+/// `insertAdjacentHTML`, `createContextualFragment`), which take no options argument: a document
+/// that requires Trusted Types asks the default policy's `createParserOptions` for them, with the
+/// sink's name and `{runScripts: initial_run_scripts}` as input (false for the setters, true for
+/// `createContextualFragment`, whose scripts run once inserted); what it returns (a sanitizer, or
+/// `runScripts`) applies even to a `TrustedHTML` value. A policy that does not return options (none
+/// at all, or no `createParserOptions`) leaves the sink as it was; one that returns nothing is a
+/// violation, reported before the markup's own. `null_is_empty`: a `null` value is the empty string.
+pub(crate) fn legacy_html(
+    s: &Scope<'_>,
+    page: &Rc<PageDom>,
+    value: Value<'_>,
+    sink: &str,
+    null_is_empty: bool,
+    initial_run_scripts: bool,
+) -> JsResult<(String, ParserOptions)> {
+    let defaults = ParserOptions { run_scripts: initial_run_scripts, ..ParserOptions::default() };
+    if !requires_for_script(page) {
+        let html = if null_is_empty { crate::util::null_to_empty(value) } else { crate::util::dom_string(value) }?;
+        return Ok((html, defaults));
+    }
+    let input = if null_is_empty && value.is_null() { HtmlInput::String(String::new()) } else { HtmlInput::convert(s, value)? };
+    let (options, vetted) = parser_options_inner(s, page, s.undefined(), sink, false, ParseMode::Unsafe, Some(initial_run_scripts))?;
+    if vetted {
+        return Ok((match input { HtmlInput::Trusted(html) | HtmlInput::String(html) => html }, options));
+    }
+    Ok((input.compliant(s, page, sink)?, options))
+}
+
+/// [`parser_options_with`]; `initial_run_scripts` is the `runScripts` the default policy's callback
+/// is given and a policy-less parse uses when `value` has none to say (a legacy sink's).
+fn parser_options_inner(
+    s: &Scope<'_>,
+    page: &Rc<PageDom>,
+    value: Value<'_>,
+    sink: &str,
+    streaming: bool,
+    mode: ParseMode,
+    initial_run_scripts: Option<bool>,
+) -> JsResult<(ParserOptions, bool)> {
+    if mode == ParseMode::Safe {
+        // Not a Trusted Types sink (see `for_html_insertion_as`): a plain `SetHTMLOptions` conversion.
+        return Ok((ParserOptions::convert_with(s, value, mode)?, false));
+    }
     if let Some(wrapper) = s.unwrap::<TrustedValue>(value) {
         if let Some(snapshot) = wrapper.as_ref() {
             return Ok((snapshot.clone(), true));
         }
     }
-    let options = ParserOptions::convert(s, value)?;
+    let (mut options, sanitizer) = ParserOptions::convert_full(s, value, mode)?;
+    if let Some(run_scripts) = initial_run_scripts {
+        options.run_scripts = run_scripts;
+    }
     if requires_for_script(page) {
         let module = MODULE.module(s, page)?;
         let callback = module.get("defaultParserOptions")?.as_object()
             .ok_or_else(|| JsError::Type("Trusted Types are unavailable".into()))?;
-        let result = callback.call(None, &[s.boolean(options.run_scripts), s.string(sink), s.boolean(options.filter.is_some())])?;
+        // The callback's input holds the sanitizer as a new Sanitizer (a copy it may change).
+        let sanitizer = match sanitizer {
+            Some(config) => crate::sanitizer::instance(s, page, config)?,
+            None => s.undefined(),
+        };
+        let result = callback.call(None, &[s.boolean(options.run_scripts), s.string(sink), sanitizer])?;
         if !result.is_null() && !result.is_undefined() {
-            return Ok((ParserOptions::convert(s, result)?, true));
+            return Ok((ParserOptions::convert_with(s, result, mode)?, true));
         }
         if (streaming || options.needs_vetting || result.is_null()) && sink_violation(s, page, sink, "")? {
             return Err(JsError::Type("This document requires trusted HTML parser options".into()));

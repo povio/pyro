@@ -142,23 +142,23 @@ fn run(realm: &WeakRealm, handle: u32, did_timeout: bool) {
     let now = w.now_ms();
     // A timed-out callback has no idle time; an idle one has until the
     // next timer is due, at most 50 ms.
-    let deadline = if did_timeout {
-        now
+    let length = if did_timeout {
+        0.0
     } else {
         let until_timer = w
             .sched
             .next_timer_deadline()
             .map_or(MAX_IDLE_MS, |at| at.saturating_duration_since(Instant::now()).as_secs_f64() * 1000.0);
-        now + until_timer.min(MAX_IDLE_MS)
+        until_timer.min(MAX_IDLE_MS)
     };
     // Idle callbacks requested from here on wait for the next idle period.
     let outer = w
         .idle_period_end
-        .replace((!did_timeout).then(|| Instant::now() + Duration::from_secs_f64((deadline - now).max(0.0) / 1000.0)));
+        .replace((!did_timeout).then(|| Instant::now() + Duration::from_secs_f64(length.max(0.0) / 1000.0)));
     let result = (|| {
         let make = module(&scope, w)?.get("make")?;
         let make = make.as_object().ok_or(JsError::ContextDestroyed)?;
-        let deadline = make.call(None, &[scope.number(deadline), scope.boolean(did_timeout)])?;
+        let deadline = make.call(None, &[scope.number(now), scope.number(length), scope.boolean(did_timeout)])?;
         let callback = entry.callback.get(&scope).as_object().ok_or(JsError::ContextDestroyed)?;
         // scheduler.yield() from an idle callback continues at background
         // priority (the callback's call ends with its microtask checkpoint).

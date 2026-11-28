@@ -337,6 +337,29 @@ fn generates(style: &ComputedValues) -> bool {
 }
 
 impl BaseDocument {
+    /// pyro: the style of the generated box of `pseudo` (`::scroll-marker-group`, `::scroll-marker`
+    /// or a `::scroll-button()`) of the element `node_id`, as the box has it (`:hover`,
+    /// `:target-current`, `:disabled` state included): what `getComputedStyle(element, pseudo)`
+    /// returns. `None` when the element has no such box (the caller falls back to the cascade).
+    pub fn scroll_pseudo_box_style(&self, node_id: NodeId, pseudo: &PseudoElement) -> Option<Arc<ComputedValues>> {
+        let node = self.nodes.get(node_id)?;
+        let pseudos = node.scroll_pseudos()?;
+        let target = (if pseudo.is_scroll_button() {
+            let wm = node.primary_styles()?.writing_mode;
+            (0..4u8)
+                .filter(|&direction| scroll_button_matches(pseudo, direction, wm))
+                .find_map(|direction| pseudos.buttons[direction as usize])
+        } else if *pseudo == PseudoElement::ScrollMarkerGroup {
+            pseudos.group
+        } else if *pseudo == PseudoElement::ScrollMarker {
+            pseudos.marker
+        } else {
+            None
+        })?;
+        let style = self.nodes.get(target)?.primary_styles()?;
+        Some(Arc::clone(&*style))
+    }
+
     /// Whether any author or user rule styles a scroll pseudo-element.
     fn scroll_pseudo_rules(&self, pseudo: PseudoElement) -> bool {
         [Origin::Author, Origin::User]
@@ -1177,7 +1200,11 @@ impl BaseDocument {
             sorted.dedup_by(|a, b| (*a - *b).abs() < 0.5);
             const EPSILON: f32 = 0.5;
             let mut selected: Option<f32> = None;
-            for &p in &sorted {
+            // A target the scroll position has not reached is selected only when it is less than
+            // half a scrollport away (Chromium; WPT `scroll-marker-active-unreached-target`).
+            let reached = |p: f32| p <= position || p - position <= port / 2.0;
+            let any_reached = sorted.iter().any(|&p| reached(p));
+            for &p in sorted.iter().filter(|&&p| !any_reached || reached(p)) {
                 if selected.is_none_or(|best| (p - position).abs() < (best - position).abs() - 0.01) {
                     selected = Some(p);
                 }
@@ -1352,25 +1379,62 @@ impl BaseDocument {
     /// pyro: the target of the `::scroll-marker` box at the document point (`x`, `y`): its
     /// element, or its multi-column container and column (CSS Overflow 5 § 3.2: activating a
     /// marker scrolls to its target; WPT css-overflow `column-scroll-marker-002`).
-    pub fn scroll_marker_at(&self, x: f32, y: f32) -> Option<(NodeId, Option<u32>)> {
-        for &owner in &self.scroll_pseudo_owners {
-            let Some(group) = self.nodes.get(owner).and_then(|n| n.scroll_pseudos()).and_then(|s| s.group) else { continue };
-            let Some(group_node) = self.nodes.get(group) else { continue };
-            let markers: Vec<NodeId> = group_node.layout_children.borrow().iter().flatten().copied().collect();
-            for marker in markers {
-                let Some(node) = self.nodes.get(marker) else { continue };
-                if !matches!(node.scroll_pseudo(), Some((PseudoElement::ScrollMarker, _))) {
-                    continue;
-                }
-                let origin = node.absolute_position(0.0, 0.0);
-                let (left, top) = (origin.x + node.scroll_offset().x as f32, origin.y + node.scroll_offset().y as f32);
-                let size = node.final_layout().size;
-                if x >= left && y >= top && x < left + size.width && y < top + size.height {
-                    return self.marker_target(marker);
-                }
-            }
+    pub fn scroll_marker_at(&mut self, x: f32, y: f32) -> Option<(NodeId, Option<u32>)> {
+        let marker = self.marker_hit(x, y)?;
+        self.marker_target(marker)
+    }
+
+    /// pyro: the scroll container whose `::scroll-marker-group` holds the marker the painted hit
+    /// test finds at the document point (`x`, `y`): the owner of the group a press on a marker
+    /// focuses (tabs mode).
+    pub fn scroll_marker_group_at(&mut self, x: f32, y: f32) -> Option<NodeId> {
+        let marker = self.marker_hit(x, y)?;
+        let group = self.nodes.get(marker)?.parent?;
+        let (_, owner) = self.nodes.get(group)?.scroll_pseudo()?;
+        Some(owner)
+    }
+
+    /// pyro: the targets of the markers of `owner`'s group in order (an element, or a column of a
+    /// multi-column container) and the index of the active one (`:target-current`), which a key
+    /// moving through the focused group steps from.
+    pub fn scroll_marker_group_targets(&self, owner: NodeId) -> Option<(Vec<Option<(NodeId, Option<u32>)>>, Option<usize>)> {
+        use style::selector_parser::TARGET_CURRENT;
+        let group = self.nodes.get(owner)?.scroll_pseudos()?.group?;
+        let markers: Vec<NodeId> = self.nodes.get(group)?.children.iter().copied().collect();
+        let active = markers.iter().position(|&marker| {
+            self.nodes.get(marker).and_then(|node| node.element_data()).is_some_and(|data| data.element_state.contains(TARGET_CURRENT))
+        });
+        Some((markers.iter().map(|&marker| self.marker_target(marker)).collect(), active))
+    }
+
+    /// The marker the painted hit test finds at the document point (`x`, `y`), unless its group is
+    /// inert.
+    fn marker_hit(&mut self, x: f32, y: f32) -> Option<NodeId> {
+        if self.scroll_pseudo_owners.is_empty() {
+            return None;
         }
-        None
+        // The painted hit test (stacking order, clips, `pointer-events`, a `display: contents`
+        // marker's text): from the hit box up to the marker whose box or content it is.
+        let mut id = self.hit(x, y)?.node_id;
+        let marker = loop {
+            let node = self.nodes.get(id)?;
+            match node.scroll_pseudo() {
+                Some((PseudoElement::ScrollMarker, _)) => break id,
+                Some(_) => return None,
+                None if node.is_element() => return None,
+                None => id = node.parent?,
+            }
+        };
+        // A marker is inert when its group is (WPT css-overflow `scroll-marker-inert-001`, `-003`:
+        // not when only its originating element is).
+        let group = self.nodes.get(marker)?.parent?;
+        let inert = self.nodes.get(group)?.primary_styles().is_some_and(|style| {
+            style.get_inherited_ui().interactivity == style::values::specified::ui::Interactivity::Inert
+        });
+        if inert {
+            return None;
+        }
+        Some(marker)
     }
 
     /// pyro: the `::scroll-button()` of `owner` hit at the document point (`x`, `y`), by the
@@ -1424,20 +1488,21 @@ impl BaseDocument {
         })
     }
 
-    /// pyro: the originating element of the `::scroll-button()` that the painted hit test (`hit`)
-    /// finds at the document point (`x`, `y`): the hit box is the button's or inside it (its
+    /// pyro: the originating element of the `::scroll-button()` (or `::scroll-marker`, or
+    /// `::scroll-marker-group`) that the painted hit test (`hit`) finds at the document point (`x`, `y`): the hit box is the button's or inside it (its
     /// text). A hit test answers a button's originating element (CSS Overflow 5 § 2.2; WPT
     /// css-overflow `scroll-button-elementFromPoint`), which pyro's element-box hit test cannot
     /// see when the button is painted over the element's content or another element. `None` on
     /// a page without buttons (no hit test then) or when anything else is on top.
     pub fn scroll_button_owner_at(&mut self, x: f32, y: f32) -> Option<NodeId> {
-        if !self.has_scroll_buttons() {
+        if !self.uses_scroll_markers() {
             return None;
         }
         let mut id = self.hit(x, y)?.node_id;
         loop {
             let node = self.nodes.get(id)?;
-            if let Some((PseudoElement::ScrollButtonAll, origin)) = node.scroll_pseudo() {
+            // (A marker or a group answers its originating element as a button does, Chromium.)
+            if let Some((_, origin)) = node.scroll_pseudo() {
                 return Some(origin);
             }
             // An element's own box (or one inside it) is no button's.
@@ -1446,6 +1511,77 @@ impl BaseDocument {
             }
             id = node.parent?;
         }
+    }
+
+    /// pyro: puts `:hover` on the scroll pseudo-element box under the document point `point` (the
+    /// topmost box of the painted hit test, as `scroll_button_owner_at`) and on the boxes around
+    /// it (a marker's group), and takes it from the boxes it was on. Returns whether a box
+    /// changed (its style is recomputed, the caller resolves) and the originating element of the
+    /// box hit: the element the pointer is over for `:hover` (CSS Overflow 5 § 2: a box under the
+    /// pointer hovers its originating element, as in Chromium; WPT css-overflow
+    /// `scroll-marker-hover-remove`, `scroll-button-hover-remove`).
+    pub fn hover_scroll_pseudos(&mut self, point: Option<(f32, f32)>) -> (bool, Option<NodeId>) {
+        use style_dom::ElementState;
+        if self.scroll_pseudo_owners.is_empty() && self.scroll_pseudo_hover.is_empty() {
+            return (false, None);
+        }
+        let mut chain: Vec<NodeId> = Vec::new();
+        if let Some((x, y)) = point
+            && !self.scroll_pseudo_owners.is_empty()
+            && let Some(hit) = self.hit(x, y)
+        {
+            let mut id = hit.node_id;
+            loop {
+                let Some(node) = self.nodes.get(id) else { break };
+                let pseudo = node.scroll_pseudo().is_some();
+                if pseudo {
+                    chain.push(id);
+                } else if !chain.is_empty() || node.is_element() {
+                    break;
+                }
+                match node.parent {
+                    Some(parent) => id = parent,
+                    None => break,
+                }
+            }
+        }
+        let origin = chain.first().and_then(|&id| {
+            let (_, mut origin) = self.nodes.get(id)?.scroll_pseudo()?;
+            while let Some((_, next)) = self.nodes.get(origin)?.scroll_pseudo() {
+                origin = next;
+            }
+            Some(origin)
+        });
+        let old = std::mem::take(&mut self.scroll_pseudo_hover);
+        let mut changed = false;
+        for &id in old.iter().filter(|id| !chain.contains(id)).chain(chain.iter().filter(|id| !old.contains(id))) {
+            let hovered = chain.contains(&id);
+            let Some(data) = self.nodes.get_mut(id).and_then(|node| node.element_data_mut()) else { continue };
+            if hovered {
+                data.element_state.insert(ElementState::HOVER);
+            } else {
+                data.element_state.remove(ElementState::HOVER);
+            }
+            if let Some(style) = self.pseudo_node_style(id) {
+                self.set_scroll_pseudo_style(id, style);
+            }
+            changed = true;
+        }
+        self.scroll_pseudo_hover = chain;
+        (changed, origin)
+    }
+
+    /// pyro: the scroll container whose marker group holds the keyboard or pointer focus (tabs
+    /// mode), and whether the focus shows its ring (`:focus-visible`): the active marker of its
+    /// group has the focus ([`Self::update_target_current`]). Whether it changed (the next
+    /// resolve restyles the boxes).
+    pub fn set_focused_scroll_group(&mut self, group: Option<(NodeId, bool)>) -> bool {
+        if self.focused_scroll_group == group {
+            return false;
+        }
+        self.focused_scroll_group = group;
+        self.update_scroll_marker_states();
+        true
     }
 
     /// pyro: whether an element of the document was ever styled with a `scroll-snap-type`.
@@ -1460,13 +1596,13 @@ impl BaseDocument {
 
     /// pyro: whether the document has scroll pseudo-elements (markers, groups, buttons).
     pub fn uses_scroll_markers(&self) -> bool {
-        !self.scroll_pseudo_owners.is_empty()
+        !self.scroll_pseudo_owners.is_empty() || !self.scroll_target_groups.is_empty()
     }
 
     pub fn update_scroll_marker_states(&mut self) {
-        // pyro: and `scroll-state(scrollable)` queries (`resolve::refresh_scroll_state_queries`).
-        let scroll_state_queries = !self.nodes.scroll_state_queries.lock().unwrap().is_empty();
-        if !self.scroll_pseudo_owners.is_empty() || scroll_state_queries {
+        // pyro: and `scroll-state(scrollable)` queries (`resolve::refresh_scroll_state_queries`), and
+        // the links of scroll target groups (`scroll-target-group: auto`), which have no box of their own.
+        if self.tracks_scroll_states() {
             if let Some(root) = self.try_root_element().map(|root| root.id) {
                 self.nodes[root].mark_damaged();
             }
@@ -1477,6 +1613,7 @@ impl BaseDocument {
         use style_dom::ElementState;
         use style::selector_parser::{TARGET_AFTER, TARGET_BEFORE, TARGET_CURRENT};
         const TARGET_STATES: ElementState = TARGET_CURRENT.union(TARGET_BEFORE).union(TARGET_AFTER);
+        const FOCUS_STATES: ElementState = ElementState::FOCUS.union(ElementState::FOCUS_WITHIN).union(ElementState::FOCUSRING);
         // `:target-current` on the active marker, `:target-before` on the ones before it and
         // `:target-after` on the ones after it (none without an active marker).
         let target_states = |index: usize, active: Option<usize>| match active {
@@ -1506,11 +1643,19 @@ impl BaseDocument {
             let targets: Vec<Option<Target>> = markers.iter().map(|&marker| self.marker_target(marker)).collect();
             let active = self.select_active_target(&targets);
             let mut active_changed = false;
+            // pyro: a focused marker group (tabs mode, the press or Tab that focused it) has its
+            // focus on the active marker, wherever it moves: `:focus` (`:focus-visible` after the
+            // keyboard) and `:focus-within` on it, `:focus-within` on the group (CSS Overflow 5 § 3.2).
+            let focus = self.focused_scroll_group.filter(|&(focused, _)| focused == owner);
             for (index, &marker) in markers.iter().enumerate() {
                 let Some(data) = self.nodes.get_mut(marker).and_then(|node| node.element_data_mut()) else { continue };
-                let state = target_states(index, active);
-                if data.element_state & TARGET_STATES != state {
-                    data.element_state.remove(TARGET_STATES);
+                let mut state = target_states(index, active);
+                if let Some((_, ring)) = focus.filter(|_| Some(index) == active) {
+                    state |= ElementState::FOCUS | ElementState::FOCUS_WITHIN;
+                    state.set(ElementState::FOCUSRING, ring);
+                }
+                if data.element_state & (TARGET_STATES | FOCUS_STATES) != state {
+                    data.element_state.remove(TARGET_STATES | FOCUS_STATES);
                     data.element_state.insert(state);
                     if let Some(style) = self.pseudo_node_style(marker) {
                         self.set_scroll_pseudo_style(marker, style);
@@ -1518,6 +1663,17 @@ impl BaseDocument {
                     changed = true;
                     active_changed |= index == active.unwrap_or(usize::MAX);
                 }
+            }
+            let group_within = if focus.is_some() && active.is_some() { ElementState::FOCUS_WITHIN } else { ElementState::empty() };
+            if let Some(data) = self.nodes.get_mut(group).and_then(|node| node.element_data_mut())
+                && data.element_state & ElementState::FOCUS_WITHIN != group_within
+            {
+                data.element_state.remove(ElementState::FOCUS_WITHIN);
+                data.element_state.insert(group_within);
+                if let Some(style) = self.pseudo_node_style(group) {
+                    self.set_scroll_pseudo_style(group, style);
+                }
+                changed = true;
             }
             // pyro: a group that scrolls keeps its active marker in view (CSS Overflow 5 § 3.1.5,
             // as Chromium: aligned as the marker snaps in a snapping group, else the nearest
@@ -1686,11 +1842,15 @@ impl BaseDocument {
     /// pyro: the current scroll target of each scroll container (CSS Overflow 5 § 2.1: the
     /// element a scroll into view last revealed in it, until it scrolls otherwise; the viewport's
     /// under the root element), which the embedder tracks. Scroll marker selection starts from it.
-    pub fn set_scroll_targets(&mut self, targets: Vec<(NodeId, NodeId)>) {
+    pub fn set_scroll_targets(&mut self, targets: Vec<(NodeId, NodeId)>) -> bool {
         let targets: std::collections::HashMap<NodeId, NodeId> = targets.into_iter().collect();
-        if targets != self.scroll_targets {
-            self.scroll_targets = targets;
+        if targets == self.scroll_targets {
+            return false;
         }
+        self.scroll_targets = targets;
+        // (The active markers are picked again at the next resolve.)
+        self.update_scroll_marker_states();
+        true
     }
 
     /// Of `candidates` (in `scroller`, in tree order), the one a reverse tree-order walk from

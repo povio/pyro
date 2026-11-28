@@ -2,10 +2,10 @@
 // one realm, made on its first use of one of them (service_worker.rs). The
 // browser thread owns the registrations; this realm keeps one object per
 // registration and per worker version, so identity holds across calls.
-//   native.register(id, scriptURL, scope, type, updateViaCache)
+//   native.register(id, scriptURL, scope, type, updateViaCache), trustedScriptURL(value)
 //   native.blocked(): the context blocks registration (serviceWorkers: 'block')
 //   native.getRegistration(id, clientURL), getRegistrations(id)
-//   native.unregister(id, registrationId), update(id, registrationId)
+//   native.unregister(id, registrationId), update(id, registrationId), preload(id, registrationId, op, value)
 //     each settles request `id` later through settle(id, ok, json, name, message)
 //   native.postMessage(versionId, message, options) serializes now.
 // The browser thread calls, each in its own task:
@@ -25,10 +25,18 @@
   const EventC = Event;
   const DOMExceptionC = DOMException;
   const TypeErrorC = TypeError;
+  const setTimeoutC = typeof setTimeout === 'function' ? setTimeout : undefined;
   const addListener = EventTargetC.prototype.addEventListener;
   const dispatchEvent = EventTargetC.prototype.dispatchEvent;
   const illegal = (name) => new TypeErrorC(`Failed to construct '${name}': Illegal constructor`);
   const tag = (C, name) => defineProperty(C.prototype, Symbol.toStringTag, { value: name, configurable: true });
+  // WebIDL: regular operations and attributes of an interface are enumerable.
+  const enumerable = (C) => {
+    for (const key of Reflect.ownKeys(C.prototype)) {
+      if (key === 'constructor' || key === Symbol.toStringTag) continue;
+      defineProperty(C.prototype, key, { enumerable: true });
+    }
+  };
   const ownTag = (o, name) => defineProperty(o, Symbol.toStringTag, { value: name, configurable: true });
 
   // `on<type>` attributes: the stored handler runs from one listener.
@@ -36,10 +44,12 @@
   const handler = (C, type) => {
     defineProperty(C.prototype, 'on' + type, {
       get() {
+        if (!(this instanceof C)) throw new TypeErrorC('Illegal invocation');
         const map = handlers.get(this);
         return (map && map[type]) || null;
       },
       set(value) {
+        if (!(this instanceof C)) throw new TypeErrorC('Illegal invocation');
         let map = handlers.get(this);
         if (!map) handlers.set(this, (map = {}));
         const had = type in map;
@@ -92,7 +102,8 @@
   const workers = new Map();
   const workerData = new WeakMap();
   class ServiceWorker extends EventTargetC {
-    constructor(t, v) {
+    constructor() {
+      const [t, v] = arguments; // WebIDL: the interface object's length is 0
       if (t !== token) throw illegal('ServiceWorker');
       super();
       ownTag(this, 'ServiceWorker');
@@ -109,9 +120,9 @@
         throw new TypeErrorC("Failed to execute 'postMessage' on 'ServiceWorker': 1 argument required, but only 0 present.");
       }
       const d = workerData.get(this);
-      if (d.state === 'redundant') {
-        throw new DOMExceptionC("Failed to execute 'postMessage' on 'ServiceWorker': The worker is redundant.", 'InvalidStateError');
-      }
+      // A message to a redundant worker is dropped silently (no exception, as Chrome and the spec's
+      // "Run Service Worker" steps: there is no worker to run).
+      if (d.state === 'redundant') return;
       native.postMessage(d.id, message, options);
     }
   }
@@ -139,27 +150,52 @@
   // -- ServiceWorkerRegistration -------------------------------------------------
   const registrations = new Map();
   const registrationData = new WeakMap();
+  // The registration's navigation preload state lives on the browser thread (`native.preload`).
+  const managerData = new WeakMap();
+  const preloadOp = (manager, op, value) => {
+    try {
+      const d = managerData.get(manager);
+      if (!d) throw new TypeErrorC('Illegal invocation');
+      return request('preload', d.id, op, value);
+    } catch (e) {
+      return PromiseC.reject(e);
+    }
+  };
   class NavigationPreloadManager {
-    constructor(t) {
+    constructor() {
+      const [t, id] = arguments;
       if (t !== token) throw illegal('NavigationPreloadManager');
+      managerData.set(this, { id });
     }
     enable() {
-      return PromiseC.resolve(undefined);
+      return preloadOp(this, 'enable');
     }
     disable() {
-      return PromiseC.resolve(undefined);
+      return preloadOp(this, 'disable');
     }
-    setHeaderValue() {
-      return PromiseC.resolve(undefined);
+    setHeaderValue(value) {
+      if (arguments.length === 0) {
+        return PromiseC.reject(new TypeErrorC("Failed to execute 'setHeaderValue' on 'NavigationPreloadManager': 1 argument required, but only 0 present."));
+      }
+      // ByteString, and a header value: no NUL, CR or LF.
+      const v = String(value);
+      for (let i = 0; i < v.length; i++) {
+        const c = v.charCodeAt(i);
+        if (c > 0xff || c === 0 || c === 10 || c === 13) {
+          return PromiseC.reject(new TypeErrorC("Failed to execute 'setHeaderValue' on 'NavigationPreloadManager': The provided value is not a valid header value."));
+        }
+      }
+      return preloadOp(this, 'setHeaderValue', v);
     }
     getState() {
-      return PromiseC.resolve({ enabled: false, headerValue: 'true' });
+      return preloadOp(this, 'getState');
     }
   }
   tag(NavigationPreloadManager, 'NavigationPreloadManager');
 
   class ServiceWorkerRegistration extends EventTargetC {
-    constructor(t, r) {
+    constructor() {
+      const [t, r] = arguments;
       if (t !== token) throw illegal('ServiceWorkerRegistration');
       super();
       ownTag(this, 'ServiceWorkerRegistration');
@@ -169,7 +205,7 @@
       native.registrationCookies.set(this, () => cookies ??= native.cookieManager(r.id, r.scope));
       registrationData.set(this, {
         id: r.id, seq: -1, scope: r.scope, updateViaCache: r.updateViaCache,
-        installing: null, waiting: null, active: null, preload: new NavigationPreloadManager(token),
+        installing: null, waiting: null, active: null, preload: new NavigationPreloadManager(token, r.id),
       });
     }
     get scope() {
@@ -247,25 +283,39 @@
     readyDone = true;
     readyResolve(registration);
   };
+  // The client message queue (ServiceWorker spec): disabled until `startMessages()`, an `onmessage`
+  // assignment or the end of DOMContentLoaded; enabling it queues a task that dispatches what waits, so
+  // the microtasks of the script that enabled it run first, and so do the other DOMContentLoaded listeners.
   let messagesEnabled = false;
+  let flushing = false;
   const queued = [];
-  function startMessages() {
-    if (messagesEnabled) return;
-    messagesEnabled = true;
+  function flush() {
+    flushing = false;
     const list = queued.splice(0);
     for (const event of list) native.deliverMessage(container, event);
   }
+  function startMessages() {
+    if (messagesEnabled) return;
+    messagesEnabled = true;
+    if (queued.length === 0) return;
+    flushing = true;
+    if (setTimeoutC !== undefined) setTimeoutC(flush, 0);
+    else flush();
+  }
 
   class ServiceWorkerContainer extends EventTargetC {
-    constructor(t) {
-      if (t !== token) throw illegal('ServiceWorkerContainer');
+    constructor() {
+      if (arguments[0] !== token) throw illegal('ServiceWorkerContainer');
       super();
       ownTag(this, 'ServiceWorkerContainer');
     }
     get controller() {
-      return controller;
+      if (this !== container) throw new TypeErrorC('Illegal invocation');
+      // A document whose frame was removed is no client any more (it has no controller).
+      return native.detached() ? null : controller;
     }
     get ready() {
+      if (this !== container) return PromiseC.reject(new TypeErrorC('Illegal invocation'));
       return ready;
     }
     register(scriptURL, options) {
@@ -293,7 +343,7 @@
         if (!['imports', 'all', 'none'].includes(updateViaCache)) {
           throw new TypeErrorC(`Failed to execute 'register' on 'ServiceWorkerContainer': The provided value '${updateViaCache}' is not a valid enum value of type ServiceWorkerUpdateViaCache.`);
         }
-        return request('register', String(scriptURL), scope, type, updateViaCache);
+        return request('register', native.trustedScriptURL(scriptURL), scope, type, updateViaCache);
       } catch (e) {
         return PromiseC.reject(e);
       }
@@ -329,8 +379,11 @@
     }
   }
 
+  for (const C of [ServiceWorker, NavigationPreloadManager, ServiceWorkerRegistration, ServiceWorkerContainer]) enumerable(C);
+
   const deliver = (event) => {
-    if (messagesEnabled) native.deliverMessage(container, event);
+    // Behind a flush that is still to run: in order.
+    if (messagesEnabled && !flushing) native.deliverMessage(container, event);
     else queued.push(event);
   };
 

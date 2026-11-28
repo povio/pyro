@@ -183,6 +183,112 @@ pub fn partition_key(url: &Url) -> Option<String> {
     Some(format!("{scheme}://{}", site_of(&host_str(url)?)))
 }
 
+/// One storage access rule of a browser context (the WebDriver "Set Storage Access" command):
+/// unpartitioned cookies of `origin` embedded in a third-party context under `embedding` are
+/// blocked or allowed. `None` is the pattern `*`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CookieAccessRule {
+    /// The embedded (third-party) origin, serialized.
+    pub origin: Option<String>,
+    /// The embedding (top-level) site, as [`partition_key`] spells it.
+    pub embedding: Option<String>,
+    pub blocked: bool,
+}
+
+impl CookieAccessRule {
+    /// A rule from its two patterns: `*`, or a URL whose origin (embedded) and site (embedding) it
+    /// names. `None` when a pattern is neither.
+    pub fn parse(origin: &str, embedding: &str, blocked: bool) -> Option<Self> {
+        let origin = match origin {
+            "*" => None,
+            o => Some(Url::parse(o).ok().map(|u| u.origin()).filter(|o| o.is_tuple())?.ascii_serialization()),
+        };
+        let embedding = match embedding {
+            "*" => None,
+            e => Some(partition_key(&Url::parse(e).ok()?)?),
+        };
+        Some(Self { origin, embedding, blocked })
+    }
+
+    /// Whether `other` has the same patterns (a later rule for them replaces this one).
+    pub fn same_patterns(&self, other: &Self) -> bool {
+        self.origin == other.origin && self.embedding == other.embedding
+    }
+}
+
+/// The cookie jar of a credentialless iframe tree (HTML "anonymous iframe": its requests carry no
+/// credentials of the normal partition and what they store never reaches it). One jar belongs to
+/// one top-level document, so it is empty when the tree begins and gone with it; a request that
+/// holds one reads and writes this jar instead of the client's. Clones share the jar.
+#[derive(Clone, Default)]
+pub struct EphemeralCookies(pub Arc<std::sync::Mutex<CookieJar>>);
+
+impl std::fmt::Debug for EphemeralCookies {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("EphemeralCookies")
+    }
+}
+
+/// A document's third-party cookie decision, made when a request or a script access starts. It
+/// exists only while the browser context has storage access rules, so a context without them
+/// pays nothing: a first-party or same-site request has no `CookieBlocking` to ask.
+#[derive(Clone, Debug)]
+pub struct CookieBlocking {
+    rules: Arc<Vec<CookieAccessRule>>,
+    /// Schemeful site of the top-level document.
+    top_site: String,
+    /// Schemeful site of the requesting document (`None`: opaque, which no grant covers).
+    own_site: Option<String>,
+    /// The document sits below a cross-site ancestor: a third party even at the top's site
+    /// (an A(B(A)) frame tree).
+    cross_site_ancestor: bool,
+    /// The document was granted storage access (`requestStorageAccess()`, kept by a
+    /// same-origin navigation of its own): its own site's cookies are not blocked.
+    granted: bool,
+}
+
+impl CookieBlocking {
+    pub fn new(
+        rules: Arc<Vec<CookieAccessRule>>, top_site: String, own_site: Option<String>, cross_site_ancestor: bool, granted: bool,
+    ) -> Self {
+        Self { rules, top_site, own_site, cross_site_ancestor, granted }
+    }
+
+    /// The same decision without the document's own grant: a nested navigation's request is not
+    /// the embedding document's.
+    pub fn without_grant(&self) -> Self {
+        Self { granted: false, ..self.clone() }
+    }
+
+    /// The same decision for a navigation that keeps the frame's storage access (a same-origin
+    /// navigation the frame started itself): `url`'s site is granted.
+    pub fn granted_for(&self, url: &Url) -> Self {
+        Self { own_site: partition_key(url), granted: true, ..self.clone() }
+    }
+
+    /// Whether the unpartitioned cookies of `url` are unavailable to the document: `url` is a
+    /// third party (another site than the top-level one, or the document has a cross-site
+    /// ancestor), the document has no storage access grant for `url`'s site, and the last rule
+    /// that matches blocks. Without a matching rule the cookies are available (Chrome's default
+    /// does not block third-party cookies).
+    pub fn blocks(&self, url: &Url) -> bool {
+        let site = partition_key(url);
+        let third_party = self.cross_site_ancestor || site.as_deref() != Some(self.top_site.as_str());
+        if !third_party {
+            return false;
+        }
+        if self.granted && site.is_some() && site == self.own_site {
+            return false;
+        }
+        let origin = url.origin().ascii_serialization();
+        self.rules
+            .iter()
+            .rev()
+            .find(|r| r.origin.as_deref().is_none_or(|o| o == origin) && r.embedding.as_deref().is_none_or(|e| e == self.top_site))
+            .is_some_and(|r| r.blocked)
+    }
+}
+
 fn default_path(url: &Url) -> String {
     let p = url.path();
     if !p.starts_with('/') {
@@ -221,11 +327,15 @@ fn starts_with_ci(s: &str, prefix: &str) -> bool {
     s.len() >= prefix.len() && s.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes())
 }
 
-/// Cookie name prefixes match case-insensitively (RFC 6265bis 5.7).
-fn valid_prefix(name: &str, secure: bool, host_only: bool, path: &str, site: SameSite) -> bool {
+/// Cookie name prefixes match case-insensitively (RFC 6265bis 5.7, and the
+/// layered-cookies draft: `__Host-` needs an explicit `Path=/` attribute, not just a
+/// default path of "/"; `__Http-` and `__Host-Http-` need `Secure` and `HttpOnly`).
+fn valid_prefix(name: &str, secure: bool, host_only: bool, root_path: bool, http_only: bool, site: SameSite) -> bool {
     (site != SameSite::None || secure)
         && (!starts_with_ci(name, "__Secure-") || secure)
-        && (!starts_with_ci(name, "__Host-") || (secure && host_only && path == "/"))
+        && (!starts_with_ci(name, "__Host-") || (secure && host_only && root_path))
+        && (!starts_with_ci(name, "__Http-") || (secure && http_only))
+        && (!starts_with_ci(name, "__Host-Http-") || (secure && http_only))
 }
 
 /// Longest cookie lifetime: Chrome caps Expires and Max-Age at 400 days
@@ -259,6 +369,14 @@ fn trim_wsp(s: &str) -> &str {
 /// malformed attributes are ignored, and a control character other than
 /// tab rejects the whole string.
 fn parse_set_cookie(header: &str) -> Option<ParsedSetCookie<'_>> {
+    // As Chrome: a CR or LF in the name-value pair ends the cookie line there
+    // (`test=13\nZYX` is `test=13`); a NUL anywhere rejects the line (`b=A\0Z` sets nothing,
+    // the check below), as does a control character in an attribute.
+    let pair_end = header.find(';').unwrap_or(header.len());
+    let header = match header.as_bytes()[..pair_end].iter().copied().position(|b| matches!(b, b'\r' | b'\n')) {
+        Some(end) => &header[..end],
+        None => header,
+    };
     if header.bytes().any(|b| (b < 0x20 && b != b'\t') || b == 0x7f) {
         return None;
     }
@@ -271,7 +389,7 @@ fn parse_set_cookie(header: &str) -> Option<ParsedSetCookie<'_>> {
         return None;
     }
     // A nameless cookie must not pass for a prefixed one.
-    if name.is_empty() && (starts_with_ci(value, "__Secure-") || starts_with_ci(value, "__Host-")) {
+    if name.is_empty() && (starts_with_ci(value, "__Secure-") || starts_with_ci(value, "__Host-") || starts_with_ci(value, "__Http-")) {
         return None;
     }
     let mut out = ParsedSetCookie { name, value, ..Default::default() };
@@ -295,9 +413,8 @@ fn parse_set_cookie(header: &str) -> Option<ParsedSetCookie<'_>> {
                 out.max_age = Some(if val.starts_with('-') { -n } else { n });
             }
         } else if key.eq_ignore_ascii_case("domain") {
-            if !val.is_empty() {
-                out.domain = Some(val);
-            }
+            // An empty Domain clears an earlier one: the cookie is host-only again.
+            out.domain = (!val.is_empty()).then_some(val);
         } else if key.eq_ignore_ascii_case("path") {
             out.path = Some(val);
         } else if key.eq_ignore_ascii_case("secure") {
@@ -497,7 +614,7 @@ impl CookieJar {
         let path = if options.path.is_empty() { default_path(url) } else { options.path.to_owned() };
         if !path.starts_with('/')
             || path.len() > MAX_COOKIE_ATTRIBUTE_BYTES
-            || !valid_prefix(name, true, options.domain.is_none(), &path, options.same_site)
+            || !valid_prefix(name, true, options.domain.is_none(), path == "/", false, options.same_site)
         {
             return Err("Invalid cookie path or cookie name prefix.");
         }
@@ -562,7 +679,12 @@ impl CookieJar {
         let Some(host) = host_str(url) else { return false };
         let (domain, host_only) = match parsed.domain {
             Some(d) => {
-                let d = d.trim_start_matches('.').trim_end_matches('.').to_ascii_lowercase();
+                // One leading dot is dropped; a second one, or a trailing dot, makes the attribute invalid.
+                let d = d.strip_prefix('.').unwrap_or(d);
+                if d.is_empty() || d.starts_with('.') || d.ends_with('.') {
+                    return false;
+                }
+                let d = d.to_ascii_lowercase();
                 let public_suffix = !is_ip(&d) && pyro_psl::suffix_str(&d) == Some(d.as_str());
                 if public_suffix && d != host {
                     return false;
@@ -608,7 +730,7 @@ impl CookieJar {
             return false;
         }
         let name = parsed.name;
-        if !valid_prefix(name, secure, host_only, &path, same_site) {
+        if !valid_prefix(name, secure, host_only, parsed.path == Some("/"), http_only, same_site) {
             return false;
         }
         // Max-Age wins over Expires; both are capped at 400 days like Chrome.
@@ -890,7 +1012,7 @@ impl CookieJar {
             || path.len() > MAX_COOKIE_ATTRIBUTE_BYTES
             || path.trim_matches(' ') != path
             || path.bytes().any(|b| b.is_ascii_control() || b == b';')
-            || !valid_prefix(name, secure, host_only, path, same_site)
+            || !valid_prefix(name, secure, host_only, path == "/", http_only, same_site)
         {
             return false;
         }
@@ -948,6 +1070,51 @@ impl CookieJar {
                 self.notify(CookieChange::Deleted(cookie));
             }
         }
+    }
+
+    /// The number the next stored cookie is created after: [`CookieJar::site_written_since`] compares with it.
+    pub fn sequence(&self) -> u64 {
+        self.seq
+    }
+
+    /// Whether a cookie of `site` (a registrable domain or host as [`site_of`] names it) was created after
+    /// [`CookieJar::sequence`] was `since`: unpartitioned cookies by their domain, partitioned ones by the
+    /// site of their partition key's top-level site.
+    pub fn site_written_since(&self, since: u64, site: &str) -> bool {
+        self.by_domain.values().flatten().any(|c| c.creation > since && Self::cookie_of_site(c, site))
+    }
+
+    /// Whether `c` belongs to `site` for state clearing: its domain is at the site, or it is partitioned
+    /// under a top-level document of the site (the partition key is `scheme://site`).
+    fn cookie_of_site(c: &Cookie, site: &str) -> bool {
+        site_of(&c.domain).eq_ignore_ascii_case(site)
+            || c.partition_key.as_deref().and_then(|k| k.split_once("://")).is_some_and(|(_, s)| s.eq_ignore_ascii_case(site))
+    }
+
+    /// Bounce Tracking Mitigations: deletes every cookie of `site` (see [`CookieJar::site_written_since`]),
+    /// partitioned or not, and tells the observers of the script-visible ones. Returns how many went.
+    pub fn delete_site(&mut self, site: &str) -> usize {
+        let mut removed = 0;
+        let mut changes = Vec::new();
+        let observing = !self.observers.is_empty();
+        self.by_domain.retain(|_, list| {
+            list.retain(|c| {
+                let doomed = Self::cookie_of_site(c, site);
+                if doomed {
+                    removed += 1;
+                    if observing {
+                        changes.push(c.clone());
+                    }
+                }
+                !doomed
+            });
+            !list.is_empty()
+        });
+        self.count -= removed;
+        for cookie in changes {
+            self.notify(CookieChange::Deleted(cookie));
+        }
+        removed
     }
 }
 
@@ -1271,6 +1438,32 @@ mod tests {
         jar.document_cookie(&url, now)
     }
 
+    /// WPT cookies/attributes/domain, cookies/value and cookies/prefix.
+    #[test]
+    fn domain_value_and_prefix_edge_cases() {
+        assert_eq!(doc_cookie_after(&["a=1; Domain=..example.com"]), "");
+        assert_eq!(doc_cookie_after(&["a=1; Domain=example.com."]), "");
+        assert_eq!(doc_cookie_after(&["a=1; Domain=example.com.."]), "");
+        assert_eq!(doc_cookie_after(&["a=1; Domain=.example.com"]), "a=1");
+        // An empty Domain after a mismatched one leaves a host-only cookie.
+        assert_eq!(doc_cookie_after(&["a=1; Domain=other.example.com; Domain="]), "a=1");
+        assert_eq!(doc_cookie_after(&["a=1\nZYX"]), "a=1");
+        assert_eq!(doc_cookie_after(&["a=1; Path=/\n"]), "");
+        // `__Host-` needs an explicit Path=/ attribute.
+        assert_eq!(doc_cookie_after(&["__Host-a=1; Secure"]), "");
+        assert_eq!(doc_cookie_after(&["__Host-a=1; Secure; Path"]), "");
+        assert_eq!(doc_cookie_after(&["__Host-a=1; Secure; Path=/"]), "__Host-a=1");
+        // `__Http-` and `__Host-Http-` cannot be set from script (they need HttpOnly).
+        assert_eq!(doc_cookie_after(&["__Http-a=1; Secure; Path=/"]), "");
+        assert_eq!(doc_cookie_after(&["__Host-Http-a=1; Secure; Path=/"]), "");
+        let mut jar = CookieJar::new();
+        let url = Url::parse("https://example.com/").unwrap();
+        assert!(!jar.set_from_header(&url, "__Http-a=1; Secure", Access::Http, 1.0));
+        assert!(jar.set_from_header(&url, "__Http-a=1; Secure; HttpOnly", Access::Http, 1.0));
+        assert!(!jar.set_from_header(&url, "__Host-Http-b=1; Secure; HttpOnly", Access::Http, 1.0));
+        assert!(jar.set_from_header(&url, "__Host-Http-b=1; Secure; HttpOnly; Path=/", Access::Http, 1.0));
+    }
+
     /// RFC 6265 5.1.1: browsers accept any delimiters, token order, `UTC`
     /// or a zone suffix, and two-digit years.
     #[test]
@@ -1379,5 +1572,30 @@ mod tests {
         let v6 = Url::parse("http://[::1]:8080/").unwrap();
         assert!(jar.set_from_header(&v6, "j=1", Access::Http, 5.0));
         assert_eq!(jar.header_for(&v6, SiteContext::SameSite, 6.0).as_deref(), Some("j=1"));
+    }
+    #[test]
+    fn storage_access_rules_block_third_parties_until_granted() {
+        let top = partition_key(&Url::parse("https://example.com/").unwrap()).unwrap();
+        let rules = Arc::new(vec![CookieAccessRule::parse("*", "*", true).unwrap()]);
+        let own = Url::parse("https://embedded.test/").unwrap();
+        let first_party = Url::parse("https://www.example.com/").unwrap();
+        let blocking = CookieBlocking::new(rules.clone(), top.clone(), partition_key(&own), false, false);
+        // A third party's own site is blocked, the top-level site is not.
+        assert!(blocking.blocks(&own));
+        assert!(!blocking.blocks(&first_party));
+        // A grant covers the document's own site only.
+        let granted = CookieBlocking::new(rules.clone(), top.clone(), partition_key(&own), false, true);
+        assert!(!granted.blocks(&own));
+        assert!(granted.blocks(&Url::parse("https://other.test/").unwrap()));
+        // Below a cross-site ancestor even the top-level site is a third party.
+        let aba = CookieBlocking::new(rules.clone(), top.clone(), partition_key(&first_party), true, false);
+        assert!(aba.blocks(&first_party));
+        assert!(!aba.without_grant().granted_for(&first_party).blocks(&first_party));
+        // A later allowing rule for the origin wins; none at all blocks nothing.
+        let allow = CookieAccessRule::parse("https://embedded.test", "https://example.com", false).unwrap();
+        let both = Arc::new(vec![CookieAccessRule::parse("*", "*", true).unwrap(), allow]);
+        assert!(!CookieBlocking::new(both, top.clone(), partition_key(&own), false, false).blocks(&own));
+        assert!(!CookieBlocking::new(Arc::new(Vec::new()), top, partition_key(&own), false, false).blocks(&own));
+        assert_eq!(CookieAccessRule::parse("not a url", "*", true), None);
     }
 }

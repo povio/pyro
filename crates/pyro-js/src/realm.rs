@@ -298,6 +298,19 @@ impl ModuleRequest {
     /// `default` export is `JSON.parse(text)`, and text that is not JSON
     /// fails the import with a SyntaxError.
     pub fn resolve_json(self, scope: &Scope<'_>, text: &str) -> JsResult<()> {
+        // HTML "creating a JSON module script": text that does not parse is the script's parse
+        // error, located at the module (its own URL, not the importer's, is the report's filename).
+        let parse_error = scope
+            .realm
+            .cached_helper(scope, "jsonModuleError")
+            .and_then(|f| f.call(None, &[scope.string(text), scope.string(&self.url)]))
+            .ok()
+            .filter(|e| !e.is_undefined());
+        if let Some(error) = parse_error {
+            let mut this = self;
+            this.done = true;
+            return this.reject.get(scope).as_object().expect("reject fn").call(None, &[error]).map(|_| ());
+        }
         self.resolve_source(scope, text, sys::modules::MODULE_TYPE_JSON)
     }
 
@@ -869,6 +882,14 @@ impl Realm {
 
     pub fn id(&self) -> RealmId {
         self.inner.id
+    }
+
+    /// Whether native code entered this realm (called into its script: a timer, an event
+    /// listener, a script, a promise reaction ...) since the embedder last called
+    /// [`crate::reset_entered`]: which documents ran script in an event-loop task.
+    pub fn entered_since_reset(&self) -> bool {
+        let ctx = self.inner.ctx.get();
+        !ctx.is_null() && crate::engine::entered_since_reset(ctx as sys::JSContextRef)
     }
 
     pub fn name(&self) -> &str {
@@ -1693,7 +1714,7 @@ impl<'s> Scope<'s> {
         deny: Object<'_>,
     ) -> JsResult<Object<'s>> {
         let make = self.realm.cached_helper(self, "windowProxy")?;
-        make.call(None, &[stand_in.value(), target.value(), child.value(), deny.value()])?
+        make.call(None, &[stand_in.value(), target.value(), child.value(), deny.value(), self.coop_flag()])?
             .as_object()
             .ok_or_else(|| JsError::Type("windowProxy made no object".into()))
     }
@@ -1705,9 +1726,16 @@ impl<'s> Scope<'s> {
     /// anything else. `stand_in` is never handed to page code through it.
     pub fn cross_origin_window(&self, stand_in: Object<'_>) -> JsResult<Object<'s>> {
         let make = self.realm.cached_helper(self, "crossOriginWindow")?;
-        make.call(None, &[stand_in.value()])?
+        make.call(None, &[stand_in.value(), self.coop_flag()])?
             .as_object()
             .ok_or_else(|| JsError::Type("crossOriginWindow made no object".into()))
+    }
+
+    /// The engine's COOP reporting flag (an array `[on]` shared by every realm, see
+    /// [`crate::set_coop_reporting`]) that the WindowProxy helpers read before reporting an access.
+    fn coop_flag(&self) -> Value<'s> {
+        // SAFETY: the flag is a live array of this VM, protected for the engine's lifetime.
+        unsafe { Value::from_raw(self.ctx, self.engine_inner().coop_flag() as sys::JSValueRef) }
     }
 
     /// The accessible global behind a popup WindowProxy created by this
@@ -3277,8 +3305,11 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
             realm.global_members_on_instance.set(true);
         }
         if !global_accessors.is_empty() {
-            let accessor = realm.helper(scope, "accessor")?;
+            // One helper call defines all of them (a window has ~100 `on*` handlers).
+            let accessors = realm.helper(scope, "accessors")?;
             let function_proto = scope.function_prototype()?;
+            // (Rooted: the collector may run while the next functions are made.)
+            let (mut names, mut getters, mut setters) = (crate::RootedVec::new(), crate::RootedVec::new(), crate::RootedVec::new());
             for (name, call, set) in global_accessors {
                 let getter = make_member_fn(scope.ctx, &realm.engine, member_class, call, None, name, 0, &keys)?;
                 if let Some(proto) = function_proto {
@@ -3291,8 +3322,14 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
                 } else {
                     scope.undefined()
                 };
-                accessor.call(None, &[global.value(), scope.string(name), getter.value(), setter])?;
+                names.push(scope, scope.string(name));
+                getters.push(scope, getter.value());
+                setters.push(scope, setter);
             }
+            accessors.call(
+                None,
+                &[global.value(), rooted_array(scope, &names)?.value(), rooted_array(scope, &getters)?.value(), rooted_array(scope, &setters)?.value()],
+            )?;
         }
     }
     Ok(())

@@ -1330,8 +1330,36 @@ area {
 
 iframe:fullscreen {
     /* iframes in full-screen mode don't show a border. */
-    border: none;
+    border: none !important;
     padding: unset !important;
+}
+
+/* Fullscreen § 6 "User-agent level style sheet defaults": an element in fullscreen fills the
+ * viewport, in the top layer (`overlay`, -servo-top-layer: pyro-dom enters it into its top layer
+ * with the fullscreen flag), its `display: contents` and inline `display` computed to block as any
+ * top-layer element's are. The root element is not moved. `object-fit` is the one that is not
+ * !important, so an author can override it. */
+:not(:root):fullscreen {
+    -servo-top-layer: auto !important;
+    position: fixed !important;
+    inset: 0 !important;
+    margin: 0 !important;
+    box-sizing: border-box !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    width: 100% !important;
+    height: 100% !important;
+    transform: none !important;
+    object-fit: contain;
+    overlay: auto;
+}
+
+:fullscreen::backdrop {
+    position: fixed;
+    inset: 0;
+    background: black;
 }
 
 /* Details and summary
@@ -1654,6 +1682,81 @@ geolocation, install, usermedia, camera, microphone {
  * script level deeper in compact math (their font 0.71 times smaller), and a fraction has 1px
  * of padding beside its bar. Its layout is `layout::math`. */
 m|math { math-style: compact; }
-m|math[display="block" i] { math-style: normal; }
+m|math[display="block" i] { math-style: normal; display: block; }
 m|mfrac { padding-inline: 1px; }
 m|mfrac > m|* { math-depth: auto-add; math-style: compact; font-size: math; }
+/* A token's text takes one line whatever the token's width (Chromium: width-height-005, a token
+ * narrower than its text overflows it instead of wrapping). */
+m|mi, m|mn, m|mo, m|ms, m|mtext { text-wrap-mode: nowrap; }
+
+/* pyro: MathML tables (MathML Core Appendix A, Chromium's mathml.css; `layout::math::table`): an
+ * `mtable` is an inline table that is compact by default, an `mtr` a table row and an `mtd` a
+ * table cell with its content centred and 0.5ex by 0.4em of padding. The cell lays its children
+ * out as a row (`table::construct`); the table's baseline is the math axis. */
+m|mtable { display: inline-table; math-style: compact; }
+m|mtr { display: table-row; }
+m|mtd { display: table-cell; padding: 0.5ex 0.4em; text-align: center; }
+
+/* pyro: MathML attribute-independent UA rules (MathML Core Appendix A, user agent stylesheet; Chromium's
+ * mathml.css). The `m|math` and `m|mfrac` rules above belong to the layout; the attribute mappings
+ * (`mathcolor`, `mathbackground`, `mathsize`, `scriptlevel`, `displaystyle`) are presentational hints
+ * (`mathml_attrs`, `build_presentational_hints`). */
+/* MathML Core level 1 has no vertical or mixed writing modes: a MathML element is always horizontal,
+ * whatever the author or `dir` say (WPT mathml/relations/css-styling/writing-mode). */
+m|* { writing-mode: horizontal-tb !important; }
+/* The root resets what its HTML ancestors would otherwise inherit into the formula. */
+m|math {
+    direction: ltr;
+    text-indent: 0;
+    letter-spacing: normal;
+    word-spacing: normal;
+    line-height: normal;
+    font-family: math;
+    font-style: normal;
+    font-weight: normal;
+    math-shift: normal;
+}
+/* `dir` (only `ltr` and `rtl`, ASCII case-insensitively; `auto` and other values leave `direction` as inherited). */
+m|*[dir="ltr" i] { direction: ltr; }
+m|*[dir="rtl" i] { direction: rtl; }
+/* Identifiers: a single character is italicised, unless `mathvariant="normal"` (Core 3.2.2). */
+m|mi { text-transform: math-auto; }
+m|mi[mathvariant="normal" i] { text-transform: none; }
+m|merror { border: 1px solid red; background-color: lightyellow; }
+m|mphantom { visibility: hidden; }
+/* Only the first child of a `semantics` or `maction` is rendered; annotations never are. */
+m|semantics > m|*:not(:first-child),
+m|maction > m|*:not(:first-child),
+m|annotation,
+m|annotation-xml { display: none; }
+/* `math-shift` (cramped style): the radicand and index of a radical, a fraction's denominator, the
+ * subscripts of scripts (the non-first children of `msub`, the second of `msubsup`, the even ones of
+ * `mmultiscripts` before its `mprescripts` and the odd ones after it) and the base of an accented
+ * `mover`/`munderover`. The inherited value carries it to all descendants. */
+m|msqrt > m|*,
+m|mroot > m|*,
+m|mfrac > m|*:nth-child(2),
+m|msub > m|*:not(:first-child),
+m|msubsup > m|*:nth-child(2),
+m|mmultiscripts > m|*:nth-child(2n),
+m|mmultiscripts > m|mprescripts ~ m|*:nth-child(2n+1),
+m|mover[accent="true" i] > m|*:first-child,
+m|munderover[accent="true" i] > m|*:first-child { math-shift: compact; }
+m|mmultiscripts > m|mprescripts ~ m|*:nth-child(2n) { math-shift: normal; }
+
+/* pyro: script levels of the scripts, limits and radicals (MathML Core Appendix A; layout in
+ * `layout::math::{scripts, underover, radical}`): every child but the first of a script or a
+ * limit element is a script level deeper in compact math, an accent's script keeps the font size
+ * of its base, and the index of a root is two levels deeper. */
+m|msub > m|*:not(:first-child),
+m|msup > m|*:not(:first-child),
+m|msubsup > m|*:not(:first-child),
+m|mmultiscripts > m|*:not(:first-child),
+m|munder > m|*:not(:first-child),
+m|mover > m|*:not(:first-child),
+m|munderover > m|*:not(:first-child) { math-depth: add(1); math-style: compact; font-size: math; }
+m|munder[accentunder="true" i] > m|*:nth-child(2),
+m|mover[accent="true" i] > m|*:nth-child(2),
+m|munderover[accentunder="true" i] > m|*:nth-child(2),
+m|munderover[accent="true" i] > m|*:nth-child(3) { font-size: inherit; }
+m|mroot > m|*:not(:first-child) { math-depth: add(2); math-style: compact; font-size: math; }

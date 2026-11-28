@@ -17,7 +17,7 @@ impl Fetcher for NoFetch {
     }
 }
 
-const STYLE: &str = "<!doctype html><style>body{margin:0;background:white;font:20px serif}</style>";
+const STYLE: &str = "<!doctype html><style>body{margin:0;background:white;font:20px serif} math{font-family:inherit}</style>";
 
 /// Each element's border box: `[x, y, width, height]`.
 fn rects(body: &str, ids: &[&str]) -> Vec<[f64; 4]> {
@@ -103,8 +103,9 @@ fn height_lies_above_the_baseline_and_depth_below() {
 #[test]
 fn author_styles_override_the_attributes() {
     assert_eq!(width("<mspace id=s width='20px' style='width:5px'></mspace>"), 5.0);
-    // An inline box takes no width.
-    assert_eq!(width("<mspace id=s width='20px' style='display:inline'></mspace>"), 0.0);
+    // A MathML element made `display: inline` is an atomic inline (inline math) and keeps the width
+    // (measured in Chrome: 20; 779375347).
+    assert_eq!(width("<mspace id=s width='20px' style='display:inline'></mspace>"), 20.0);
 }
 
 #[test]

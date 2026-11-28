@@ -126,6 +126,9 @@ impl BaseDocument {
     pub fn resolve(&mut self, current_time_for_animations: f64) {
         self.anchor_flush_choices.clear();
         self.resolve_in_flush(current_time_for_animations);
+        // pyro: the `unicode-range` faces some text of the document now needs (its generated content
+        // boxes are made by now).
+        self.start_pending_fonts();
         // pyro: a rendering update's ResizeObserver step that found the layout stale
         // (`request_remembered_sizes`) remembers the sizes on this one.
         if self.remembered_pending {
@@ -1207,17 +1210,52 @@ impl BaseDocument {
             }
             // Within a hundredth of a pixel of an end is at it (fractional scroll ranges).
             const EPSILON: f64 = 0.01;
-            let (offset, min, max) = self.scroll_state(crate::scrolling::ScrollTarget::Node(id), false);
+            let (mut offset, min, max) = self.scroll_state(crate::scrolling::ScrollTarget::Node(id), false);
+            // The page's scroll offsets as its embedder last told them (a geometry document does
+            // not have them on its nodes; one it does not list is at the origin there).
+            if let Some((offsets, viewport)) = &self.timeline_scroll {
+                // (The root element's scroll is the viewport's.)
+                if self.try_root_element().is_some_and(|root| root.id == id) {
+                    offset = crate::Point { x: viewport.0, y: viewport.1 };
+                } else if let Some(&(x, y)) = offsets.get(&id) {
+                    offset = crate::Point { x, y };
+                }
+            }
             let mut edges = ScrollableEdges::empty();
             edges.set(ScrollableEdges::LEFT, offset.x > min.x + EPSILON);
             edges.set(ScrollableEdges::RIGHT, offset.x < max.x - EPSILON);
             edges.set(ScrollableEdges::TOP, offset.y > min.y + EPSILON);
             edges.set(ScrollableEdges::BOTTOM, offset.y < max.y - EPSILON);
+            // `scrolled`: the direction of the last scroll that moved on each axis (CSS Conditional
+            // 5 § 7.3.2), kept until the next one on that axis.
+            let mut scrolled = ScrollableEdges::empty();
+            if let Some(&(dx, dy)) = self.scroll_directions.get(&id) {
+                scrolled.set(ScrollableEdges::LEFT, dx < 0);
+                scrolled.set(ScrollableEdges::RIGHT, dx > 0);
+                scrolled.set(ScrollableEdges::TOP, dy < 0);
+                scrolled.set(ScrollableEdges::BOTTOM, dy > 0);
+            }
+            // `snapped`: the container is the snap target of a snap container on x and/or y.
+            let mut snapped = style::stylesheets::container_rule::SnappedAxes::empty();
+            if let Some(&(x, y)) = self.snapped_targets.get(&id) {
+                snapped.set(style::stylesheets::container_rule::SnappedAxes::X, x);
+                snapped.set(style::stylesheets::container_rule::SnappedAxes::Y, y);
+            }
+            // `stuck`: the edges the sticky container is held at by its insets (bit 0 top, 1 right,
+            // 2 bottom, 3 left, as the embedder tracks them: `set_stuck`).
+            let mut stuck = ScrollableEdges::empty();
+            if let Some(&bits) = self.stuck_targets.get(&id) {
+                stuck.set(ScrollableEdges::TOP, bits & 1 != 0);
+                stuck.set(ScrollableEdges::RIGHT, bits & 2 != 0);
+                stuck.set(ScrollableEdges::BOTTOM, bits & 4 != 0);
+                stuck.set(ScrollableEdges::LEFT, bits & 8 != 0);
+            }
+            let entry = crate::tree::ScrollStateEntry { scrollable: edges, scrolled, snapped, stuck };
             let mut queries = self.nodes.scroll_state_queries.lock().unwrap();
             if let Some(previous) = queries.get_mut(&id)
-                && *previous != edges
+                && *previous != entry
             {
-                *previous = edges;
+                *previous = entry;
                 changed.push(id);
             }
         }
@@ -2139,6 +2177,13 @@ impl BaseDocument {
                 let reach = reach + scale / 64.0;
                 hit = hit.union(lines.inflate(reach, reach));
             }
+            // pyro: an inline box moved by `position: relative` shows (and is hit) where it was
+            // moved to: the lines as each such offset puts them are in the bound too, or a box
+            // moved out of its inline root's (and its ancestors') bound is culled from the descent.
+            for (dx, dy) in self.relative_span_offsets(node_id) {
+                let moved = lines + kurbo::Vec2::new(dx as f64 * scale, dy as f64 * scale);
+                hit = hit.union(moved.inflate(scale / 64.0, scale / 64.0));
+            }
         }
         if let Some(base) = columns_base {
             hit = base.union(self.columns_rect(node_id, hit, scale));
@@ -2150,6 +2195,37 @@ impl BaseDocument {
         let node = &self.nodes[node_id];
         let hit = self.overflow_contribution(node_id, hit, layout.size, scale);
         node.hit_bound_in_parent((location.x, location.y), scale, hit)
+    }
+
+    /// pyro: the distinct non-zero offsets (CSS px) `position: relative` gives the inline boxes
+    /// whose text the inline root `root_id` lays out (`inline_span_offset`, as paint and the
+    /// layout queries place their fragments); empty for a root without relative inline boxes.
+    fn relative_span_offsets(&self, root_id: NodeId) -> Vec<(f32, f32)> {
+        let Some(layout) = self.nodes[root_id]
+            .element_data()
+            .and_then(|element| element.inline_layout_data.as_deref())
+            .filter(|layout| layout.relative_spans)
+        else {
+            return Vec::new();
+        };
+        let mut seen = std::collections::HashSet::new();
+        let mut offsets: Vec<(f32, f32)> = Vec::new();
+        for line in layout.layout.lines() {
+            for item in line.items() {
+                let start = match item {
+                    parley::PositionedLayoutItem::GlyphRun(run) => Some(run.style().brush.id),
+                    parley::PositionedLayoutItem::InlineBox(inline_box) => {
+                        self.nodes.get(NodeId::from_u64(inline_box.id)).and_then(|node| node.parent)
+                    }
+                };
+                let Some(start) = start.filter(|&start| seen.insert(start)) else { continue };
+                let offset = self.inline_span_offset(start, root_id, false);
+                if offset != (0.0, 0.0) && !offsets.contains(&offset) {
+                    offsets.push(offset);
+                }
+            }
+        }
+        offsets
     }
 
     /// pyro: what a box adds to its parent's scrollable overflow

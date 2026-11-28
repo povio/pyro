@@ -1523,26 +1523,26 @@ impl<'a, Impl: 'a + SelectorImpl> SelectorIter<'a, Impl> {
     }
 
     #[inline]
-    pub(crate) fn matches_for_stateless_pseudo_element(&mut self, state: Option<&Impl::NonTSPseudoClass>) -> bool {
+    pub(crate) fn matches_for_stateless_pseudo_element(&mut self, state: Option<&Impl::NonTSPseudoClass>, only_child: bool) -> bool {
         let first = match self.next() {
             Some(c) => c,
             // Note that this is the common path that we keep inline: the
             // pseudo-element not having anything to its right.
             None => return true,
         };
-        self.matches_for_stateless_pseudo_element_internal(first, state)
+        self.matches_for_stateless_pseudo_element_internal(first, state, only_child)
     }
 
     #[inline(never)]
-    fn matches_for_stateless_pseudo_element_internal(&mut self, first: &Component<Impl>, state: Option<&Impl::NonTSPseudoClass>) -> bool {
-        if !first.matches_for_stateless_pseudo_element(state) {
+    fn matches_for_stateless_pseudo_element_internal(&mut self, first: &Component<Impl>, state: Option<&Impl::NonTSPseudoClass>, only_child: bool) -> bool {
+        if !first.matches_for_stateless_pseudo_element(state, only_child) {
             return false;
         }
         for component in self {
             // The only other parser-allowed Components in this sequence are
             // state pseudo-classes, or one of the other things that can contain
             // them.
-            if !component.matches_for_stateless_pseudo_element(state) {
+            if !component.matches_for_stateless_pseudo_element(state, only_child) {
                 return false;
             }
         }
@@ -2213,19 +2213,22 @@ impl<Impl: SelectorImpl> Component<Impl> {
     /// Whether a given selector (to the right of a pseudo-element) should match for stateless
     /// pseudo-elements. Note that generally nothing matches for those, but since we have :not(),
     /// we still need to traverse nested selector lists.
-    fn matches_for_stateless_pseudo_element(&self, state: Option<&Impl::NonTSPseudoClass>) -> bool {
+    fn matches_for_stateless_pseudo_element(&self, state: Option<&Impl::NonTSPseudoClass>, only_child: bool) -> bool {
         match *self {
             Component::NonTSPseudoClass(ref class) => state == Some(class),
+            // pyro: `:only-child` after a pseudo-element of a pseudo-element tree (the parser admits
+            // no other structural pseudo-class there): whether it is its parent's only child.
+            Component::Nth(ref data) => only_child && matches!(data.ty, NthType::OnlyChild),
             Component::Negation(ref selectors) => !selectors.slice().iter().any(|selector| {
                 selector
                     .iter_raw_match_order()
-                    .all(|c| c.matches_for_stateless_pseudo_element(state))
+                    .all(|c| c.matches_for_stateless_pseudo_element(state, only_child))
             }),
             Component::Is(ref selectors) | Component::Where(ref selectors) => {
                 selectors.slice().iter().any(|selector| {
                     selector
                         .iter_raw_match_order()
-                        .all(|c| c.matches_for_stateless_pseudo_element(state))
+                        .all(|c| c.matches_for_stateless_pseudo_element(state, only_child))
                 })
             },
             _ => false,

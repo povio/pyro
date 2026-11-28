@@ -1,0 +1,24 @@
+Pyro patch 0044: an import map scope keyed by a referring script's exact URL is in the resolved module set.
+
+HTML "merge existing and new import maps" step 3.1 drops a new scope rule when a pair of the resolved
+module set has a referring script that starts with the scope prefix and a specifier that equals or
+starts with the rule's specifier. JSC keeps that set as, per referring-script prefix, the specifiers
+resolved, but findURLPrefixes only yields the prefixes that end in '/': a scope keyed by the referring
+script's whole URL (no trailing '/') never found its resolutions, so a second import map could change
+what an already resolved specifier meant for that script. The whole URL is a prefix of itself too.
+WPT import-maps/multiple-import-maps/exact-url-scope-immutability.html.
+
+diff --git a/Source/JavaScriptCore/runtime/ImportMap.cpp b/Source/JavaScriptCore/runtime/ImportMap.cpp
+index d20493a..ad77559 100644
+--- a/Source/JavaScriptCore/runtime/ImportMap.cpp
++++ b/Source/JavaScriptCore/runtime/ImportMap.cpp
+@@ -454,6 +454,9 @@ void ImportMap::addModuleToResolvedModuleSet(String referringScriptURL, AtomStri
+         m_toplevelResolvedModuleSet.add(specifierPrefix);
+ 
+     Vector<AtomString> referringScriptPrefixes = findURLPrefixes(referringScriptURL);
++    // A scope key that is the referring script's whole URL (no trailing '/') is a prefix of it too:
++    // "does not start with scopePrefix" (merge step 3.1.1) lets an equal string through.
++    referringScriptPrefixes.append(AtomString(referringScriptURL));
+     for (AtomString& referringScriptPrefix : referringScriptPrefixes) {
+         const auto& currentSetIt = m_scopedResolvedModuleMap.find(referringScriptPrefix);
+         UncheckedKeyHashSet<AtomString>* currentSet = nullptr;

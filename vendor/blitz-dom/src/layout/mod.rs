@@ -170,6 +170,8 @@ pub(crate) struct LayoutPassState<'doc> {
     /// pyro: the floats the running inline layout placed, with the top of each margin box
     /// (content-box relative, CSS px): `text-box-trim` moves them with its lines.
     pub(crate) inline_placed_floats: Vec<(crate::NodeId, f32)>,
+    /// pyro: the block stretch target an embellished operator is measured again with (`layout::math::operator`).
+    pub(crate) math_stretch: Option<math::operator::StretchTarget>,
     /// This rounding pass's nodes reached and subtrees skipped (see `layout::writing_mode`).
     #[cfg(feature = "writing-mode")]
     pub(crate) round_counts: (u64, u64),
@@ -180,6 +182,8 @@ pub(crate) struct LayoutPassState<'doc> {
     /// height, size): a parent that hands one back as a known size hands back the result.
     calc_size_results: Vec<(NodeId, u8, f32, Option<f32>)>,
     try_styles: std::collections::HashMap<NodeId, style::servo_arc::Arc<style::properties::ComputedValues>>,
+    /// pyro: the scrollable overflow size of the scroll container whose out-of-flow boxes are being placed.
+    oof_scrollable: Option<(NodeId, taffy::Size<f32>)>,
     try_options: std::cell::RefCell<std::collections::HashMap<(Option<crate::NodeId>, usize), ([usize; 5], usize)>>,
     /// pyro: the multi-column container whose strip is being laid out and the border-box height
     /// its content's percentage heights resolve against (its column height, `layout::multicol`).
@@ -264,11 +268,13 @@ impl<'doc> LayoutPassState<'doc> {
             #[cfg(feature = "writing-mode")]
             orthogonal_percent_basis: None,
             inline_placed_floats: Vec::new(),
+            math_stretch: None,
             #[cfg(feature = "writing-mode")]
             round_counts: (0, 0),
             column_spanners: None,
             calc_size_results: Vec::new(),
             try_styles: Default::default(),
+            oof_scrollable: None,
             try_options: Default::default(),
             multicol_percent_height: None,
             nested_fragmentation: std::collections::HashMap::new(),
@@ -997,13 +1003,13 @@ impl LayoutPassState<'_> {
         block_ctx: Option<&mut BlockContext<'_>>,
     ) -> taffy::tree::LayoutOutput {
         match self.leaf_layout_or_algorithm(node_id, inputs) {
-            ChildLayout::Done(output) => {
+            ChildLayout::Done(mut output) => {
                 // pyro: HTML-in-Canvas: a canvas with content=drawable keeps its replaced box and
                 // lays its children out inside it. Any other leaf returns its output as before.
                 if inputs.run_mode == taffy::RunMode::PerformLayout
                     && self.nodes[dom_node_id(node_id)].element_data().is_some_and(|element| element.is_drawable_canvas())
                 {
-                    self.layout_drawable_canvas_children(node_id, output.size);
+                    self.layout_drawable_canvas_children(node_id, &mut output);
                 }
                 output
             }
@@ -1015,15 +1021,22 @@ impl LayoutPassState<'_> {
             ChildLayout::Table => self.compute_table_root_layout(node_id, inputs),
             ChildLayout::Multicol { inline_root } => self.compute_multicol_layout(node_id, inputs, inline_root),
             ChildLayout::MathFraction => self.compute_math_fraction_layout(node_id, inputs),
+            ChildLayout::MathBox => self.compute_math_layout(node_id, inputs),
         }
     }
 
     /// pyro: HTML-in-Canvas: lays out the children of a canvas with content=drawable (whose own
     /// box is the replaced one, `size`) in flow inside that box, as a block container (an inline
     /// root for inline content) of exactly that size. They paint only through
-    /// `drawElementImage`, not in place (blitz-paint `render_element_clipped`).
+    /// `drawElementImage`, not in place (blitz-paint `render_element_clipped`). The
+    /// absolutely positioned boxes among them go on `output` as its out-of-flow candidates, with
+    /// the canvas's padding box as their positioning area, so `lay_out_out_of_flow_boxes` (which
+    /// runs on the leaf output next) places them: the canvas claims those whose containing block
+    /// it is (the UA sheet gives it `contain: layout`), the rest bubble up. Their results were
+    /// dropped before, and such a box stayed 0x0.
     #[inline(never)]
-    fn layout_drawable_canvas_children(&mut self, node_id: NodeId, size: taffy::Size<f32>) {
+    fn layout_drawable_canvas_children(&mut self, node_id: NodeId, output: &mut taffy::tree::LayoutOutput) {
+        let size = output.size;
         let inputs = taffy::LayoutInput {
             run_mode: taffy::RunMode::PerformLayout,
             sizing_mode: taffy::SizingMode::InherentSize,
@@ -1037,11 +1050,13 @@ impl LayoutPassState<'_> {
             },
             vertical_margins_are_collapsible: taffy::Line::FALSE,
         };
-        if self.nodes[dom_node_id(node_id)].flags.is_inline_root() {
-            let _ = self.inline_layout(node_id, inputs, None);
+        let inner = if self.nodes[dom_node_id(node_id)].flags.is_inline_root() {
+            self.inline_layout(node_id, inputs, None)
         } else {
-            let _ = compute_block_layout(self, node_id, inputs, None);
-        }
+            compute_block_layout(self, node_id, inputs, None)
+        };
+        output.oof_candidates = inner.oof_candidates;
+        output.oof_positioning_area = inner.oof_positioning_area;
     }
 
     // pyro: the algorithms other than block layout, not inlined into
@@ -1354,7 +1369,7 @@ impl LayoutPassState<'_> {
                         });
                         if scrolls { (thickness - taffy::CoreStyle::scrollbar_gutter_size(&style).width).max(0.0) } else { 0.0 }
                     };
-                    let output = compute_leaf_layout(
+                    let mut output = compute_leaf_layout(
                         inputs,
                         &node.layout_style(),
                         resolve_calc_value,
@@ -1397,6 +1412,7 @@ impl LayoutPassState<'_> {
                         // pyro: less its inline-axis scrollbar gutters (classic scrollbars).
                         let gutter = taffy::CoreStyle::scrollbar_gutter_size(&node.layout_style()).width;
                         let content_width = (output.size.width - pb.horizontal_axis_sum() - gutter).max(0.0);
+                        let suppresses_baseline = node.layout_style().contain().suppresses_baseline();
                         let doc = &mut *self.doc;
                         let scale = doc.viewport.scale();
                         let node = &mut doc.nodes[dom_node_id(node_id)];
@@ -1427,6 +1443,24 @@ impl LayoutPassState<'_> {
                             // to them: a classic `overflow: auto` scrollbar shows).
                             let text_height = input.editor.try_layout().map_or(0.0, |layout| layout.height() / scale);
                             let content_height = (output.size.height - pb.vertical_axis_sum()).max(0.0);
+                            // pyro: a textarea's first baseline is its first line's (the placeholder's while
+                            // it shows), clamped into its border box as a scroll container's is; it has no
+                            // last baseline (Chrome; WPT css-inline `baseline-source-first-textarea-001`).
+                            // (Horizontal lines: a vertical textarea keeps its synthesized baseline.)
+                            if !suppresses_baseline && style.as_deref().is_some_and(|style| !style.writing_mode.is_vertical()) {
+                                let placeholder_line = input
+                                    .placeholder
+                                    .as_deref()
+                                    .filter(|_| input.editor.raw_text().is_empty())
+                                    .and_then(|placeholder| placeholder.layout.lines().next().map(|line| line.metrics().baseline));
+                                let first_line = placeholder_line.or_else(|| {
+                                    input.editor.try_layout().and_then(|layout| layout.lines().next().map(|line| line.metrics().baseline))
+                                });
+                                if let Some(baseline) = first_line {
+                                    let baseline = (pb.top + baseline / scale).clamp(0.0, output.size.height);
+                                    output.baselines = taffy::Baselines::new(Some(baseline), None);
+                                }
+                            }
                             if text_width > content_width || text_height > content_height + 0.5 {
                                 let mut output = output;
                                 let overflow = output.scrollable_overflow_rect;
@@ -1542,6 +1576,11 @@ impl LayoutPassState<'_> {
                                 _ if none => (0.0, 0.0),
                                 _ => (13.0, 13.0),
                             };
+                            // pyro: scaled by CSS `zoom` (the theme size is in the element's own px; WPT
+                            // css-viewport `zoom/widget`).
+                            let zoom: f32 = node.primary_styles().map_or(1.0, |style| style.effective_zoom.value());
+                            let zoom = if zoom.is_finite() && zoom > 0.0 { zoom } else { 1.0 };
+                            let (w, h) = (w * zoom, h * zoom);
                             // pyro: a range whose `width` is a percentage has no
                             // min-content width (Blink, as its text controls; CSS Sizing 3
                             // § 5.2.1 compressible; WPT css-sizing `range-percent-intrinsic-size-1`):
@@ -1798,7 +1837,28 @@ impl LayoutPassState<'_> {
                     // The token is the density-corrected natural size (a `srcset` candidate's `2x`),
                     // which a loaded raster image's pixel size is not.
                     let raster = matches!(&element_data.special_data, SpecialElementData::Image(d) if matches!(&**d, ImageData::Raster(_)));
+                    // pyro: a loaded SVG image takes it too: HTML's density-corrected intrinsic width and
+                    // height (`<img srcset="a.svg 2x">`) are the image's own dimensions divided by the
+                    // density, which the SVG's own intrinsic size does not know. The token is only there
+                    // when the SVG states a dimension (the embedder parsed it).
+                    #[cfg(feature = "svg")]
+                    let svg_image = matches!(&element_data.special_data, SpecialElementData::Image(d) if matches!(&**d, ImageData::Svg(_)));
+                    #[cfg(not(feature = "svg"))]
+                    let svg_image = false;
+                    // The token also carries the default object size's 300 or 150 for the dimension the SVG
+                    // leaves out, and the SVG's ratio exists only with a `viewBox` or both dimensions: so a
+                    // loaded SVG takes the token's value only for a dimension its own intrinsic size has,
+                    // and keeps its own ratio (`<svg width=200>` with no `viewBox` has no ratio: an `<img
+                    // width=100>` of it is 150 tall, not 75; WPT html/rendering svg-embedded-sizing).
                     let (intrinsic_sizes, default_object_size) = match pyro_natural_size(element_data) {
+                        Some((width, height)) if svg_image && is_image && loaded && !raster => (
+                            IntrinsicSizes {
+                                width: intrinsic_sizes.width.map(|_| width),
+                                height: intrinsic_sizes.height.map(|_| height),
+                                ratio: intrinsic_sizes.ratio,
+                            },
+                            default_object_size,
+                        ),
                         Some((width, height)) if is_video || (is_image && (!loaded || raster)) => (
                             IntrinsicSizes {
                                 width: Some(width),
@@ -1898,6 +1958,19 @@ impl LayoutPassState<'_> {
                         };
 
                     let mut intrinsic_sizes = intrinsic_sizes;
+                    let mut default_object_size = default_object_size;
+                    // pyro: CSS `zoom` scales the natural size of a replaced element (an image of 1x1
+                    // is 4x4 in a `zoom: 4` box, a canvas's default 300x150 too; the ratio stays;
+                    // WPT cssom-view `image-x-y-zoom`).
+                    let zoom: f32 = node.primary_styles().map_or(1.0, |style| style.effective_zoom.value());
+                    if zoom != 1.0 && zoom.is_finite() && zoom > 0.0 {
+                        intrinsic_sizes.width = intrinsic_sizes.width.map(|w| w * zoom);
+                        intrinsic_sizes.height = intrinsic_sizes.height.map(|h| h * zoom);
+                        default_object_size = taffy::Size {
+                            width: default_object_size.width * zoom,
+                            height: default_object_size.height * zoom,
+                        };
+                    }
                     if let Some(styles) = node.primary_styles() {
                         use style::values::computed::Contain;
                         use style::values::generics::box_::ContainIntrinsicSize;
@@ -1967,6 +2040,10 @@ impl LayoutPassState<'_> {
                 // pyro: an ordinary MathML fraction, built as one (`math::construct_fraction`).
                 if node.flags.contains(NodeFlags::IS_MATH_FRACTION) {
                     return ChildLayout::MathFraction;
+                }
+                // pyro: any other MathML box with a layout of its own (`math::construct_math`).
+                if node.flags.contains(NodeFlags::IS_MATH_BOX) {
+                    return ChildLayout::MathBox;
                 }
 
                 if node.flags.is_inline_root() {
@@ -2593,6 +2670,8 @@ enum ChildLayout {
     Multicol { inline_root: bool },
     /// pyro: an ordinary MathML fraction (`layout::math`).
     MathFraction,
+    /// pyro: a MathML box of the class `ElementData::math_kind` (`layout::math`).
+    MathBox,
 }
 
 impl TraversePartialTree for LayoutPassState<'_> {
@@ -2726,6 +2805,22 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
         style
     }
 
+    fn set_oof_scrollable_size(&mut self, id: NodeId, size: Option<taffy::Size<f32>>) {
+        self.oof_scrollable = size.map(|size| (id, size));
+    }
+
+    /// css-position-4 scrollable containing block: a box with a valid default anchor, whose containing
+    /// block is a scroll container, is contained by the container's scrollable overflow rectangle.
+    fn oof_scrollable_area(&self, id: NodeId, container: NodeId, area: taffy::Size<f32>) -> Option<taffy::Size<f32>> {
+        let (owner, size) = self.oof_scrollable?;
+        if owner != container { return None; }
+        let (node, container) = (self.node_from_id(id), self.node_from_id(container));
+        let style = node.primary_styles()?;
+        if !style.get_box().position.is_absolutely_positioned() { return None; }
+        self.default_anchor_rect(node, container, &style)?;
+        Some(taffy::Size { width: size.width.max(area.width), height: size.height.max(area.height) })
+    }
+
     fn position_try_options(&self, id: NodeId) -> ([usize; 5], usize, Option<bool>) {
         use style::values::specified::position::PositionTryOrder::*;
         let node = self.node_from_id(id);
@@ -2857,8 +2952,36 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
         let inline_basis = basis.width;
         let basis = wm.logical_size(basis);
         let calc = |lp:&style::values::computed::LengthPercentage,h,b| self.anchor_calc_size(lp,node,container,h,&item.style).map(|v|v.resolve(CSSPixelLength::new(b)).px());
-        let size = |v:&Size,h| match v { Size::AnchorSizeFunction(f) => self.anchor_dimension(f,node,container,h,&item.style), Size::AnchorContainingCalcFunction(lp) => calc(&lp.0,h,if h {basis.width} else {basis.height}), _ => None };
-        let max = |v:&MaxSize,h| match v { MaxSize::AnchorSizeFunction(f) => self.anchor_dimension(f,node,container,h,&item.style), MaxSize::AnchorContainingCalcFunction(lp) => calc(&lp.0,h,if h {basis.width} else {basis.height}), _ => None };
+        // pyro: an unresolvable anchor-size() continues with its fallback when that is itself an anchor query
+        // (`anchor-size(--none height, anchor-size(--a width))`; WPT `anchor-query-fallback`).
+        let size = |v:&Size,h| {
+            let mut v = v;
+            for _ in 0..64 {
+                match v {
+                    Size::AnchorSizeFunction(f) => {
+                        if let Some(px) = self.anchor_dimension(f,node,container,h,&item.style) { return Some(px); }
+                        match f.fallback.as_ref() { Some(next) if matches!(next, Size::AnchorSizeFunction(_) | Size::AnchorContainingCalcFunction(_)) => v = next, _ => return None }
+                    }
+                    Size::AnchorContainingCalcFunction(lp) => return calc(&lp.0,h,if h {basis.width} else {basis.height}),
+                    _ => return None,
+                }
+            }
+            None
+        };
+        let max = |v:&MaxSize,h| {
+            let mut v = v;
+            for _ in 0..64 {
+                match v {
+                    MaxSize::AnchorSizeFunction(f) => {
+                        if let Some(px) = self.anchor_dimension(f,node,container,h,&item.style) { return Some(px); }
+                        match f.fallback.as_ref() { Some(next) if matches!(next, MaxSize::AnchorSizeFunction(_) | MaxSize::AnchorContainingCalcFunction(_)) => v = next, _ => return None }
+                    }
+                    MaxSize::AnchorContainingCalcFunction(lp) => return calc(&lp.0,h,if h {basis.width} else {basis.height}),
+                    _ => return None,
+                }
+            }
+            None
+        };
         let margin = |v:&Margin,h| match v { Margin::AnchorSizeFunction(f) => self.anchor_dimension(f,node,container,h,&item.style), Margin::AnchorContainingCalcFunction(lp) => calc(lp,h,inline_basis), _ => None };
         let sizes = [
             taffy::Size { width:size(&pos.width,true),height:size(&pos.height,false) },
@@ -3014,19 +3137,8 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
         let mut offset = wm.logical_point(offset);
         let mirror = if reverse { self.anchor_physical_size(container).width } else { 0.0 };
         if reverse { offset.x = mirror - offset.x - size.width; }
-        fn axis(track: PositionAreaTrack, start: f32, end: f32, low: f32, high: f32) -> (f32, f32, taffy::AlignSelf) {
-            use taffy::AlignSelf as Align;
-            match track {
-                PositionAreaTrack::Start => (low.min(start), start, Align::END),
-                PositionAreaTrack::End => (end, high.max(end), Align::START),
-                PositionAreaTrack::Center => (start, end, Align::CENTER),
-                PositionAreaTrack::SpanStart => (low.min(end), end, Align::END),
-                PositionAreaTrack::SpanEnd => (start, high.max(start), Align::START),
-                PositionAreaTrack::SpanAll => (low, high, Align::CENTER),
-            }
-        }
-        let (left,right,horizontal) = axis(area.first.track()?, point.x, point.x + extent.width, offset.x, offset.x + size.width);
-        let (top,bottom,vertical) = axis(area.second.track()?, point.y, point.y + extent.height, offset.y, offset.y + size.height);
+        let (left,right,horizontal) = anchor::area_axis(area.first.track()?, point.x, point.x + extent.width, offset.x, offset.x + size.width);
+        let (top,bottom,vertical) = anchor::area_axis(area.second.track()?, point.y, point.y + extent.height, offset.y, offset.y + size.height);
         let horizontal = if reverse { match horizontal { taffy::AlignSelf::START => taffy::AlignSelf::END, taffy::AlignSelf::END => taffy::AlignSelf::START, other => other } } else { horizontal };
         let dx = if !trial && axes.0 { shift.x } else { 0.0 };
         let dy = if !trial && axes.1 { shift.y } else { 0.0 };

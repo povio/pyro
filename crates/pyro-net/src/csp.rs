@@ -149,6 +149,9 @@ pub struct PolicyList {
     pub policies: Vec<Policy>,
     /// `None`: an opaque origin, which `'self'` never matches.
     pub self_origin: Option<SelfOrigin>,
+    /// The context's `Connection-Allowlist` headers, checked with every request alongside the
+    /// policies ([`crate::connection_allowlist`]).
+    pub allowlist: Option<Arc<crate::connection_allowlist::ConnectionPolicy>>,
 }
 
 /// A request's destination as CSP sees it (Fetch "destination", plus the initiator cases that
@@ -424,16 +427,22 @@ impl InlineKind {
 impl PolicyList {
     /// An empty list for a context of `self_url`'s origin.
     pub fn new(self_url: Option<&Url>) -> PolicyList {
-        PolicyList { policies: Vec::new(), self_origin: self_url.and_then(SelfOrigin::of) }
+        PolicyList { policies: Vec::new(), self_origin: self_url.and_then(SelfOrigin::of), allowlist: None }
     }
 
     /// An empty list whose `'self'` is `origin` (serialized; `"null"` or `None`: opaque).
     pub fn for_origin(origin: Option<&str>) -> PolicyList {
-        PolicyList { policies: Vec::new(), self_origin: origin.and_then(SelfOrigin::parse) }
+        PolicyList { policies: Vec::new(), self_origin: origin.and_then(SelfOrigin::parse), allowlist: None }
     }
 
+    /// Whether the list has no policy (a connection allowlist is not one: [`PolicyList::has_allowlist`]).
     pub fn is_empty(&self) -> bool {
         self.policies.is_empty()
+    }
+
+    /// Whether the list carries a `Connection-Allowlist`.
+    pub fn has_allowlist(&self) -> bool {
+        self.allowlist.is_some()
     }
 
     /// Adds the policies of a header value: a comma-separated list of serialized policies
@@ -465,10 +474,41 @@ impl PolicyList {
         }
     }
 
+    /// CSP Integrity: the policies whose `script-src-elem` (or its fallback) holds
+    /// `'report-sha256'`, `'report-sha384'` or `'report-sha512'` source expressions, each with its
+    /// `report-to` group and those algorithms (`"sha256"`...), in order. Disposition does not
+    /// matter: a report-only policy asks for the hashes too, and nothing is blocked either way.
+    pub fn script_hash_reports(&self) -> Vec<(Option<String>, Vec<&'static str>)> {
+        let mut out = Vec::new();
+        for policy in &self.policies {
+            let Some(directive) = policy.directive_for("script-src-elem") else { continue };
+            let algorithms: Vec<&'static str> = [("'report-sha256'", "sha256"), ("'report-sha384'", "sha384"), ("'report-sha512'", "sha512")]
+                .into_iter()
+                .filter(|(keyword, _)| has_keyword(&directive.value, keyword))
+                .map(|(_, algorithm)| algorithm)
+                .collect();
+            if !algorithms.is_empty() {
+                out.push((policy.report_to(), algorithms));
+            }
+        }
+        out
+    }
+
     /// CSP3 §4.1.2 "Should request be blocked by Content Security Policy?" (the pre-request
     /// check of each policy's directive for the request's destination).
     pub fn pre_request(&self, request: &CspRequest) -> CheckOutcome {
-        self.check_url(request, &request.url)
+        // The connection allowlist first: a request it refuses is not matched against the policies.
+        let mut outcome = match &self.allowlist {
+            Some(allowlist) => allowlist.check(&request.url, &request.original_url, request.redirected),
+            None => CheckOutcome::default(),
+        };
+        if outcome.blocked {
+            return outcome;
+        }
+        let csp = self.check_url(request, &request.url);
+        outcome.blocked = csp.blocked;
+        outcome.violations.extend(csp.violations);
+        outcome
     }
 
     /// CSP3 §4.1.3 "Should response to request be blocked?": the post-request check, against
@@ -520,7 +560,7 @@ impl PolicyList {
             return true;
         }
         if request.dest.is_script_like() {
-            if integrity_matches(list, &request.integrity) {
+            if integrity_matches(list, &request.integrity) || ed25519_matches(list, &request.integrity) {
                 return true;
             }
             if has_keyword(list, "'strict-dynamic'") {
@@ -896,6 +936,18 @@ impl HashAlgorithm {
     }
 }
 
+/// The hash-source value of `data` for `algorithm` (`"sha256"`, `"sha384"`, `"sha512"`):
+/// `sha256-<base64>`; `None` for another name.
+pub fn hash_expression(algorithm: &str, data: &[u8]) -> Option<String> {
+    let algorithm = HashAlgorithm::parse(algorithm)?;
+    let name = match algorithm {
+        HashAlgorithm::Sha256 => "sha256",
+        HashAlgorithm::Sha384 => "sha384",
+        HashAlgorithm::Sha512 => "sha512",
+    };
+    Some(format!("{name}-{}", algorithm.digest(data)))
+}
+
 /// A hash-source (`'sha256-<base64>'`): its algorithm and value.
 fn hash_source(expression: &str) -> Option<(HashAlgorithm, &str)> {
     let inner = expression.strip_prefix('\'')?.strip_suffix('\'')?;
@@ -945,6 +997,38 @@ fn integrity_matches(list: &[String], integrity: &str) -> bool {
         any = true;
     }
     any
+}
+
+/// The unpadded standard-base64 form of the Ed25519 public keys (32 bytes) of `integrity`
+/// metadata (`ed25519-<base64>` tokens; others and malformed keys are not keys).
+fn ed25519_keys(integrity: &str) -> Vec<String> {
+    integrity
+        .split(is_ascii_ws)
+        .filter_map(|item| {
+            let (algorithm, value) = item.split('?').next()?.split_once('-')?;
+            algorithm.eq_ignore_ascii_case("ed25519").then(|| normalize_base64(value))
+        })
+        // 32 bytes are 43 characters of unpadded base64.
+        .filter(|key| key.len() == 43 && key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/'))
+        .collect()
+}
+
+/// Signature-based SRI's `'ed25519-<key>'` source expressions: the request's integrity metadata has
+/// at least one Ed25519 key, and every one of them is in `list`.
+fn ed25519_matches(list: &[String], integrity: &str) -> bool {
+    let keys = ed25519_keys(integrity);
+    if keys.is_empty() {
+        return false;
+    }
+    let sources: Vec<String> = list
+        .iter()
+        .filter_map(|e| {
+            let value = e.strip_prefix('\'')?.strip_suffix('\'')?;
+            let (algorithm, key) = value.split_once('-')?;
+            algorithm.eq_ignore_ascii_case("ed25519").then(|| normalize_base64(key))
+        })
+        .collect();
+    keys.iter().all(|key| sources.contains(key))
 }
 
 /// CSP3 §6.7.3.2 "Does a source list allow all inline behavior for type?".
@@ -1109,6 +1193,38 @@ mod tests {
         assert!(allowed("default-src 'none'; img-src 'self'", "https://a.test/i.png", RequestDest::Image));
         assert!(!allowed("default-src 'none'", "https://a.test/i.png", RequestDest::Image));
         assert!(allowed("connect-src 'self'", "wss://a.test/s", RequestDest::WebSocket));
+    }
+
+    #[test]
+    fn script_hash_reports_follow_the_fallback_list() {
+        let reports = |policy: &str| list(policy, "https://a.test/page.html").script_hash_reports();
+        assert_eq!(
+            reports("script-src 'self' 'report-sha256' 'report-SHA512'; report-to g"),
+            [(Some("g".to_owned()), vec!["sha256", "sha512"])]
+        );
+        assert_eq!(reports("default-src 'report-sha384'"), [(None, vec!["sha384"])]);
+        assert!(reports("script-src-elem 'self'; script-src 'report-sha256'").is_empty());
+        assert!(reports("img-src 'report-sha256'").is_empty());
+        assert!(hash_expression("sha256", b"").unwrap().starts_with("sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="));
+    }
+
+    #[test]
+    fn ed25519_source_expressions() {
+        let key = "JrQLj5P/89iXES9+vFgrIy29clF9CC/oPPsw3c5D0bs=";
+        let other = "xDnP380zcL4rJ76rXYjeHlfMyPZEOqpJYjsjEppbuXE=";
+        let list = list(&format!("script-src 'ed25519-{key}'"), "https://a.test/page.html");
+        let check = |integrity: &str| {
+            let mut request = CspRequest::new(Url::parse("https://a.test/x.js").unwrap(), RequestDest::Script);
+            request.integrity = integrity.to_owned();
+            list.pre_request(&request).allowed()
+        };
+        assert!(check(&format!("ed25519-{key}")));
+        assert!(check(&format!("ed25519-{key} malformed-thing")));
+        // No key, a malformed one, or one the policy does not list: blocked.
+        assert!(!check(""));
+        assert!(!check("ed25519-???"));
+        assert!(!check(&format!("ed25519-{other}")));
+        assert!(!check(&format!("ed25519-{key} ed25519-{other}")));
     }
 
     #[test]

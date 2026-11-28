@@ -265,7 +265,10 @@ impl ToCss for SpecifiedFontStyle {
                     dest.write_str("normal")?;
                 } else {
                     dest.write_str("oblique")?;
-                    if *angle != Self::default_angle() {
+                    if *angle == Self::explicit_default_angle() {
+                        // pyro: an explicit `oblique 14deg` keeps its angle (see `parse`).
+                        dest.write_str(" 14deg")?;
+                    } else if *angle != Self::default_angle() {
                         dest.write_char(' ')?;
                         angle.to_css(dest)?;
                     }
@@ -282,7 +285,16 @@ impl Parse for SpecifiedFontStyle {
             "normal" => generics::FontStyle::normal(),
             "italic" => generics::FontStyle::Italic,
             "oblique" => {
+                // pyro: `oblique` and `oblique 14deg` are distinct values that serialize apart
+                // (Chrome); the explicit default angle is kept as `explicit_default_angle`: an explicit
+                // `oblique 14deg` is stored one fixed-point step (1/256 degree) above the keyword's 14,
+                // so the two serialize apart, and compare unequal by construction.
                 let angle = input.try_parse(|input| Self::parse_angle(context, input))
+                    .map(|angle| if angle.degrees() == Some(computed::FontStyle::DEFAULT_OBLIQUE_DEGREES as f32) {
+                        Self::explicit_default_angle()
+                    } else {
+                        angle
+                    })
                     .unwrap_or_else(|_| Self::default_angle());
 
                 generics::FontStyle::Oblique(angle)
@@ -339,6 +351,11 @@ impl SpecifiedFontStyle {
             return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
         }
         Ok(angle)
+    }
+
+    /// pyro: the angle an explicit `oblique 14deg` is stored as (one computed step above the default).
+    pub fn explicit_default_angle() -> Angle {
+        Angle::from_degrees(computed::FontStyle::EXPLICIT_DEFAULT_OBLIQUE_DEGREES)
     }
 
     /// The default angle for `font-style: oblique`.

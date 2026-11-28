@@ -62,9 +62,10 @@ use peniko::{Color, Fill};
 pub use compare::{
     compare, decode_png, diff_image, encode_jpeg, encode_png, encode_rgb24, encode_yuv420p, CompareResult,
 };
-pub use geometry::{BoxPosition, BoxQuads, LayoutBox, StickyBox, TextWord};
+pub use geometry::{child_index_builds, inline_index_builds, BoxPosition, BoxQuads, LayoutBox, StickyBox, TextWord};
 pub use hash::scene_hash;
 pub use hit::{HitProbe, HitVisit};
+pub use blitz_paint::HitShape;
 pub use mirror::{DeltaOp, MirrorStats, Rebuild, Tree, TreeKind, TreeNode, TOP};
 pub use blitz_traits::net::{CorsCredentials, Destination, FetchOptions};
 pub use net::{is_plain_cors, Fetched, Fetcher};
@@ -330,6 +331,10 @@ pub struct CanvasImage {
     /// Straight-alpha RGBA rows. The same `Arc` as the previous render's
     /// means the pixels did not change.
     pub rgba: Arc<Vec<u8>>,
+    /// A video frame of media a page must not read back (cross-origin without CORS): the
+    /// HTML-in-Canvas privacy paint draws it and taints the canvas
+    /// (`blitz_dom::node::RasterImageData::tainting`).
+    pub tainting: bool,
 }
 
 /// A snapshot of a page whose Blitz document the renderer keeps between
@@ -873,6 +878,20 @@ pub struct Renderer {
     /// at its first sync. (The page tells them once per change, so a document that lost them
     /// would sample its scroll timelines at offset 0 until the next scroll.)
     timeline_scroll: HashMap<u64, TimelineScroll>,
+    /// pyro: each page's pointer (client position) as last told ([`Renderer::set_pointer`]).
+    pointer: HashMap<u64, (f64, f64)>,
+    /// pyro: each page's focused scroll marker group (its scroll container's key, and whether the
+    /// focus ring shows) as last told ([`Renderer::set_focused_scroll_group`]).
+    focused_scroll_group: HashMap<u64, (u64, bool)>,
+    /// pyro: each page's scroll directions as last told ([`Renderer::set_scroll_directions`]),
+    /// which a document built again takes at its next sync.
+    scroll_directions: HashMap<u64, Vec<(u64, (i8, i8))>>,
+    /// pyro: each page's snap targets as last told ([`Renderer::set_snapped`]), likewise.
+    snapped: HashMap<u64, Vec<(u64, (bool, bool))>>,
+    /// pyro: each page's scroll targets as last told ([`Renderer::set_scroll_targets`]), likewise.
+    scroll_targets: HashMap<u64, Vec<(u64, u64)>>,
+    /// pyro: each page's stuck sticky boxes as last told ([`Renderer::set_stuck`]), likewise.
+    stuck: HashMap<u64, Vec<(u64, u8)>>,
     pdf_cache: pdf::PdfCache,
     /// Layout queries of persistent documents, by page (present once the
     /// page's document has been laid out for them).
@@ -1043,6 +1062,12 @@ impl Renderer {
             mirrors: HashMap::new(),
             animations: HashMap::new(),
             timeline_scroll: HashMap::new(),
+            pointer: HashMap::new(),
+            focused_scroll_group: HashMap::new(),
+            scroll_directions: HashMap::new(),
+            snapped: HashMap::new(),
+            scroll_targets: HashMap::new(),
+            stuck: HashMap::new(),
             pdf_cache: pdf::PdfCache::default(),
             geometry: HashMap::new(),
             sprites: HashMap::new(),
@@ -1065,6 +1090,12 @@ impl Renderer {
     pub fn forget(&mut self, page: u64) {
         self.forget_document(page);
         self.timeline_scroll.remove(&page);
+        self.pointer.remove(&page);
+        self.focused_scroll_group.remove(&page);
+        self.scroll_directions.remove(&page);
+        self.snapped.remove(&page);
+        self.scroll_targets.remove(&page);
+        self.stuck.remove(&page);
     }
 
     /// Drops the persistent document of a page that lives on: its next sync builds it again (a
@@ -1124,10 +1155,11 @@ impl Renderer {
 
     /// pyro: the target of the scroll marker at the document point (`x`, `y`) of `page`: its
     /// element's key, or its multi-column container's and the column's index.
-    pub fn scroll_marker_at(&self, page: u64, x: f64, y: f64) -> Option<(u64, Option<u32>)> {
-        let m = self.mirrors.get(&page)?;
-        let (id, column) = m.doc.scroll_marker_at(x as f32, y as f32)?;
-        Some((m.key_of(id)?, column))
+    pub fn scroll_marker_at(&mut self, page: u64, x: f64, y: f64) -> Option<(u64, Option<u32>)> {
+        self.at_page_scroll(page, |m| {
+            let (id, column) = m.doc.scroll_marker_at(x as f32, y as f32)?;
+            Some((m.key_of(id)?, column))
+        })?
     }
 
     /// pyro: the key of the originating element of the `::scroll-button()` that the painted hit
@@ -1157,9 +1189,9 @@ impl Renderer {
     /// between captures, then puts those back. A hit test between captures (a click after a
     /// script or button scroll) is where the page is, and a button's enabled state is that of
     /// its scroller's current offset.
-    /// Nothing runs on a page without scroll buttons (`None`).
+    /// Nothing runs on a page without scroll pseudo-elements (`None`).
     fn at_page_scroll<R>(&mut self, page: u64, f: impl FnOnce(&mut mirror::Mirror) -> R) -> Option<R> {
-        if !self.mirrors.get(&page)?.doc.has_scroll_buttons() {
+        if !self.mirrors.get(&page)?.doc.uses_scroll_markers() {
             return None;
         }
         self.unforce_hidden_contents(page);
@@ -1218,6 +1250,43 @@ impl Renderer {
         self.mirrors.get(&page).is_some_and(|m| m.doc.uses_scroll_markers())
     }
 
+    /// pyro: the pointer's client position on `page` (`None`: it left): whether the scroll
+    /// pseudo-element boxes it is over may change with it, which the caller syncs for.
+    pub fn set_pointer(&mut self, page: u64, point: Option<(f64, f64)>) -> bool {
+        let old = match point {
+            Some(point) => self.pointer.insert(page, point),
+            None => self.pointer.remove(&page),
+        };
+        old != point && self.uses_scroll_markers(page)
+    }
+
+    /// pyro: the scroll container (by key) of `page` whose marker group has the focus, and whether
+    /// the focus ring shows (`None`: no marker has the focus), for `:focus` on the active marker;
+    /// applied at the next interaction sync.
+    pub fn set_focused_scroll_group(&mut self, page: u64, group: Option<(u64, bool)>) {
+        match group {
+            Some(group) => self.focused_scroll_group.insert(page, group),
+            None => self.focused_scroll_group.remove(&page),
+        };
+    }
+
+    /// pyro: the key of the scroll container whose marker group holds the marker the painted hit
+    /// test finds at the document point (`x`, `y`) of `page`.
+    pub fn scroll_marker_group_at(&mut self, page: u64, x: f64, y: f64) -> Option<u64> {
+        self.at_page_scroll(page, |m| {
+            let owner = m.doc.scroll_marker_group_at(x as f32, y as f32)?;
+            m.key_of(owner)
+        })?
+    }
+
+    /// pyro: the targets (element key, and column index of a multi-column container) of the markers
+    /// of the group of the scroll container `owner` of `page`, and the index of the active one.
+    pub fn scroll_marker_group_targets(&self, page: u64, owner: u64) -> Option<(Vec<Option<(u64, Option<u32>)>>, Option<usize>)> {
+        let m = self.mirrors.get(&page)?;
+        let (targets, active) = m.doc.scroll_marker_group_targets(m.node(owner)?)?;
+        Some((targets.into_iter().map(|t| t.and_then(|(id, column)| Some((m.key_of(id)?, column)))).collect(), active))
+    }
+
     pub fn set_timeline_scroll(&mut self, page: u64, elements: Vec<(u64, (f64, f64))>, viewport: (f64, f64)) -> bool {
         // A document that exists takes them now: the animated values of the next sync are computed
         // (from its scroll timelines) before that sync applies anything.
@@ -1230,7 +1299,62 @@ impl Renderer {
         invalidated
     }
 
+    /// pyro: the direction of each scroll container's last scroll on each axis (by key, -1
+    /// towards the start, 1 towards the end; `u64::MAX`: the viewport), which
+    /// `scroll-state(scrolled)` follows. Whether the document's styles are stale now.
+    pub fn set_scroll_directions(&mut self, page: u64, directions: Vec<(u64, (i8, i8))>) -> bool {
+        let changed = self.mirrors.get_mut(&page).is_some_and(|m| m.set_scroll_directions(&directions));
+        self.scroll_directions.insert(page, directions);
+        changed
+    }
+
+    /// pyro: the elements that are a scroll container's snap target now (by key, with the axes
+    /// (x, y) they are snapped on), which `scroll-state(snapped)` follows. Whether the
+    /// document's styles are stale now.
+    pub fn set_snapped(&mut self, page: u64, snapped: Vec<(u64, (bool, bool))>) -> bool {
+        let changed = self.mirrors.get_mut(&page).is_some_and(|m| m.set_snapped(&snapped));
+        self.snapped.insert(page, snapped);
+        changed
+    }
+
+    /// pyro: the scroll targets of the page now (by key: each scroll container's, the viewport's
+    /// under `u64::MAX`, and its target's), which scroll marker selection follows. Whether the
+    /// document's styles are stale now.
+    pub fn set_scroll_targets(&mut self, page: u64, targets: Vec<(u64, u64)>) -> bool {
+        let changed = self.mirrors.get_mut(&page).is_some_and(|m| m.set_scroll_targets(&targets));
+        self.scroll_targets.insert(page, targets);
+        changed
+    }
+
+    /// pyro: the sticky boxes of the page held at an edge by their insets now (by key, with the
+    /// edges: bit 0 top, 1 right, 2 bottom, 3 left), which `scroll-state(stuck)` follows. Whether
+    /// the document's styles are stale now.
+    pub fn set_stuck(&mut self, page: u64, stuck: Vec<(u64, u8)>) -> bool {
+        let changed = self.mirrors.get_mut(&page).is_some_and(|m| m.set_stuck(&stuck));
+        self.stuck.insert(page, stuck);
+        changed
+    }
+
+    /// pyro: whether a container of the page's document was queried for `scroll-state()`.
+    pub fn uses_scroll_state(&self, page: u64) -> bool {
+        self.mirrors.get(&page).is_some_and(|m| m.doc.uses_scroll_state())
+    }
+
     fn apply_animations(&mut self, page: u64) {
+        if let Some(m) = self.mirrors.get_mut(&page) {
+            if let Some(directions) = self.scroll_directions.get(&page) {
+                m.set_scroll_directions(directions);
+            }
+            if let Some(snapped) = self.snapped.get(&page) {
+                m.set_snapped(snapped);
+            }
+            if let Some(stuck) = self.stuck.get(&page) {
+                m.set_stuck(stuck);
+            }
+            if let Some(targets) = self.scroll_targets.get(&page) {
+                m.set_scroll_targets(targets);
+            }
+        }
         if let (Some(m), Some(scroll)) = (self.mirrors.get_mut(&page), self.timeline_scroll.get_mut(&page)) {
             if !scroll.applied {
                 let map = scroll.elements.iter().filter_map(|&(key, o)| Some((m.node(key)?, o))).collect();
@@ -1287,6 +1411,12 @@ impl Renderer {
     /// pyro: the image requests (URL and options) `page`'s persistent document references now.
     pub fn referenced_images(&self, page: u64) -> Option<Vec<(String, FetchOptions)>> {
         self.mirrors.get(&page).map(|m| m.doc.referenced_images())
+    }
+
+    /// [`Self::referenced_images`] without the `<img>` elements' own: those the document's image
+    /// loader tracks, which a lazy one does not delay `load` for.
+    pub fn referenced_non_element_images(&self, page: u64) -> Option<Vec<(String, FetchOptions)>> {
+        self.mirrors.get(&page).map(|m| m.doc.referenced_images_with(false))
     }
 
     /// The markup of `page`'s persistent document (tests, diagnostics).
@@ -1821,8 +1951,9 @@ impl Renderer {
         let mirrored = profiling.then(|| started.elapsed());
         let mirror::Mirror { doc, bridge, .. } = m;
         // (Scroll-driven animations' values follow the layout: a style read lays the document out
-        // too, else a new view timeline subject samples the last layout, which lacks it.)
-        let style_only = style_only && !doc.has_scroll_driven_animations();
+        // too, else a new view timeline subject samples the last layout, which lacks it. So do the
+        // active scroll marker's and the buttons' states.)
+        let style_only = style_only && !doc.has_scroll_driven_animations() && !doc.uses_scroll_markers();
         let geometry_generation = doc.root_node().tree().geometry_generation();
         let (fetch, passes, resolved_latest) =
             bridge.settle(doc, started + self.fetch_timeout, self.first_layout_wait, style_only);
@@ -1891,7 +2022,7 @@ impl Renderer {
             m.undisplayed.get_mut().clear();
         }
         // (As in `sync_delta`: scroll-driven animations need the layout.)
-        let style_only = style_only && !m.doc.has_scroll_driven_animations();
+        let style_only = style_only && !m.doc.has_scroll_driven_animations() && !m.doc.uses_scroll_markers();
         if changed && style_only {
             let generation = m.doc.root_node().tree().geometry_generation();
             m.doc.resolve_style(0.0);
@@ -1906,10 +2037,22 @@ impl Renderer {
 
     /// [`Renderer::set_interaction`] without the restyle: whether anything changed.
     fn mark_interaction(&mut self, page: u64, hovered: Option<u64>, focused: Option<u64>) -> bool {
+        // pyro: the pointer over a scroll pseudo-element's box hovers it and its originating element.
+        let pointer = self.pointer.get(&page).copied();
+        let group = self.focused_scroll_group.get(&page).copied();
+        let pseudo_hover = self.at_page_scroll(page, |m| {
+            let scroll = m.doc.viewport_scroll();
+            m.doc.hover_scroll_pseudos(pointer.map(|(x, y)| ((x + scroll.x) as f32, (y + scroll.y) as f32)))
+        });
         let Some(m) = self.mirrors.get_mut(&page) else { return false };
         let hover = hovered.and_then(|k| m.node(k));
         let focus = focused.and_then(|k| m.node(k));
-        let mut changed = m.doc.set_hover_node(hover);
+        let (mut pseudo_changed, pseudo_origin) = pseudo_hover.unwrap_or((false, None));
+        // (The focused marker group of the scroll container, if it still has a box.)
+        let group = group.and_then(|(key, ring)| Some((m.node(key)?, ring)));
+        pseudo_changed |= m.doc.set_focused_scroll_group(group);
+        let hover = pseudo_origin.or(hover);
+        let mut changed = m.doc.set_hover_node(hover) || pseudo_changed;
         if m.doc.focused_node() != focus {
             match focus {
                 Some(id) => {
@@ -2349,6 +2492,11 @@ impl Renderer {
         mirror.doc.css_animation_frames(mirror.node(key)?, name)
     }
 
+    pub fn transition_animation_frames(&self, page: u64, root: u64, pseudo: &str, name: &str) -> Option<Vec<pyro_dom::animation::CssKeyframeStep>> {
+        let mirror = self.mirrors.get(&page)?;
+        mirror.doc.transition_animation_frames(mirror.node(root)?, pseudo, name)
+    }
+
     pub fn sampled_font_style(
         &self, page: u64, key: u64, pseudo: Option<&style::selector_parser::PseudoElement>,
         size: Option<&style::properties::ComputedValues>, line_height: Option<&style::properties::ComputedValues>,
@@ -2403,8 +2551,10 @@ impl Renderer {
                 return None;
             }
             // A drop-down select's descendants (its options) generate no
-            // boxes, as in Chromium's menu list (their `display` stays).
+            // boxes, as in Chromium's menu list (their `display` stays), unless its picker is
+            // open (a customizable select, whose options are laid out below it).
             if id != start
+                && !blitz_dom::is_open_base_select(node)
                 && node.data.downcast_element().is_some_and(|el| {
                     &*el.name.local == "select"
                         && el.attr(blitz_dom::local_name!("multiple")).is_none()
@@ -2696,6 +2846,22 @@ impl Renderer {
     pub fn element_quads(&self, page: u64, key: u64) -> Option<BoxQuads> {
         let m = self.mirrors.get(&page)?;
         self.geometry.get(&page)?.element_quads(&m.doc, m.node(key)?)
+    }
+
+    /// pyro: how the box `key` under a transform answers a hit test at `(x, y)` (document CSS px):
+    /// see `Geometry::hit_plane`. The context root is by its key. `None`: no transform other than
+    /// a translation applies to it, or it is unknown.
+    pub fn hit_plane(&self, page: u64, key: u64, x: f64, y: f64) -> Option<(bool, Option<(u64, f64)>)> {
+        let m = self.mirrors.get(&page)?;
+        let (inside, depth) = self.geometry.get(&page)?.hit_plane(&m.doc, m.node(key)?, x, y)?;
+        Some((inside, depth.and_then(|(root, z)| Some((m.key_of(root)?, z)))))
+    }
+
+    /// pyro: whether `(x, y)` (document CSS px, as the box is placed) is inside the shape `shape`
+    /// of the element `key` (see `Geometry::hit_shape`); `true` when it has none or is unknown.
+    pub fn hit_shape(&self, page: u64, key: u64, shape: HitShape, x: f64, y: f64) -> bool {
+        let (Some(m), Some(g)) = (self.mirrors.get(&page), self.geometry.get(&page)) else { return true };
+        m.node(key).is_none_or(|id| g.hit_shape(&m.doc, id, shape, x, y))
     }
 
     pub fn overflowing_text_hits(&self, page: u64, key: u64, border: [f64; 4]) -> Vec<[f64; 4]> {

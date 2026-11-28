@@ -21,6 +21,7 @@ use stylo_taffy::CopyStyleGetters;
 
 use blitz_dom::{BaseDocument, NodeId};
 use kurbo::{Affine, Rect};
+use rustc_hash::FxHashMap;
 use style::values::specified::box_::DisplayInside;
 
 /// One element's boxes, CSS px.
@@ -194,10 +195,49 @@ impl LayoutBox {
     }
 }
 
-/// Layout queries of one persistent document. It holds no state: every
-/// query reads the document.
+/// Layout queries of one persistent document. Every query reads the document; the only state
+/// is [`InlineCache`], which is keyed by the document's geometry generation.
 #[derive(Default)]
-pub(crate) struct Geometry;
+pub(crate) struct Geometry {
+    inline_cache: std::cell::RefCell<InlineCache>,
+}
+
+/// An inline root's text at least this long (bytes) has the fragments of its elements indexed
+/// ([`InlineCache`]); a shorter one is walked for each element it is asked about.
+const INDEXED_INLINE_TEXT: usize = 2048;
+/// Inline roots indexed at once.
+const INLINE_ROOTS: usize = 32;
+
+/// One fragment of an inline root's layout, ready to hand out: where it is (the transform from
+/// the root's text space and the line index) and its rects (the second for the element the
+/// fragment starts in: a span edge without its margin).
+struct IndexedItem {
+    start: Option<NodeId>,
+    origin: Affine,
+    line: usize,
+    rect: Rect,
+    own_rect: Rect,
+}
+
+/// The fragments of one inline root and, by element, which of them are the element's (those of
+/// its descendants included), in layout order.
+struct IndexedRoot {
+    layout: (usize, usize, [u64; 6]),
+    lines: usize,
+    items: Vec<IndexedItem>,
+    by_element: FxHashMap<NodeId, Vec<u32>>,
+}
+
+/// Inline roots whose elements are measured one after the other (layout-shift tracking measures
+/// every box of the document each tracked frame; 17,000 spans in one paragraph) are walked once,
+/// not once per element: the walk is O(items) and was done per element. The index is valid for
+/// one geometry generation of the document (layout, scroll and sticky offsets all bump it) and
+/// the very text layout it was built from.
+#[derive(Default)]
+struct InlineCache {
+    generation: u64,
+    roots: FxHashMap<NodeId, std::rc::Rc<IndexedRoot>>,
+}
 
 impl Geometry {
     /// Whether `id` is a box of the current layout: the root element, or a
@@ -240,7 +280,9 @@ impl Geometry {
             chain.push(node);
             cur = node.containing_block();
         }
-        if !chain.iter().any(|node| node.transform().is_some()) {
+        // pyro: a plane of a 3D rendering context counts though its transform is the identity (a
+        // `translateZ`): hit testing maps the point through it (`Self::hit_plane`).
+        if !chain.iter().any(|node| node.transform().is_some() || node.plane_3d().is_some() || node.flags.contains(blitz_dom::node::NodeFlags::TRANSFORM_HIDES)) {
             return None;
         }
         let scale = doc.viewport().scale_f64();
@@ -349,6 +391,109 @@ impl Geometry {
             parent = Some(node);
         }
         Some(t)
+    }
+
+    /// pyro: `(x, y)` (document CSS px, as [`Self::element_box`] places the box) in `id`'s own
+    /// coordinates (its border box's origin at 0, 0), by the inverse of the transform chain (a
+    /// homography where a plane is drawn through a perspective), and whether the point is in
+    /// front of the viewer. `None` when the chain cannot be inverted.
+    fn local_point(&self, doc: &BaseDocument, id: NodeId, x: f64, y: f64) -> Option<(f64, f64, bool)> {
+        let (t, _, projective) = self.transform_and_planes(doc, id)?;
+        if projective {
+            if let Some(h) = self.projective(doc, id) {
+                let inverse = h.inverse()?;
+                let m = &inverse.0;
+                let w = m[6] * x + m[7] * y + m[8];
+                if !w.is_finite() || w == 0.0 {
+                    return None;
+                }
+                let (u, v) = ((m[0] * x + m[1] * y + m[2]) / w, (m[3] * x + m[4] * y + m[5]) / w);
+                let f = &h.0;
+                return Some((u, v, f[6] * u + f[7] * v + f[8] > 1e-6));
+            }
+        }
+        if t.determinant().abs() < 1e-12 {
+            return None;
+        }
+        let p = t.inverse() * kurbo::Point::new(x, y);
+        (p.x.is_finite() && p.y.is_finite()).then_some((p.x, p.y, true))
+    }
+
+    /// pyro: whether `(x, y)` (document CSS px, as [`Self::element_box`] places the box) is inside
+    /// the shape `shape` of `id` (`blitz_paint::hit_shape_contains`: its `clip-path`, its own box
+    /// with a `border-shape` or rounded and shaped corners, what its `border-shape` leaves of its
+    /// clipped overflow), the point taken into the element's own coordinates through the inverse of
+    /// its transforms. `true` where it has no such shape, or none can be told.
+    pub(crate) fn hit_shape(&self, doc: &BaseDocument, id: NodeId, shape: blitz_paint::HitShape, x: f64, y: f64) -> bool {
+        if !self.in_layout_tree(doc, id) {
+            return true;
+        }
+        match self.local_point(doc, id, x, y) {
+            Some((u, v, true)) => blitz_paint::hit_shape_contains(doc, id, shape, u, v),
+            Some((_, _, false)) => false,
+            None => true,
+        }
+    }
+
+    /// pyro: how a box under a transform answers a hit test at `(x, y)` (document CSS px, as
+    /// [`Self::element_box`] places it): whether the point maps back into the border box through
+    /// the inverse of its transforms (Chromium hit-tests the local point, not the bounds of the
+    /// transformed box), and, for a plane of a 3D rendering context, the context's root and the
+    /// plane's depth at the point (`Z / W` towards the viewer) which orders the planes of a
+    /// context. A box a 3D transform hides (its back face with `backface-visibility: hidden`,
+    /// or behind the viewer), or inside one, is not hit. `None`: no transform other than a
+    /// translation applies to it, the caller tests the box.
+    pub(crate) fn hit_plane(&self, doc: &BaseDocument, id: NodeId, x: f64, y: f64) -> Option<(bool, Option<(NodeId, f64)>)> {
+        if !self.in_layout_tree(doc, id) || is_cell(doc, id) || is_table_part(doc, id) {
+            return None;
+        }
+        let mut hidden = false;
+        let mut up = doc.get_node(id);
+        while let Some(n) = up {
+            hidden |= n.flags.contains(blitz_dom::node::NodeFlags::TRANSFORM_HIDES);
+            up = n.parent.and_then(|p| doc.get_node(p));
+        }
+        let node = doc.get_node(id)?;
+        let (mut any, mut plane_node) = (false, None);
+        let mut cur = Some(node);
+        while let Some(n) = cur {
+            any |= n.transform().is_some() || n.plane_3d().is_some();
+            if plane_node.is_none() && n.plane_3d().is_some() {
+                plane_node = Some(n);
+            }
+            cur = n.containing_block().and_then(|p| doc.get_node(p));
+        }
+        if hidden {
+            return Some((false, None));
+        }
+        if !any {
+            return None;
+        }
+        const EDGE: f64 = 1e-3;
+        let l = doc.physical_unrounded_layout(id);
+        let (w, h) = (l.size.width as f64, l.size.height as f64);
+        // Chromium hit-tests the 1 x 1 px footprint of the point (`HitTestLocation`'s bounding box,
+        // mapped through the transforms), not its infinitely small centre: a box is hit when
+        // the footprint reaches it, which a slanted edge (a perspective, a rotation) decides a
+        // pixel earlier than the point alone (WPT css-transforms `3d-point-mapping-origins`). The
+        // far corners are pulled in by `FOOTPRINT_END`: the footprint is half-open, so one that
+        // only touches the box's edge misses it. The tolerance absorbs f32 layout noise.
+        const FOOTPRINT_END: f64 = 0.01;
+        let hit = |px: f64, py: f64| match self.local_point(doc, id, px, py) {
+            Some((u, v, front)) => front && u >= -EDGE && u < w - EDGE && v >= -EDGE && v < h - EDGE,
+            None => false,
+        };
+        let inside = (hit(x, y) || hit(x + 1.0 - FOOTPRINT_END, y) || hit(x, y + 1.0 - FOOTPRINT_END) || hit(x + 1.0 - FOOTPRINT_END, y + 1.0 - FOOTPRINT_END))
+            && !node.plane_3d().is_some_and(|plane| plane.own_hidden);
+        let depth = plane_node.and_then(|n| {
+            let plane = n.plane_3d()?;
+            let (u, v, front) = self.local_point(doc, n.id, x, y)?;
+            let m = &plane.matrix;
+            let w = u * m.m14 + v * m.m24 + m.m44;
+            let z = (u * m.m13 + v * m.m23 + m.m43) / w;
+            (front && z.is_finite()).then_some((plane.root, z))
+        });
+        Some((inside, depth))
     }
 
     /// pyro: the border box of `id` in the columns of the nearest multi-column container on its
@@ -600,6 +745,12 @@ impl Geometry {
     /// arithmetic on them agrees wherever it is done; a 1/100 unit tolerance
     /// keeps f32 layout noise (19.999998) from losing a whole unit.
     pub(crate) fn element_box(&self, doc: &BaseDocument, id: NodeId) -> Option<LayoutBox> {
+        // The fallback content of a canvas that is not drawable is not rendered: no box, though
+        // an earlier layout (while `content` was `drawable`) may have left one on it (WPT
+        // draw-element-image/layout-canvas-children).
+        if in_canvas_fallback(doc, id) {
+            return None;
+        }
         let mut b = self.adjusted_box(doc, id)?;
         // CSSOM View: an inline box has no client or scroll area (atomic
         // inlines, which `display: inline` controls and replaced elements
@@ -972,7 +1123,7 @@ impl Geometry {
                 return None;
             }
             if let Some(anon) = n.anonymous_blocks.iter().copied().find(|&a| {
-                doc.get_node(a).is_some_and(|a| a.flags.is_inline_root() && a.children.contains(&child))
+                doc.get_node(a).is_some_and(|n| n.flags.is_inline_root() && holds_child(a, &n.children, child))
             }) {
                 return self.in_layout_tree(doc, anon).then_some(anon);
             }
@@ -1016,7 +1167,7 @@ impl Geometry {
                 .anonymous_blocks
                 .iter()
                 .copied()
-                .filter(|&a| doc.get_node(a).is_some_and(|a| a.flags.is_inline_root() && a.children.contains(&child)))
+                .filter(|&a| doc.get_node(a).is_some_and(|n| n.flags.is_inline_root() && holds_child(a, &n.children, child)))
                 .collect();
             if !anon.is_empty() {
                 break anon;
@@ -1050,6 +1201,60 @@ impl Geometry {
         let scale = text.layout.scale() as f64;
         // pyro: lines in a multi-column container's columns.
         let columns = line_column_shift(doc, root_id);
+        if text.text.len() >= INDEXED_INLINE_TEXT {
+            let generation = doc.root_node().tree().geometry_generation();
+            let key = (std::ptr::from_ref::<blitz_dom::node::TextLayout>(text) as usize, text.layout.len(), origin.as_coeffs().map(f64::to_bits));
+            let cached = {
+                let mut cache = self.inline_cache.borrow_mut();
+                if cache.generation != generation {
+                    cache.roots.clear();
+                    cache.generation = generation;
+                }
+                cache.roots.get(&root_id).filter(|r| r.layout == key).cloned()
+            };
+            let indexed = cached.unwrap_or_else(|| {
+                let mut items: Vec<IndexedItem> = Vec::new();
+                let mut by_element: FxHashMap<NodeId, Vec<u32>> = FxHashMap::default();
+                for (index, line) in text.layout.lines().enumerate() {
+                    let mut origin = origin * line_slot(doc, root_id, &line.metrics(), scale);
+                    if let Some(shift) = &columns {
+                        let top = line_origin * kurbo::Point::new(0.0, line.metrics().block_min_coord as f64 / scale);
+                        origin = shift(top.y) * origin;
+                    }
+                    for item in line.items() {
+                        let (start, r) = inline_item_rect(&line, &item, scale, text.layout.is_rtl());
+                        let scaled = |r: Rect| Rect::new(r.x0 / scale, r.y0 / scale, r.x1 / scale, r.y1 / scale);
+                        let slot = items.len() as u32;
+                        // The element the fragment starts in and its ancestors below the root.
+                        let mut cur = start;
+                        while let Some(n) = cur.filter(|&n| n != root_id) {
+                            by_element.entry(n).or_default().push(slot);
+                            cur = doc.get_node(n).and_then(|n| n.parent);
+                        }
+                        items.push(IndexedItem {
+                            start,
+                            origin: inline_item_origin(doc, root_id, start, text, t, origin),
+                            line: index,
+                            rect: scaled(r),
+                            own_rect: scaled(span_edge_box(doc, &item, r, scale)),
+                        });
+                    }
+                }
+                INLINE_INDEX_BUILDS.with(|c| c.set(c.get() + 1));
+                let built = std::rc::Rc::new(IndexedRoot { layout: key, lines: text.layout.len(), items, by_element });
+                let mut cache = self.inline_cache.borrow_mut();
+                if cache.roots.len() >= INLINE_ROOTS {
+                    cache.roots.clear();
+                }
+                cache.roots.insert(root_id, built.clone());
+                built
+            });
+            for &slot in indexed.by_element.get(&id).map_or(&[][..], |v| &v[..]) {
+                let item = &indexed.items[slot as usize];
+                f(item.origin, first_line + item.line, if item.start == Some(id) { item.own_rect } else { item.rect });
+            }
+            return Some(indexed.lines);
+        }
         // Whether `start` is `id` or inside it (below the root).
         let within = |start: Option<NodeId>| {
             let mut cur = start;
@@ -1613,6 +1818,63 @@ fn utf16_offsets(source: &str, laid: &str) -> Vec<u32> {
     map
 }
 
+/// Child lists shorter than this are scanned; longer ones are indexed ([`holds_child`]).
+const INDEXED_CHILDREN: usize = 64;
+/// Indexed child lists kept at once.
+const CHILD_INDEXES: usize = 16;
+
+thread_local! {
+    /// Position of each child in a long child list, by the list's owner: the list's address and
+    /// length it was built from, and the map. Only ever a hint: [`holds_child`] checks the list.
+    static CHILD_INDEX: std::cell::RefCell<FxHashMap<NodeId, (usize, usize, FxHashMap<NodeId, usize>)>> =
+        std::cell::RefCell::new(FxHashMap::default());
+    /// Child lists indexed so far (a counter: tests assert work, never time).
+    static CHILD_INDEX_BUILDS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+thread_local! {
+    /// Inline roots indexed so far ([`InlineCache`]; a counter: tests assert work, never time).
+    static INLINE_INDEX_BUILDS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Inline roots [`InlineCache`] indexed on this thread so far.
+pub fn inline_index_builds() -> u64 {
+    INLINE_INDEX_BUILDS.with(|c| c.get())
+}
+
+/// Child lists [`holds_child`] indexed on this thread so far.
+pub fn child_index_builds() -> u64 {
+    CHILD_INDEX_BUILDS.with(|c| c.get())
+}
+
+/// Whether `children` (the child list of `owner`) contains `child`. A long list is asked once
+/// per element of it when every box of an inline run is measured (66,000 sibling spans: 66,000
+/// scans of 66,000 entries), so it is indexed; the index only says where to look, and the answer
+/// is always read from the list itself (a hit is checked there, a miss scans it), so a list
+/// changed since it was indexed cannot give a wrong answer.
+fn holds_child(owner: NodeId, children: &[NodeId], child: NodeId) -> bool {
+    if children.len() < INDEXED_CHILDREN {
+        return children.contains(&child);
+    }
+    let key = (children.as_ptr() as usize, children.len());
+    let hint = CHILD_INDEX.with(|index| {
+        let mut index = index.borrow_mut();
+        if !index.get(&owner).is_some_and(|(ptr, len, _)| (*ptr, *len) == key) {
+            if index.len() >= CHILD_INDEXES {
+                index.clear();
+            }
+            let map = children.iter().enumerate().map(|(i, &c)| (c, i)).collect();
+            index.insert(owner, (key.0, key.1, map));
+            CHILD_INDEX_BUILDS.with(|c| c.set(c.get() + 1));
+        }
+        index.get(&owner).and_then(|(_, _, map)| map.get(&child).copied())
+    });
+    match hint {
+        Some(i) if children.get(i) == Some(&child) => true,
+        _ => children.contains(&child),
+    }
+}
+
 /// Whether `id` is a box of the current layout: the root element, or a
 /// layout child of its layout parent (by scanning the parent's lists;
 /// [`Geometry::in_layout_tree`] reads the list owner Blitz records instead).
@@ -1671,6 +1933,22 @@ pub(crate) fn describe(doc: &BaseDocument, id: NodeId) -> String {
         cur = n.parent;
     }
     out.join("\n  ")
+}
+
+/// Whether `id` is a descendant of a `<canvas>` whose content is not drawable (its fallback
+/// content, which is never laid out).
+fn in_canvas_fallback(doc: &BaseDocument, id: NodeId) -> bool {
+    let mut cur = doc.get_node(id).and_then(|n| n.parent);
+    while let Some(p) = cur {
+        let Some(node) = doc.get_node(p) else { return false };
+        if let Some(element) = node.element_data() {
+            if tag(doc, p) == Some("canvas") && !element.is_drawable_canvas() {
+                return true;
+            }
+        }
+        cur = node.parent;
+    }
+    false
 }
 
 fn tag(doc: &BaseDocument, id: NodeId) -> Option<&str> {
@@ -1851,6 +2129,25 @@ impl Homography {
     pub(crate) fn then_affine_before(&self, t: Affine) -> Homography {
         let [a, b, c, d, e, f] = t.as_coeffs();
         self.mul(&Homography([a, c, e, b, d, f, 0.0, 0.0, 1.0]))
+    }
+
+    /// The inverse homography, `None` for a singular one.
+    pub(crate) fn inverse(&self) -> Option<Homography> {
+        let m = &self.0;
+        let cofactor = |r0: usize, r1: usize, c0: usize, c1: usize| m[r0 * 3 + c0] * m[r1 * 3 + c1] - m[r0 * 3 + c1] * m[r1 * 3 + c0];
+        let adjugate = [
+            cofactor(1, 2, 1, 2),
+            -cofactor(0, 2, 1, 2),
+            cofactor(0, 1, 1, 2),
+            -cofactor(1, 2, 0, 2),
+            cofactor(0, 2, 0, 2),
+            -cofactor(0, 1, 0, 2),
+            cofactor(1, 2, 0, 1),
+            -cofactor(0, 2, 0, 1),
+            cofactor(0, 1, 0, 1),
+        ];
+        let determinant = m[0] * adjugate[0] + m[1] * adjugate[3] + m[2] * adjugate[6];
+        (determinant.is_finite() && determinant != 0.0).then(|| Homography(adjugate.map(|v| v / determinant)))
     }
 
     /// The bounds of `rect`'s projection, its part behind the viewer cut away; `None` when nothing

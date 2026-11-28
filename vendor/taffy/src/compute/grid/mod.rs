@@ -1212,6 +1212,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
                 item.baseline = old.baseline;
                 item.last_baseline = old.last_baseline;
                 item.dominant_baseline = old.dominant_baseline;
+                item.dominant_last_baseline = old.dominant_last_baseline;
                 continue;
             }
             Some(Some(moved)) => moved,
@@ -1269,6 +1270,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         item.baseline = placed.baseline;
         item.last_baseline = placed.last_baseline;
         item.dominant_baseline = placed.dominant_baseline;
+        item.dominant_last_baseline = placed.dominant_last_baseline;
         if index < positioned.len() {
             positioned[index] = placed;
         } else if table_rows {
@@ -1472,8 +1474,8 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
 
     // Determine the grid container baselines
     // Layout containment suppresses the box's baseline for baseline-alignment purposes
-    let (grid_container_baseline, grid_container_last_baseline, grid_container_dominant) = if contain.suppresses_baseline() {
-        (None, None, None)
+    let (grid_container_baseline, grid_container_last_baseline, grid_container_dominant, grid_container_dominant_last) = if contain.suppresses_baseline() {
+        (None, None, None, None)
     } else {
         // Get the row index of the first row containing items
         let first_row = items.iter().map(|item| item.row_indexes.start).min().unwrap();
@@ -1491,6 +1493,19 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
             first_row_items.find(|item| first_group(item)).unwrap_or(first_item)
         };
         let mut first = item.y_position + item.baseline.unwrap_or(item.height);
+        // pyro: when no item of the first row is in a first-baseline group but some are in a last-baseline group,
+        // the container's first baseline is their shared (last) baseline, as in Blink (WPT css-flexbox
+        // `flex-align-baseline-grid-001`): the row's baseline-aligned items generate the set, whatever their side.
+        if !first_group(item) && !table_rows {
+            if let Some(shared) = items
+                .iter()
+                .filter(|item| item.row_indexes.start == first_row && item.participates_in_baseline_alignment())
+                .map(|item| item.y_position + item.last_baseline.unwrap_or(item.height))
+                .reduce(f32::max)
+            {
+                first = shared;
+            }
+        }
         // pyro: a table's is its first row's: the lowest baseline of its baseline-aligned cells that have one,
         // else the bottom of the lowest content box of its cells (css-tables-3 § 3.10, CSS 2.1 § 17.5.3).
         if table_rows {
@@ -1517,8 +1532,42 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         };
         let last_row_items = || items.iter().filter(|item| item.row_indexes.end == last_row);
         let item = last_row_items().find(|item| last_group(item)).or_else(|| last_row_items().last()).unwrap();
-        let last = item.y_position + item.last_baseline.unwrap_or(item.height);
-        (Some(first), Some(last), dominant)
+        let mut last = item.y_position + item.last_baseline.unwrap_or(item.height);
+        // pyro: when no item of the last row is in a last-baseline group but some are in a first-baseline group,
+        // the container's last baseline is their shared (first) baseline, as in Blink: the last row's
+        // baseline-aligned items generate the set, whatever their side (probe: flex parent `align-items: last
+        // baseline`, inner grid `align-items: first baseline`: Chrome 65, previously 55 from the last item).
+        if !last_group(item) && !table_rows {
+            if let Some(shared) = last_row_items()
+                .filter(|item| item.participates_in_baseline_alignment())
+                .map(|item| item.y_position + item.baseline.unwrap_or(item.height))
+                .reduce(f32::max)
+            {
+                last = shared;
+            }
+        }
+        // pyro: a table's last baseline is its LAST row's, found as the first one is in its first row: the lowest
+        // baseline of the baseline-aligned cells of that row that have one, else the bottom of the lowest content
+        // box of its cells (css-tables-3 § 3.10; WPT css-flexbox `flex-align-baseline-table-001`, css-grid
+        // `grid-align-baseline-table-001`). (A cell of the table's last row is not the last item in grid order.)
+        if table_rows {
+            // (a row whose cells all span several rows has no baseline of its own, as in Blink: the last row
+            // with a single-row cell gives it)
+            let baseline_row = items.iter().filter(|item| item.span(AbstractAxis::Block) == 1).map(|item| item.row_indexes.end).max();
+            let row_cells = || {
+                items.iter().filter(|item| Some(item.row_indexes.end) == baseline_row && item.span(AbstractAxis::Block) == 1)
+            };
+            let lowest = |values: &mut dyn Iterator<Item = f32>| values.reduce(f32::max);
+            let aligned = lowest(&mut row_cells()
+                .filter(|item| item.table_baseline)
+                .filter_map(|item| item.baseline.map(|baseline| item.y_position + baseline)));
+            if let Some(baseline) = aligned.or_else(|| lowest(&mut row_cells().map(|item| item.y_position + item.content_bottom))) {
+                last = baseline;
+            }
+        }
+        // pyro: and its last one, from the item the last baseline came from (a cell of a vertical table)
+        let dominant_last = item.dominant_last_baseline.filter(|_| table_rows).map(|baseline| item.y_position + baseline);
+        (Some(first), Some(last), dominant, dominant_last)
     };
 
     // A scroll container's own padding at the end of the content is part of its scrollable
@@ -1552,7 +1601,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
     let mut output = LayoutOutput::from_sizes_and_baselines(
         container_border_box,
         scrollable_overflow_rect,
-        Baselines { dominant_first: grid_container_dominant, ..Baselines::new(grid_container_baseline, grid_container_last_baseline) },
+        Baselines { dominant_first: grid_container_dominant, dominant_last: grid_container_dominant_last, ..Baselines::new(grid_container_baseline, grid_container_last_baseline) },
     );
     output.oof_candidates = oof_candidates;
     output.oof_positioning_area = oof_positioning_area;

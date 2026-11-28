@@ -702,6 +702,10 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces, re
         text.push('}');
         return Some(ParsedRule::Other { rule_type: 0, text });
     }
+    // `@starting-style` takes no prelude (css-transitions-2: `@starting-style { <rule-list> }`).
+    if lower == "starting-style" {
+        if !cssparser::Parser::new(&prelude).is_exhausted() { return None; }
+    }
     let rule_type = match lower.as_str() {
         "import" => 3,
         "font-face" => 5,
@@ -725,6 +729,14 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces, re
         namespaces.push((prefix, url));
         return Some(ParsedRule::Other { rule_type: 10, text });
     }
+    // pyro: an `@page` with an invalid page selector list (`:visited`) is dropped, and so is every
+    // at-rule in its block but a margin rule (css-page-3 §4: only margin at-rules nest in `@page`).
+    let block = if lower == "page" {
+        page_selector(&prelude)?;
+        block.map(|b| strip_foreign_page_rules(&b))
+    } else {
+        block
+    };
     // `@name prelude {block}`, without a second space when the prelude is empty.
     let prelude = if lower == "import" { import_url_form(prelude.trim())? } else { collapse(&prelude) };
     let head = if prelude.is_empty() { format!("@{name}") } else { format!("@{name} {prelude}") };
@@ -736,10 +748,118 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces, re
         {
             format!("{head} {{ }}")
         }
+        // An empty grouping block serializes as `{\n}` (as `CSSStartingStyleRule.cssText` does in Chrome).
+        Some(block) if block.trim().is_empty() && lower == "starting-style" => format!("{head} {{\n}}"),
         Some(block) => format!("{head} {{{block}}}"),
         None => format!("{head};"),
     };
     Some(ParsedRule::Other { rule_type, text })
+}
+
+/// The margin at-rule names of `@page` (CSS Paged Media 3 §4.2).
+pub const PAGE_MARGIN_RULES: &[&str] = &[
+    "top-left-corner", "top-left", "top-center", "top-right", "top-right-corner", "bottom-left-corner",
+    "bottom-left", "bottom-center", "bottom-right", "bottom-right-corner", "left-top", "left-middle",
+    "left-bottom", "right-top", "right-middle", "right-bottom",
+];
+
+/// A page selector list as `CSSPageRule.selectorText` serializes it (`name:first`, pseudo-pages
+/// lowercased), or `None` when it is invalid.
+pub fn page_selector(text: &str) -> Option<String> {
+    let mut out = Vec::new();
+    for part in text.split(',') {
+        let part = part.trim_matches(|c: char| c.is_ascii_whitespace());
+        let (name, pseudos) = part.split_at(part.find(':').unwrap_or(part.len()));
+        let ident = |n: &str| n.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '\\' || !c.is_ascii());
+        if !ident(name) || (name.is_empty() && pseudos.is_empty() && text.contains(',')) {
+            return None;
+        }
+        let mut serialized = name.to_owned();
+        for pseudo in pseudos.split(':').skip(1) {
+            let lower = pseudo.to_ascii_lowercase();
+            if !matches!(lower.as_str(), "first" | "left" | "right" | "blank") {
+                return None;
+            }
+            serialized.push(':');
+            serialized.push_str(&lower);
+        }
+        out.push(serialized);
+    }
+    Some(out.join(", "))
+}
+
+/// The end (exclusive) of the string or comment token starting at `i` of `b`, or `i` when none starts there.
+fn skip_string_or_comment(b: &[u8], i: usize) -> usize {
+    match b[i] {
+        q @ (b'"' | b'\'') => {
+            let mut j = i + 1;
+            while j < b.len() && b[j] != q {
+                j += if b[j] == b'\\' { 2 } else { 1 };
+            }
+            (j + 1).min(b.len())
+        }
+        b'/' if b.get(i + 1) == Some(&b'*') => {
+            let mut j = i + 2;
+            while j + 1 < b.len() && !(b[j] == b'*' && b[j + 1] == b'/') {
+                j += 1;
+            }
+            (j + 2).min(b.len())
+        }
+        _ => i,
+    }
+}
+
+/// `block` (the inside of an `@page` rule) without the at-rules that are not margin rules.
+fn strip_foreign_page_rules(block: &str) -> String {
+    let b = block.as_bytes();
+    let (mut out, mut copied, mut i) = (String::new(), 0, 0);
+    while i < b.len() {
+        let skipped = skip_string_or_comment(b, i);
+        if skipped != i {
+            i = skipped;
+            continue;
+        }
+        if b[i] != b'@' {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        let name_end = b[i + 1..].iter().position(|c| !(c.is_ascii_alphanumeric() || *c == b'-' || *c == b'_')).map_or(b.len(), |n| i + 1 + n);
+        // The at-rule ends at its `;` or at the `}` closing its block.
+        let mut j = name_end;
+        let mut depth = 0usize;
+        while j < b.len() {
+            let skipped = skip_string_or_comment(b, j);
+            if skipped != j {
+                j = skipped;
+                continue;
+            }
+            match b[j] {
+                b';' if depth == 0 => {
+                    j += 1;
+                    break;
+                }
+                b'{' => depth += 1,
+                b'}' if depth > 0 => {
+                    depth -= 1;
+                    if depth == 0 {
+                        j += 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            j += 1;
+        }
+        let name = block[start + 1..name_end].to_ascii_lowercase();
+        if !PAGE_MARGIN_RULES.contains(&name.as_str()) {
+            out.push_str(&block[copied..start]);
+            copied = j;
+        }
+        i = j;
+    }
+    out.push_str(&block[copied..]);
+    out
 }
 
 /// `@namespace [prefix] "url" | url("url")`.

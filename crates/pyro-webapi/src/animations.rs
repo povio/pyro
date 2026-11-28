@@ -125,7 +125,13 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         let name = args.get(1).to_string()?;
         let dom = page.dom.borrow();
         let layout = page.layout();
-        let Some(steps) = layout.synced_geometry_source(&dom).and_then(|g| g.css_animation_frames(pyro_dom::snapshot::render_key(el), &name)) else {
+        // (A view-transition pseudo-element's keyframes: its transition root's.)
+        let pseudo = args.get(2).as_string().filter(|p| p.starts_with("::view-transition"));
+        let key = pyro_dom::snapshot::render_key(el);
+        let Some(steps) = layout.synced_geometry_source(&dom).and_then(|g| match &pseudo {
+            Some(pseudo) => g.transition_animation_frames(key, pseudo, &name),
+            None => g.css_animation_frames(key, &name),
+        }) else {
             return Ok(s.null());
         };
         let mut frames = Vec::with_capacity(steps.len());
@@ -283,6 +289,9 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         if let Some(layout) = page.try_layout() {
             if layout.push_scroll() {
                 layout.set_scroll_pushed_at(page.timeline_now_ms());
+            }
+            if let Ok(dom) = page.dom.try_borrow() {
+                layout.push_stuck(&dom);
             }
         }
         Ok(s.undefined())
@@ -462,6 +471,16 @@ pub(crate) fn root_animations<'s>(s: &Scope<'s>, page: &Rc<PageDom>, root: Value
     match with_css_runs(s, page)? {
         Some(module) => call(module, "rootAnimations", &[root]),
         None => Ok(s.array(&[])?.value()),
+    }
+}
+
+/// The `CSSAnimation`/`CSSTransition` of the engine's run `id` (the `animation` of the events the
+/// UA fires), after the module took the current runs; null when there is no such run any more.
+pub(crate) fn run_object<'s>(s: &Scope<'s>, id: u64) -> JsResult<Value<'s>> {
+    let page = page_of(s)?;
+    match with_css_runs(s, &page)? {
+        Some(module) => call(module, "cssObject", &[s.number(id as f64)]),
+        None => Ok(s.null()),
     }
 }
 

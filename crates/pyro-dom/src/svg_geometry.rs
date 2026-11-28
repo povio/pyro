@@ -49,9 +49,52 @@ impl Bounds {
     }
 }
 
+/// What SMIL animation changes in an element's geometry at the document's current time. pyro-dom
+/// knows no animations: the webapi layer implements this over its SMIL sampler and passes it to
+/// [`bbox_animated`] and [`ctm_animated`]. A `None` is the value the attributes give.
+pub trait Animated {
+    /// The animated value, in user units, of the geometry attribute `name` (`x`, `width`, `cx`, `r`,
+    /// ...) of `el`: what `animVal` has, when an animation of that attribute is in effect.
+    fn number(&self, _el: NodeId, _name: &str) -> Option<f64> {
+        None
+    }
+
+    /// The matrix of `el`'s `transform` attribute under the `<animateTransform>`s in effect on it (its
+    /// `animVal`), replacing the attribute's.
+    fn transform(&self, _el: NodeId) -> Option<[f64; 6]> {
+        None
+    }
+
+    /// The supplemental transform of the `<animateMotion>`s in effect on `el` (SVG 2, "animateMotion"):
+    /// applied after the element's `transform`, in the element's own user space.
+    fn motion(&self, _el: NodeId) -> Option<[f64; 6]> {
+        None
+    }
+}
+
+/// No animation: what the attributes say.
+pub struct Still;
+impl Animated for Still {}
+
+/// `el`'s `transform` (animated: `animVal`) as a matrix with its supplemental motion transform applied after it
+/// (`transform` then motion: a point goes through the motion first, then through the attribute).
+fn placement(dom: &Dom, animated: &dyn Animated, el: NodeId) -> Option<[f64; 6]> {
+    let own = animated.transform(el).or_else(|| dom.get_attribute(el, "transform").ok().flatten().and_then(parse_transform));
+    match (own, animated.motion(el)) {
+        (Some(own), Some(motion)) => Some(multiply(own, motion)),
+        (own, None) => own,
+        (None, motion) => motion,
+    }
+}
+
 /// `getBBox()` of `el`; an empty rect when it has no supported geometry.
 pub fn bbox(dom: &Dom, style: &StyleEngine, el: NodeId) -> Rect {
-    bounds(dom, style, el, 0).map_or(Rect { x: 0.0, y: 0.0, width: 0.0, height: 0.0 }, Bounds::rect)
+    bbox_animated(dom, style, el, &Still)
+}
+
+/// [`bbox`] with the SMIL animations of `animated` applied to the descendants of `el`.
+pub fn bbox_animated(dom: &Dom, style: &StyleEngine, el: NodeId, animated: &dyn Animated) -> Rect {
+    bounds(dom, style, animated, el, 0).map_or(Rect { x: 0.0, y: 0.0, width: 0.0, height: 0.0 }, Bounds::rect)
 }
 
 /// `el`'s bbox mapped into the content box of its `svg` ancestor (CSS px
@@ -60,7 +103,7 @@ pub fn bbox(dom: &Dom, style: &StyleEngine, el: NodeId) -> Rect {
 /// and `preserveAspectRatio` scale into `viewport` (its content-box width
 /// and height). None when `el` has no supported geometry.
 pub fn client_bounds(dom: &Dom, style: &StyleEngine, el: NodeId, svg: NodeId, viewport: (f64, f64)) -> Option<Rect> {
-    let mut b = bounds(dom, style, el, 0)?;
+    let mut b = bounds(dom, style, &Still, el, 0)?;
     let mut cur = Some(el);
     while let Some(n) = cur.filter(|&n| n != svg) {
         if let Some(m) = dom.get_attribute(n, "transform").ok().flatten().and_then(parse_transform) {
@@ -100,8 +143,35 @@ fn attr(dom: &Dom, el: NodeId, name: &str) -> Option<f64> {
     v.parse::<f64>().ok().filter(|n| n.is_finite())
 }
 
+/// A length attribute with CSS units (`vh`, `vw`, `em`, `rem`, `in`, ...): the plain number or
+/// `px` fast path first, then `resolve_len` against the element's font sizes and the viewport.
+/// Percentages (relative to the SVG viewport) are not resolved here.
+fn len_attr(dom: &Dom, style: &StyleEngine, el: NodeId, name: &str) -> Option<f64> {
+    if let Some(n) = attr(dom, el, name) {
+        return Some(n);
+    }
+    let value = dom.get_attribute(el, name).ok().flatten()?;
+    let root = dom.node_document(el).ok().and_then(|doc| dom.document_element(doc).ok().flatten());
+    let cx = crate::computed::LengthContext {
+        viewport_width: f64::from(style.viewport().width),
+        viewport_height: f64::from(style.viewport().height),
+        ..crate::computed::LengthContext::fonts(style.computed_font_size(dom, Some(el)), style.computed_font_size(dom, root))
+    };
+    let (px, pct) = crate::computed::resolve_len(value, &cx)?;
+    (pct == 0.0 && px.is_finite()).then_some(px)
+}
+
+fn num_len(dom: &Dom, style: &StyleEngine, el: NodeId, name: &str) -> f64 {
+    len_attr(dom, style, el, name).unwrap_or(0.0)
+}
+
 fn num(dom: &Dom, el: NodeId, name: &str) -> f64 {
     attr(dom, el, name).unwrap_or(0.0)
+}
+
+/// [`num`] under the SMIL animations of `animated`.
+fn num_animated(dom: &Dom, style: &StyleEngine, animated: &dyn Animated, el: NodeId, name: &str) -> f64 {
+    animated.number(el, name).unwrap_or_else(|| num_len(dom, style, el, name))
 }
 
 fn local_name(dom: &Dom, el: NodeId) -> Option<String> {
@@ -109,37 +179,37 @@ fn local_name(dom: &Dom, el: NodeId) -> Option<String> {
     (e.name.ns == markup5ever::ns!(svg)).then(|| e.name.local.to_string())
 }
 
-fn bounds(dom: &Dom, style: &StyleEngine, el: NodeId, depth: u8) -> Option<Bounds> {
+fn bounds(dom: &Dom, style: &StyleEngine, animated: &dyn Animated, el: NodeId, depth: u8) -> Option<Bounds> {
     if depth > 64 {
         return None;
     }
     match local_name(dom, el)?.as_str() {
         "rect" | "image" | "foreignObject" | "use" => {
-            let (w, h) = (num(dom, el, "width"), num(dom, el, "height"));
+            let (w, h) = (num_animated(dom, style, animated, el, "width"), num_animated(dom, style, animated, el, "height"));
             if w < 0.0 || h < 0.0 {
                 return None;
             }
-            let (x, y) = (num(dom, el, "x"), num(dom, el, "y"));
+            let (x, y) = (num_animated(dom, style, animated, el, "x"), num_animated(dom, style, animated, el, "y"));
             let mut b = Bounds::point(x, y);
             b.add(x + w, y + h);
             Some(b)
         }
         "circle" => {
-            let (cx, cy, r) = (num(dom, el, "cx"), num(dom, el, "cy"), num(dom, el, "r"));
+            let (cx, cy, r) = (num_animated(dom, style, animated, el, "cx"), num_animated(dom, style, animated, el, "cy"), num_animated(dom, style, animated, el, "r"));
             let mut b = Bounds::point(cx - r, cy - r);
             b.add(cx + r, cy + r);
             Some(b)
         }
         "ellipse" => {
-            let (cx, cy) = (num(dom, el, "cx"), num(dom, el, "cy"));
-            let (rx, ry) = (num(dom, el, "rx"), num(dom, el, "ry"));
+            let (cx, cy) = (num_animated(dom, style, animated, el, "cx"), num_animated(dom, style, animated, el, "cy"));
+            let (rx, ry) = (num_animated(dom, style, animated, el, "rx"), num_animated(dom, style, animated, el, "ry"));
             let mut b = Bounds::point(cx - rx, cy - ry);
             b.add(cx + rx, cy + ry);
             Some(b)
         }
         "line" => {
-            let mut b = Bounds::point(num(dom, el, "x1"), num(dom, el, "y1"));
-            b.add(num(dom, el, "x2"), num(dom, el, "y2"));
+            let mut b = Bounds::point(num_animated(dom, style, animated, el, "x1"), num_animated(dom, style, animated, el, "y1"));
+            b.add(num_animated(dom, style, animated, el, "x2"), num_animated(dom, style, animated, el, "y2"));
             Some(b)
         }
         "polyline" | "polygon" => {
@@ -158,8 +228,8 @@ fn bounds(dom: &Dom, style: &StyleEngine, el: NodeId, depth: u8) -> Option<Bound
                 if style.has_display_none(dom, c) {
                     continue;
                 }
-                let Some(cb) = bounds(dom, style, c, depth + 1) else { continue };
-                let cb = match dom.get_attribute(c, "transform").ok().flatten().and_then(parse_transform) {
+                let Some(cb) = bounds(dom, style, animated, c, depth + 1) else { continue };
+                let cb = match placement(dom, animated, c) {
                     Some(m) => transform_bounds(m, cb),
                     None => cb,
                 };
@@ -179,7 +249,7 @@ fn text_bounds(dom: &Dom, style: &StyleEngine, el: NodeId) -> Option<Bounds> {
         style.stylo_style(dom, el).map_or(400, |s| (s.get_font().font_weight.value() as f64).clamp(1.0, 1000.0) as u16);
     let width = crate::text_metrics::text_width(&text, size, weight);
     let (ascent, descent) = crate::text_metrics::vertical_metrics(size);
-    let (x, y) = (num(dom, el, "x"), num(dom, el, "y"));
+    let (x, y) = (num_len(dom, style, el, "x"), num_len(dom, style, el, "y"));
     let x = match style.used_value(dom, el, "text-anchor").as_deref().map(str::trim) {
         Some("middle") => x - width / 2.0,
         Some("end") => x - width,
@@ -564,7 +634,7 @@ fn rotate(deg: f64, cx: f64, cy: f64) -> [f64; 6] {
     multiply(multiply([1.0, 0.0, 0.0, 1.0, cx, cy], r), [1.0, 0.0, 0.0, 1.0, -cx, -cy])
 }
 
-fn multiply(m: [f64; 6], n: [f64; 6]) -> [f64; 6] {
+pub fn multiply(m: [f64; 6], n: [f64; 6]) -> [f64; 6] {
     [
         m[0] * n[0] + m[2] * n[1],
         m[1] * n[0] + m[3] * n[1],
@@ -662,7 +732,7 @@ fn hit_children(
             continue;
         }
         let in_bounds = || {
-            bounds(dom, style, el, 0)
+            bounds(dom, style, &Still, el, 0)
                 .is_some_and(|b| p.x >= b.min_x && p.x <= b.max_x && p.y >= b.min_y && p.y <= b.max_y)
         };
         if pe == Pe::BoundingBox {
@@ -700,32 +770,7 @@ fn hit_children(
                 return Some(el);
             }
             if stroke {
-                use kurbo::{Cap, Join, Stroke};
-                let property = |name| crate::stylo::serialize(&computed, name).unwrap_or_default();
-                let length = |s: &str| s.trim_end_matches("px").parse::<f64>().ok();
-                let width = length(&property("stroke-width")).unwrap_or(1.);
-                if width <= 0. {
-                    continue;
-                }
-                let cap = match property("stroke-linecap").as_str() {
-                    "square" => Cap::Square,
-                    "round" => Cap::Round,
-                    _ => Cap::Butt,
-                };
-                let join = match property("stroke-linejoin").as_str() {
-                    "bevel" => Join::Bevel,
-                    "round" => Join::Round,
-                    _ => Join::Miter,
-                };
-                let mut outline = Stroke::new(width)
-                    .with_caps(cap)
-                    .with_join(join)
-                    .with_miter_limit(length(&property("stroke-miterlimit")).unwrap_or(4.));
-                let dashes = property("stroke-dasharray");
-                let dashes: Vec<_> = dashes.split([',', ' ']).filter_map(length).collect();
-                if dashes.iter().any(|&n| n > 0.) {
-                    outline = outline.with_dashes(length(&property("stroke-dashoffset")).unwrap_or(0.), dashes);
-                }
+                let Some(outline) = stroke_style(&computed, 1.0) else { continue };
                 // Non-scaling strokes are constructed in host coordinates.
                 use style::values::specified::svg::VectorEffect;
                 let (path, stroke_point) =
@@ -775,6 +820,464 @@ fn path_hit(path: &kurbo::BezPath, p: kurbo::Point, evenodd: bool) -> bool {
         || path.segments().any(|s| s.nearest(p, 0.001).distance_sq < 1e-12)
 }
 
+/// The SVG elements from `el` up to the outermost one (`el` first): below the first ancestor that
+/// is not in the SVG namespace (an HTML parent of an inline `<svg>`, `foreignObject` content).
+fn svg_chain(dom: &Dom, el: NodeId) -> Vec<NodeId> {
+    let mut chain = Vec::new();
+    let mut current = Some(el);
+    while let Some(id) = current.filter(|&id| local_name(dom, id).is_some()) {
+        chain.push(id);
+        current = dom.parent_element(id).ok().flatten();
+        if chain.len() > 4096 {
+            break;
+        }
+    }
+    chain
+}
+
+/// `SVGGraphicsElement.getCTM()`: the matrix from `el`'s user space (its own `transform` included)
+/// to the coordinate system of the outermost `<svg>`'s viewport: the `transform`s, nested viewports'
+/// positions and `viewBox` mappings on the way up. The outermost `<svg>` contributes its `viewBox`
+/// only (its `transform` and position are CSS boxes: [`screen_ctm`]). An element outside any `<svg>`
+/// has the product of the `transform`s above it.
+pub fn ctm(dom: &Dom, layout: &crate::layout::Layout, el: NodeId) -> [f64; 6] {
+    ctm_animated(dom, layout, el, &Still)
+}
+
+/// [`ctm`] with the supplemental motion transforms of `animated` applied after each element's `transform`.
+pub fn ctm_animated(dom: &Dom, layout: &crate::layout::Layout, el: NodeId, animated: &dyn Animated) -> [f64; 6] {
+    let chain = svg_chain(dom, el);
+    let outermost = chain.last().copied().filter(|&id| local_name(dom, id).as_deref() == Some("svg"));
+    let mut matrix = kurbo::Affine::IDENTITY;
+    for &id in &chain {
+        let is_svg = local_name(dom, id).as_deref() == Some("svg");
+        let is_outermost = Some(id) == outermost;
+        let mut local = kurbo::Affine::IDENTITY;
+        if is_svg {
+            let viewport = if is_outermost {
+                layout.content_size(dom, id)
+            } else {
+                attr(dom, id, "width").zip(attr(dom, id, "height"))
+            };
+            if let Some(m) = viewport.and_then(|v| view_box_transform(dom, id, v)) {
+                local = kurbo::Affine::new(m);
+            }
+            if !is_outermost {
+                local = kurbo::Affine::translate((num(dom, id, "x"), num(dom, id, "y"))) * local;
+            }
+        }
+        if !is_outermost {
+            local = placement(dom, animated, id).map_or(kurbo::Affine::IDENTITY, kurbo::Affine::new) * local;
+        }
+        matrix = local * matrix;
+    }
+    matrix.as_coeffs()
+}
+
+/// The matrix from the content box of the outermost `<svg>` to the client (viewport) coordinates: its
+/// border box's quad, which carries the CSS transforms of it and of its containing blocks, then the
+/// border and padding. None when it has no box.
+fn svg_content_to_client(dom: &Dom, layout: &crate::layout::Layout, svg: NodeId) -> Option<[f64; 6]> {
+    let (ox, oy) = layout.content_offset(dom, svg)?;
+    if let Some(q) = layout.box_quads(dom, svg).filter(|q| q.width > 0.0 && q.height > 0.0) {
+        let b = q.border;
+        let (a, bb) = ((b[2] - b[0]) / q.width, (b[3] - b[1]) / q.width);
+        let (c, d) = ((b[6] - b[0]) / q.height, (b[7] - b[1]) / q.height);
+        return Some([a, bb, c, d, b[0] + a * ox + c * oy, b[1] + bb * ox + d * oy]);
+    }
+    let rect = layout.bounding_client_rect(dom, svg);
+    Some([1.0, 0.0, 0.0, 1.0, rect.x + ox, rect.y + oy])
+}
+
+/// `SVGGraphicsElement.getScreenCTM()`: [`ctm`] followed by the outermost `<svg>`'s content box in the
+/// viewport (its position and the CSS transforms on it and its ancestors).
+pub fn screen_ctm(dom: &Dom, layout: &crate::layout::Layout, el: NodeId) -> [f64; 6] {
+    screen_ctm_animated(dom, layout, el, &Still)
+}
+
+/// [`screen_ctm`] over [`ctm_animated`].
+pub fn screen_ctm_animated(dom: &Dom, layout: &crate::layout::Layout, el: NodeId, animated: &dyn Animated) -> [f64; 6] {
+    let inner = ctm_animated(dom, layout, el, animated);
+    let outermost = svg_chain(dom, el).last().copied().filter(|&id| local_name(dom, id).as_deref() == Some("svg"));
+    match outermost.and_then(|svg| svg_content_to_client(dom, layout, svg)) {
+        Some(outer) => multiply(outer, inner),
+        None => inner,
+    }
+}
+
+/// The `stroke-*` properties of `computed` as a kurbo stroke; `dash_scale` converts `pathLength`
+/// units to user units. None when the stroke is not wider than zero.
+fn stroke_style(computed: &style::properties::ComputedValues, dash_scale: f64) -> Option<kurbo::Stroke> {
+    use kurbo::{Cap, Join, Stroke};
+    let property = |name: &str| crate::stylo::serialize(computed, name).unwrap_or_default();
+    let length = |s: &str| s.trim_end_matches("px").parse::<f64>().ok();
+    let width = length(&property("stroke-width")).unwrap_or(1.);
+    if width <= 0. {
+        return None;
+    }
+    let cap = match property("stroke-linecap").as_str() {
+        "square" => Cap::Square,
+        "round" => Cap::Round,
+        _ => Cap::Butt,
+    };
+    let join = match property("stroke-linejoin").as_str() {
+        "bevel" => Join::Bevel,
+        "round" => Join::Round,
+        _ => Join::Miter,
+    };
+    let mut outline = Stroke::new(width)
+        .with_caps(cap)
+        .with_join(join)
+        .with_miter_limit(length(&property("stroke-miterlimit")).unwrap_or(4.));
+    let dashes = property("stroke-dasharray");
+    let dashes: Vec<f64> = dashes.split([',', ' ']).filter_map(length).map(|d| d * dash_scale).collect();
+    if dashes.iter().any(|&n| n > 0.) {
+        outline = outline.with_dashes(length(&property("stroke-dashoffset")).unwrap_or(0.) * dash_scale, dashes);
+    }
+    Some(outline)
+}
+
+/// User units per `pathLength` unit of `path` (1 without a positive `pathLength`).
+fn path_length_scale(dom: &Dom, el: NodeId, path: &kurbo::BezPath) -> f64 {
+    use kurbo::ParamCurveArclen;
+    let Some(declared) = attr(dom, el, "pathLength").filter(|n| *n > 0.0) else { return 1.0 };
+    let total: f64 = path.segments().map(|segment| segment.arclen(1e-3)).sum();
+    if total > 0.0 { total / declared } else { 1.0 }
+}
+
+fn affine_of(dom: &Dom, el: NodeId) -> kurbo::Affine {
+    dom.get_attribute(el, "transform").ok().flatten().and_then(parse_transform).map_or(kurbo::Affine::IDENTITY, kurbo::Affine::new)
+}
+
+/// The `transform`s of `el` and its SVG ancestors, up to the outermost: the matrix to the
+/// outermost `svg`'s user space (no `viewBox`), what `vector-effect: non-scaling-stroke` measures in.
+fn user_to_host(dom: &Dom, el: NodeId) -> kurbo::Affine {
+    let mut matrix = kurbo::Affine::IDENTITY;
+    let mut current = Some(el);
+    while let Some(id) = current {
+        if local_name(dom, id).is_none() {
+            break;
+        }
+        matrix = affine_of(dom, id) * matrix;
+        current = dom.parent_element(id).ok().flatten();
+    }
+    matrix
+}
+
+/// `SVGGeometryElement.isPointInFill`: (`x`, `y`) in the element's user space against the shape's
+/// fill region (`fill-rule` decides; `pointer-events` and `visibility` do not apply).
+pub fn is_point_in_fill(dom: &Dom, layout: &crate::layout::Layout, el: NodeId, x: f64, y: f64) -> bool {
+    // A line encloses no area.
+    if local_name(dom, el).as_deref() == Some("line") {
+        return false;
+    }
+    let Some(path) = metric_path(dom, layout, el) else { return false };
+    let evenodd = layout.style().stylo_style(dom, el)
+        .is_some_and(|computed| crate::stylo::serialize(&computed, "fill-rule").as_deref() == Some("evenodd"));
+    fill_hit(&path, kurbo::Point::new(x, y), evenodd)
+}
+
+/// `SVGGeometryElement.isPointInStroke`: (`x`, `y`) in the element's user space against the shape's
+/// stroke outline (width, caps, joins, miter limit, dashes, `pathLength` and `non-scaling-stroke`).
+pub fn is_point_in_stroke(dom: &Dom, layout: &crate::layout::Layout, el: NodeId, x: f64, y: f64) -> bool {
+    let Some(path) = metric_path(dom, layout, el) else { return false };
+    let Some(computed) = layout.style().stylo_style(dom, el) else { return false };
+    let Some(outline) = stroke_style(&computed, path_length_scale(dom, el, &path)) else { return false };
+    let point = kurbo::Point::new(x, y);
+    use style::values::specified::svg::VectorEffect;
+    let (path, point) = if computed.get_svg().vector_effect.contains(VectorEffect::NON_SCALING_STROKE) {
+        let host = user_to_host(dom, el);
+        (host * path, host * point)
+    } else {
+        (path, point)
+    };
+    path_hit(&kurbo::stroke(path.iter(), &outline, &Default::default(), 0.01), point, false)
+}
+
+/// Whether the filled or stroked region `path` has a point in `rect`: a corner of the rectangle
+/// inside it, or its outline through the rectangle.
+fn region_hits_rect(path: &kurbo::BezPath, rect: kurbo::Rect, evenodd: bool) -> bool {
+    use kurbo::{PathEl, Point};
+    for (x, y) in [(rect.x0, rect.y0), (rect.x1, rect.y0), (rect.x0, rect.y1), (rect.x1, rect.y1)] {
+        if path_hit(path, Point::new(x, y), evenodd) {
+            return true;
+        }
+    }
+    let (mut hit, mut last, mut start) = (false, Point::ZERO, Point::ZERO);
+    kurbo::flatten(path.iter(), 0.05, |el| match el {
+        PathEl::MoveTo(p) => {
+            start = p;
+            last = p;
+        }
+        PathEl::LineTo(p) => {
+            hit |= segment_hits_rect(last, p, rect);
+            last = p;
+        }
+        PathEl::ClosePath => {
+            hit |= segment_hits_rect(last, start, rect);
+            last = start;
+        }
+        _ => {}
+    });
+    hit
+}
+
+/// Liang-Barsky: whether the segment `a`-`b` has a point in `r`.
+fn segment_hits_rect(a: kurbo::Point, b: kurbo::Point, r: kurbo::Rect) -> bool {
+    let (dx, dy) = (b.x - a.x, b.y - a.y);
+    let (mut t0, mut t1) = (0.0_f64, 1.0_f64);
+    for (p, q) in [(-dx, a.x - r.x0), (dx, r.x1 - a.x), (-dy, a.y - r.y0), (dy, r.y1 - a.y)] {
+        if p == 0.0 {
+            if q < 0.0 {
+                return false;
+            }
+            continue;
+        }
+        let t = q / p;
+        if p < 0.0 {
+            if t > t1 {
+                return false;
+            }
+            t0 = t0.max(t);
+        } else {
+            if t < t0 {
+                return false;
+            }
+            t1 = t1.min(t);
+        }
+    }
+    true
+}
+
+/// Closes every contour of `path` (the region SVG fills).
+fn closed_contours(path: &kurbo::BezPath) -> kurbo::BezPath {
+    use kurbo::PathEl;
+    let mut out = kurbo::BezPath::new();
+    let mut open = false;
+    for el in path.elements() {
+        if matches!(el, PathEl::MoveTo(_)) && open {
+            out.close_path();
+        }
+        open = !matches!(el, PathEl::ClosePath);
+        out.push(*el);
+    }
+    if open {
+        out.close_path();
+    }
+    out
+}
+
+/// `getIntersectionList` / `getEnclosureList` of `svg` (`rect` in its user space, its own `viewBox`
+/// and nested viewports not applied): the rendered graphics elements below `reference` (default `svg`)
+/// whose painted geometry, in document order, intersects `rect` (or lies inside it, `enclosure`).
+pub fn intersection_list(
+    dom: &Dom,
+    layout: &crate::layout::Layout,
+    svg: NodeId,
+    reference: Option<NodeId>,
+    rect: Rect,
+    enclosure: bool,
+) -> Vec<NodeId> {
+    let query = kurbo::Rect::new(rect.x, rect.y, rect.x + rect.width, rect.y + rect.height).abs();
+    let mut found = Vec::new();
+    let root = reference.unwrap_or(svg);
+    let mut emit = |id: NodeId| found.push(id);
+    if root == svg {
+        for child in dom.element_children(svg).into_iter().flatten() {
+            visit_graphics(dom, layout, child, query, enclosure, kurbo::Affine::IDENTITY, 0, &mut emit);
+        }
+    } else {
+        // The reference's ancestors below `svg` place it in `svg`'s user space.
+        let mut to_svg = kurbo::Affine::IDENTITY;
+        let mut ancestor = dom.parent_element(root).ok().flatten();
+        while let Some(id) = ancestor.filter(|&id| id != svg) {
+            to_svg = affine_of(dom, id) * to_svg;
+            ancestor = dom.parent_element(id).ok().flatten();
+        }
+        visit_graphics(dom, layout, root, query, enclosure, to_svg, 0, &mut emit);
+    }
+    found
+}
+
+/// `checkIntersection` / `checkEnclosure`: whether `el`, or a graphics element below it, is in
+/// that list for `rect`.
+pub fn check_intersection(
+    dom: &Dom,
+    layout: &crate::layout::Layout,
+    svg: NodeId,
+    el: NodeId,
+    rect: Rect,
+    enclosure: bool,
+) -> bool {
+    let query = kurbo::Rect::new(rect.x, rect.y, rect.x + rect.width, rect.y + rect.height).abs();
+    let mut to_svg = kurbo::Affine::IDENTITY;
+    let mut ancestor = dom.parent_element(el).ok().flatten();
+    while let Some(id) = ancestor.filter(|&id| id != svg) {
+        to_svg = affine_of(dom, id) * to_svg;
+        ancestor = dom.parent_element(id).ok().flatten();
+    }
+    let mut any = false;
+    visit_graphics(dom, layout, el, query, enclosure, to_svg, 0, &mut |_| any = true);
+    any
+}
+
+/// Reports `el` when it is a graphics element that matches, or the matching ones below a container.
+/// `to_svg` maps the user space of `el`'s parent to the query's.
+#[allow(clippy::too_many_arguments)]
+fn visit_graphics(
+    dom: &Dom,
+    layout: &crate::layout::Layout,
+    el: NodeId,
+    query: kurbo::Rect,
+    enclosure: bool,
+    to_svg: kurbo::Affine,
+    depth: u8,
+    emit: &mut dyn FnMut(NodeId),
+) {
+    if depth > 32 {
+        return;
+    }
+    let Some(tag) = local_name(dom, el) else { return };
+    if matches!(
+        tag.as_str(),
+        "defs" | "clipPath" | "mask" | "marker" | "pattern" | "symbol" | "linearGradient" | "radialGradient"
+            | "filter" | "style" | "script" | "title" | "desc" | "metadata"
+    ) || layout.style().has_display_none(dom, el)
+    {
+        return;
+    }
+    let mut matrix = to_svg * affine_of(dom, el);
+    match tag.as_str() {
+        "g" | "a" | "switch" | "svg" => {
+            if tag == "svg" {
+                matrix = matrix * kurbo::Affine::translate((num(dom, el, "x"), num(dom, el, "y")));
+            }
+            for child in dom.element_children(el).into_iter().flatten() {
+                visit_graphics(dom, layout, child, query, enclosure, matrix, depth + 1, emit);
+            }
+        }
+        "use" => {
+            let xlink = dom.get_attribute_ns(el, Some("http://www.w3.org/1999/xlink"), "href").ok().flatten();
+            let href = dom.get_attribute(el, "href").ok().flatten().or(xlink);
+            let target = href.and_then(|h| h.strip_prefix('#')).and_then(|id| {
+                let doc = dom.node_document(el).ok()?;
+                dom.get_element_by_id(doc, id).ok().flatten()
+            });
+            let Some(target) = target else { return };
+            let placed = matrix * kurbo::Affine::translate((num(dom, el, "x"), num(dom, el, "y")));
+            let mut any = false;
+            // The reference's own `transform` applies inside the instance, below the use's.
+            visit_graphics(dom, layout, target, query, enclosure, placed, depth + 1, &mut |_| any = true);
+            if any {
+                emit(el);
+            }
+        }
+        "rect" | "circle" | "ellipse" | "line" | "polyline" | "polygon" | "path" | "text" | "image" | "foreignObject" => {
+            if leaf_matches(dom, layout, el, &tag, query, enclosure, matrix) {
+                emit(el);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The user-space box of the `clipPath` that `el`'s `clip-path` names (the union of its
+/// children's boxes), None without one (or without any shape in it).
+fn clip_box(dom: &Dom, layout: &crate::layout::Layout, el: NodeId) -> Option<Bounds> {
+    let value = layout.style().used_value(dom, el, "clip-path").filter(|v| v.contains('#'))
+        .or_else(|| dom.get_attribute(el, "clip-path").ok().flatten().map(str::to_owned))?;
+    let start = value.find('#')? + 1;
+    let end = value[start..].find(['"', '\'', ')']).map_or(value.len(), |n| start + n);
+    let doc = dom.node_document(el).ok()?;
+    let clip = dom.get_element_by_id(doc, &value[start..end]).ok().flatten()?;
+    if local_name(dom, clip).as_deref() != Some("clipPath") {
+        return None;
+    }
+    let mut union: Option<Bounds> = None;
+    for child in dom.element_children(clip).ok()? {
+        let Some(b) = bounds(dom, layout.style(), &Still, child, 0) else { continue };
+        let b = match dom.get_attribute(child, "transform").ok().flatten().and_then(parse_transform) {
+            Some(m) => transform_bounds(m, b),
+            None => b,
+        };
+        union = Some(Bounds::union(union, b));
+    }
+    union
+}
+
+fn leaf_matches(
+    dom: &Dom,
+    layout: &crate::layout::Layout,
+    el: NodeId,
+    tag: &str,
+    query: kurbo::Rect,
+    enclosure: bool,
+    to_svg: kurbo::Affine,
+) -> bool {
+    use kurbo::Shape;
+    use style::computed_values::pointer_events::T as Pe;
+    use style::values::generics::svg::SVGPaintKind;
+    let Some(computed) = layout.style().stylo_style(dom, el) else { return false };
+    let pe = computed.get_inherited_ui().pointer_events;
+    if pe == Pe::None
+        || matches!(pe, Pe::Auto | Pe::Visiblepainted | Pe::Visiblefill | Pe::Visiblestroke | Pe::Visible)
+            && computed.get_inherited_box().visibility != style::computed_values::visibility::T::Visible
+    {
+        return false;
+    }
+    // The clip path's box limits the part of the element that counts.
+    let mut query = query;
+    let clipped = clip_box(dom, layout, el).map(|b| {
+        let b = transform_bounds(to_svg.as_coeffs(), b);
+        kurbo::Rect::new(b.min_x, b.min_y, b.max_x, b.max_y)
+    });
+    if let Some(clip) = clipped {
+        if !enclosure {
+            if query.x0 > clip.x1 || clip.x0 > query.x1 || query.y0 > clip.y1 || clip.y0 > query.y1 {
+                return false;
+            }
+            query = query.intersect(clip);
+        }
+    }
+    let svg_paint = computed.get_inherited_svg();
+    let painted = matches!(pe, Pe::Auto | Pe::Visiblepainted | Pe::Painted);
+    let fill = !matches!(pe, Pe::Stroke | Pe::Visiblestroke) && (!painted || !matches!(svg_paint.fill.kind, SVGPaintKind::None));
+    let stroke = !matches!(pe, Pe::Fill | Pe::Visiblefill) && (!painted || !matches!(svg_paint.stroke.kind, SVGPaintKind::None));
+    if matches!(tag, "text" | "image" | "foreignObject") {
+        let Some(b) = bounds(dom, layout.style(), &Still, el, 0) else { return false };
+        let b = transform_bounds(to_svg.as_coeffs(), b);
+        let r = kurbo::Rect::new(b.min_x, b.min_y, b.max_x, b.max_y);
+        return if enclosure {
+            r.x0 >= query.x0 && r.y0 >= query.y0 && r.x1 <= query.x1 && r.y1 <= query.y1
+        } else {
+            r.x0 <= query.x1 && r.x1 >= query.x0 && r.y0 <= query.y1 && r.y1 >= query.y0
+        };
+    }
+    let Some(path) = metric_path(dom, layout, el) else { return false };
+    let evenodd = crate::stylo::serialize(&computed, "fill-rule").as_deref() == Some("evenodd");
+    let mut regions: Vec<(kurbo::BezPath, bool)> = Vec::new();
+    if fill && tag != "line" {
+        regions.push((to_svg * closed_contours(&path), evenodd));
+    }
+    if stroke {
+        if let Some(outline) = stroke_style(&computed, path_length_scale(dom, el, &path)) {
+            use style::values::specified::svg::VectorEffect;
+            let region = if computed.get_svg().vector_effect.contains(VectorEffect::NON_SCALING_STROKE) {
+                kurbo::stroke((to_svg * path.clone()).iter(), &outline, &Default::default(), 0.01)
+            } else {
+                to_svg * kurbo::stroke(path.iter(), &outline, &Default::default(), 0.01)
+            };
+            regions.push((region, false));
+        }
+    }
+    if enclosure {
+        // Everything the element paints lies inside the rectangle (the clip box narrows nothing).
+        let inside = |b: kurbo::Rect| b.x0 >= query.x0 && b.y0 >= query.y0 && b.x1 <= query.x1 && b.y1 <= query.y1;
+        return !regions.is_empty() && regions.iter().all(|(region, _)| inside(region.bounding_box()));
+    }
+    regions.iter().any(|(region, evenodd)| region_hits_rect(region, query, *evenodd))
+}
+
 /// Path metrics use the element's equivalent path in local user coordinates.
 /// Author calibration via pathLength affects rendering, not these DOM APIs.
 pub fn total_length(dom: &Dom, layout: &crate::layout::Layout, el: NodeId) -> f64 {
@@ -804,6 +1307,94 @@ pub fn point_at_length(dom: &Dom, layout: &crate::layout::Layout, el: NodeId, di
         remaining -= length;
     }
     Some(endpoint)
+}
+
+/// The path of an `<animateMotion>` (its `path` attribute, or the shape an `<mpath>` names): the
+/// position and direction `distance` along it (SVG 2, "animateMotion": "the point which is t/dur
+/// distance along the motion path"), and the end points `calcMode="discrete"` steps through.
+pub struct MotionPath {
+    path: kurbo::BezPath,
+    length: f64,
+    /// The `moveto` points and the end of every segment (a `closepath` ends at the start of its subpath).
+    points: Vec<(f64, f64)>,
+}
+
+impl MotionPath {
+    /// The path of path data `data`; None when it has no `moveto` (an error: the animation has no effect).
+    pub fn parse(data: &str) -> Option<MotionPath> {
+        MotionPath::from_path(parse_shape_path(data))
+    }
+
+    /// The path of the shape `el` (`path`'s `d`, else the equivalent path of a basic shape).
+    pub fn of_element(dom: &Dom, el: NodeId) -> Option<MotionPath> {
+        let tag = local_name(dom, el)?;
+        if tag == "path" {
+            return MotionPath::parse(dom.get_attribute(el, "d").ok().flatten()?);
+        }
+        MotionPath::from_path(shape_path(dom, el, &tag, true, |name| attr(dom, el, name))?)
+    }
+
+    fn from_path(path: kurbo::BezPath) -> Option<MotionPath> {
+        use kurbo::{ParamCurveArclen, PathEl};
+        let mut points = Vec::new();
+        let mut start = kurbo::Point::ZERO;
+        for element in path.elements() {
+            match *element {
+                PathEl::MoveTo(p) => {
+                    start = p;
+                    points.push((p.x, p.y));
+                }
+                PathEl::LineTo(p) | PathEl::QuadTo(_, p) | PathEl::CurveTo(_, _, p) => points.push((p.x, p.y)),
+                PathEl::ClosePath => points.push((start.x, start.y)),
+            }
+        }
+        if points.is_empty() {
+            return None;
+        }
+        let length: f64 = path.segments().map(|segment| segment.arclen(1e-5)).sum();
+        Some(MotionPath { path, length, points })
+    }
+
+    /// The end points of the path's segments, in order (the first is its `moveto`).
+    pub fn points(&self) -> &[(f64, f64)] {
+        &self.points
+    }
+
+    /// Where the path ends.
+    pub fn end(&self) -> (f64, f64) {
+        self.points.last().copied().unwrap_or((0.0, 0.0))
+    }
+
+    /// The position and the direction (degrees) at `fraction` of the path's length. The direction of a
+    /// path without a tangent (no length) is 0.
+    pub fn at(&self, fraction: f64) -> (f64, f64, f64) {
+        use kurbo::{ParamCurve, ParamCurveArclen};
+        // The direction of `segment` at `t`: from a little before to a little after, within it.
+        let direction = |segment: kurbo::PathSeg, t: f64| {
+            let (a, b) = (segment.eval((t - 1e-4).max(0.0)), segment.eval((t + 1e-4).min(1.0)));
+            let (dx, dy) = (b.x - a.x, b.y - a.y);
+            if dx.hypot(dy) < 1e-9 { 0.0 } else { dy.atan2(dx).to_degrees() }
+        };
+        let mut remaining = fraction.clamp(0.0, 1.0) * self.length;
+        let mut last = None;
+        for segment in self.path.segments() {
+            let length = segment.arclen(1e-5);
+            if remaining < length {
+                let t = segment.inv_arclen(remaining, 1e-5);
+                let p = segment.eval(t);
+                return (p.x, p.y, direction(segment, t));
+            }
+            remaining -= length;
+            last = Some(segment);
+        }
+        match last {
+            Some(segment) => {
+                let p = segment.end();
+                (p.x, p.y, direction(segment, 1.0))
+            }
+            None => (self.points[0].0, self.points[0].1, 0.0),
+        }
+    }
 }
 
 fn metric_path(dom: &Dom, layout: &crate::layout::Layout, el: NodeId) -> Option<kurbo::BezPath> {

@@ -53,7 +53,7 @@ fn xhr_posts_subview_combines_headers_and_reuses_after_completion() {
     let requests = server.requests.lock().unwrap();
     assert!(requests[0].0.starts_with("POST "));
     assert_eq!(requests[0].2, b"AB");
-    assert!(requests[0].1.contains("x-test: a, b"));
+    assert!(requests[0].1.to_ascii_lowercase().contains("x-test: a, b"));
     assert!(!requests[0].1.contains("wrong"));
 }
 

@@ -21,6 +21,15 @@ mod render;
 mod sizing;
 mod text;
 pub use text::with_glyph_grid;
+pub use render::HitShape;
+
+/// pyro: whether the point (`x`, `y`) (CSS px in the element's own coordinates: from its border
+/// box's origin) is inside the shape `shape` of the element `id` as it is painted (see
+/// [`HitShape`]); `true` when the element has none. Hit testing asks it for the elements that
+/// have a `clip-path`, a `border-shape` or rounded corners.
+pub fn hit_shape_contains(doc: &blitz_dom::BaseDocument, id: blitz_dom::NodeId, shape: HitShape, x: f64, y: f64) -> bool {
+    render::hit_shape_contains(doc, id, shape, x, y)
+}
 
 use std::collections::HashMap;
 
@@ -140,6 +149,9 @@ pub fn paint_element_subtree(doc: &mut BaseDocument, id: NodeId, scale: f64) -> 
     let widgets = HashMap::new();
     let mut painter = BlitzDomPainter::new(doc, scale, width, height, 0.0, 0.0, &widgets);
     painter.privacy = Some(render::Privacy::default());
+    // pyro: a visited link (around the element or in it) is painted as unvisited: what shows
+    // whether it was visited is not read back (CSS Selectors 4 § 7.2, HTML-in-Canvas privacy).
+    let _unvisited = blitz_dom::node::UnvisitedPaint::enter();
     let node = doc.get_node(id)?;
     let size = node.final_layout().size;
     let parent = painter.node_transform(node, kurbo::Affine::IDENTITY).inverse();
@@ -150,80 +162,49 @@ pub fn paint_element_subtree(doc: &mut BaseDocument, id: NodeId, scale: f64) -> 
     let mut scene = Scene::new();
     painter.render_element(&mut scene, id, parent, kurbo::Rect::new(-1e7, -1e7, 1e7, 1e7));
     let privacy = painter.privacy.take().unwrap_or_default();
-    let taints = privacy.unclassified.get() || subtree_may_taint(doc, id, &scene, &privacy.allowed.borrow());
+    let taints = privacy.unclassified.get() || subtree_may_taint(&scene, &privacy.allowed.borrow());
     Some((scene, kurbo::Size::new(size.width as f64 * scale, size.height as f64 * scale), taints))
 }
 
 /// pyro: HTML-in-Canvas privacy: whether the paint of `id`'s subtree (`scene`) may show content a
-/// page must not read back from a canvas, after `render::Privacy` left out the images of other
-/// origins it can classify: any other image (a video frame, a nested canvas, an SVG `<image>`, an
-/// `feImage`, one whose pixels are not among the `allowed` ones), a border, mask, list-style or
-/// referenced SVG document (`filter`, `clip-path`, `mask`) from an opaque response, a nested document, an embedded plugin or media element, or a
-/// visited link (whose colours reveal history). The canvas drawn into is then no longer
-/// origin-clean.
-fn subtree_may_taint(doc: &BaseDocument, id: NodeId, scene: &Scene, allowed: &[u64]) -> bool {
+/// page must not read back from a canvas, after the paint left out what it can classify (images
+/// of other origins, frames of other origins, filter, mask and clip documents of other origins,
+/// the images of opaque responses in an inline `<svg>` and in the filters it and the page
+/// reference, what an `<svg>` or its filters take from outside the subtree, and visited link
+/// colours, which are painted as unvisited, eager pseudo-element styles included): any image
+/// drawn that is not among the `allowed` ones (a nested canvas, one whose origin was not told).
+/// The canvas drawn into is then no longer origin-clean.
+fn subtree_may_taint(scene: &Scene, allowed: &[u64]) -> bool {
     use anyrender::Paint;
-    use anyrender::filters::FilterEffect;
     use anyrender::recording::RenderCommand;
     let image = |paint: &Paint| match paint {
         Paint::Solid(_) | Paint::Gradient(_) => false,
         Paint::Image(brush) => !allowed.contains(&brush.image.data.id()),
         _ => true,
     };
-    let filter_image = |filter: &Option<std::sync::Arc<anyrender::Filter>>| {
-        filter.as_ref().is_some_and(|f| f.nodes().iter().any(|node| matches!(node.effect, FilterEffect::Image(_))))
-    };
+    // (Layer filters and `FilterEffect::Image` are not scanned, which holds because: (1) a layer's
+    // filter is built only from CSS filter functions (no image in blur, colour, drop-shadow, ...,
+    // `filters::filter_steps`) or from `url()` references, which `filters::reference_graph` does
+    // not apply for a canvas when the filter document or a `feImage` in it came from an opaque
+    // response (`Privacy::opaque`, blitz-dom `filter_has_opaque_image`); (2) the only
+    // `FilterEffect::Image`s built (anyrender_svg `filter.rs`, anyrender_vello_cpu `graph.rs`) carry
+    // the marker ids `CROP_IMAGE`, `IMAGE_SOURCE`, `BLUR_XY`, `MORPHOLOGY` and `TURBULENCE`, generated
+    // sources and no page image; (3) what an `feImage` shows is drawn into the scene itself
+    // (`FilterGraph::push_layer`, through `render_group`), as `Fill` commands with image brushes,
+    // which `in_scene` below scans: an image not among the `allowed` ones taints, even a same-origin
+    // one in an `feImage`.)
     let in_scene = scene.commands.iter().any(|command| match command {
         RenderCommand::Fill(fill) => image(&fill.brush),
         RenderCommand::Stroke(stroke) => image(&stroke.brush),
         RenderCommand::GlyphRun(run) => image(&run.brush),
-        RenderCommand::PushLayer(layer) => filter_image(&layer.filter) || filter_image(&layer.backdrop_filter),
         _ => false,
     });
-    if in_scene {
-        return true;
-    }
-    // A visited link around the element (the drawable canvas inside one, or the element inside
-    // one in the canvas) gives it visited-dependent colours, which reveal history. (The render
-    // tree has no shadow root nodes: a shadow tree's parent is its host.)
-    let mut ancestor = doc.get_node(id).and_then(|node| node.parent);
-    while let Some(a) = ancestor {
-        if doc.is_visited_link(a) {
-            return true;
-        }
-        ancestor = doc.get_node(a).and_then(|node| node.parent);
-    }
-    let mut stack = vec![id];
-    while let Some(n) = stack.pop() {
-        let Some(node) = doc.get_node(n) else { continue };
-        if doc.is_visited_link(n) {
-            return true;
-        }
-        if let Some(element) = node.element_data() {
-            if element.sub_doc_data().is_some()
-                || matches!(&*element.name.local, "iframe" | "frame" | "embed" | "object" | "video" | "audio")
-            {
-                return true;
-            }
-            let foreign = |images: &[Option<blitz_dom::node::ImageResourceData>]| {
-                images.iter().flatten().any(|image| render::Privacy::opaque(&image.image))
-            };
-            // (`reference_images`: the external SVG documents of its `clip-path`, `filter` and
-            // `mask` references, whose primitives and shapes reach the pixels.)
-            if foreign(&element.border_images)
-                || foreign(&element.mask_images)
-                || foreign(&element.list_style_images)
-                || foreign(&element.reference_images)
-            {
-                return true;
-            }
-        }
-        stack.extend(node.children.iter().copied());
-        if let Some(children) = node.layout_children.borrow().as_ref() {
-            stack.extend(children.iter().copied());
-        }
-    }
-    false
+    // (A frame of another origin, an `<embed>`'s, `<object>`'s or `<video>`'s image, a border,
+    // mask or list-style image and a filter, mask or clip document from an opaque response
+    // are left out by the paint, `render::Privacy`. A visited link is painted as unvisited, its
+    // eager pseudo-elements too (`UnvisitedPaint`): no visited state decides the pixels or this
+    // answer.)
+    in_scene
 }
 
 /// pyro: the top Chromium paints a line of text at, in CSS px of the document: the line's unrounded

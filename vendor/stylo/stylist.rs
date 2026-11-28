@@ -1226,6 +1226,18 @@ impl Stylist {
         doc_author_rules_apply && f(&self.cascade_data.author)
     }
 
+    /// pyro: whether any rule of any origin, or of a shadow tree that applies to `element`, is
+    /// filed under `pseudo`'s rule map key: a cheap test that a lazy cascade of `pseudo` on
+    /// `element` can find nothing when false (rules reached through a host's shadow tree, as
+    /// `::slotted()` ones are, are not seen from a light-tree child: the caller checks those).
+    pub fn may_have_rules_for_pseudo<E>(&self, element: E, pseudo: &PseudoElement) -> bool
+    where
+        E: TElement,
+    {
+        let key = pseudo.rule_map_key();
+        self.any_applicable_rule_data(element, |data| data.has_rules_for_pseudo(&key))
+    }
+
     /// pyro: whether a rule that can make `pseudo` (`::before` or `::after`, eagerly
     /// cascaded for `element`) generate a box matches `element`, so that the full match and
     /// cascade of the pseudo-element can give a style that is kept. When this is `false`, every
@@ -1415,6 +1427,28 @@ impl Stylist {
     where
         E: TElement,
     {
+        self.lazily_compute_pseudo_element_style_in_tree(
+            guards, element, pseudo, rule_inclusion, originating_element_style, is_probe, matching_fn, false,
+        )
+    }
+
+    /// pyro: [`Self::lazily_compute_pseudo_element_style`] for a pseudo-element of a pseudo-element tree
+    /// (`::view-transition-group(x)`...) that `only_child` says is its parent's only child (what
+    /// `:only-child` after the pseudo-element matches).
+    pub fn lazily_compute_pseudo_element_style_in_tree<E>(
+        &self,
+        guards: &StylesheetGuards,
+        element: E,
+        pseudo: &PseudoElement,
+        rule_inclusion: RuleInclusion,
+        originating_element_style: &ComputedValues,
+        is_probe: bool,
+        matching_fn: Option<&dyn Fn(&PseudoElement) -> bool>,
+        only_child: bool,
+    ) -> Option<Arc<ComputedValues>>
+    where
+        E: TElement,
+    {
         let cascade_inputs = self.lazy_pseudo_rules(
             guards,
             element,
@@ -1423,6 +1457,7 @@ impl Stylist {
             is_probe,
             rule_inclusion,
             matching_fn,
+            only_child,
         )?;
 
         Some(self.compute_pseudo_element_style_with_inputs(
@@ -1463,6 +1498,7 @@ impl Stylist {
             MatchingForInvalidation::No,
         );
         matching_context.extra_data.originating_element_style = Some(originating_element_style);
+        matching_context.extra_data.skip_originating_container = pseudo.is_scroll_button() || pseudo == PseudoElement::ScrollMarkerGroup;
         self.push_applicable_declarations(
             element,
             None,
@@ -1704,6 +1740,7 @@ impl Stylist {
         is_probe: bool,
         rule_inclusion: RuleInclusion,
         matching_fn: Option<&dyn Fn(&PseudoElement) -> bool>,
+        only_child: bool,
     ) -> Option<CascadeInputs>
     where
         E: TElement,
@@ -1731,7 +1768,9 @@ impl Stylist {
         );
 
         matching_context.pseudo_element_matching_fn = matching_fn;
+        matching_context.pseudo_element_only_child = only_child;
         matching_context.extra_data.originating_element_style = Some(originating_element_style);
+        matching_context.extra_data.skip_originating_container = pseudo.is_scroll_button() || *pseudo == PseudoElement::ScrollMarkerGroup;
 
         self.push_applicable_declarations(
             element,
@@ -1764,7 +1803,9 @@ impl Stylist {
                 MatchingForInvalidation::No,
             );
             matching_context.pseudo_element_matching_fn = matching_fn;
+            matching_context.pseudo_element_only_child = only_child;
             matching_context.extra_data.originating_element_style = Some(originating_element_style);
+            matching_context.extra_data.skip_originating_container = pseudo.is_scroll_button() || *pseudo == PseudoElement::ScrollMarkerGroup;
 
             self.push_applicable_declarations(
                 element,
@@ -4000,7 +4041,7 @@ impl CascadeData {
 
     /// pyro: whether any rule here is for `pseudo`, in any of the maps the rule
     /// collector reads for it.
-    fn has_rules_for_pseudo(&self, pseudo: &PseudoElement) -> bool {
+    pub fn has_rules_for_pseudo(&self, pseudo: &PseudoElement) -> bool {
         let pseudos = std::slice::from_ref(pseudo);
         self.normal_rules(pseudos).is_some_and(|m| !m.is_empty())
             || self
@@ -4072,12 +4113,33 @@ impl CascadeData {
             if condition_ref.conditions.is_empty() {
                 return true;
             }
+            // pyro: a scroll pseudo-element's size container is found from the ancestors of its
+            // originating element, which is itself no candidate (Conditional 5 § 3.3); its style and
+            // scroll-state queries do query the originating element.
+            let skipping = match context.extra_data.originating_element_style {
+                Some(style) if context.extra_data.skip_originating_container => {
+                    // (The box of the pseudo-element is matched as itself: look from its originating element.)
+                    let origin = if element.implemented_pseudo_element().is_some() {
+                        selectors::Element::pseudo_element_originating_element(&element).unwrap_or(element)
+                    } else {
+                        element
+                    };
+                    // The root element has no ancestors: it is the container, as for its own children.
+                    Some(if origin.traversal_parent().is_some() { (origin, None) } else { (origin, Some(style)) })
+                },
+                _ => None,
+            };
+            let plain = (element, context.extra_data.originating_element_style);
             let matches = condition_ref.conditions.iter().any(|condition| {
+                let (start, originating_element_style) = match skipping {
+                    Some(skipping) if condition.has_size_query() => skipping,
+                    _ => plain,
+                };
                 condition
                     .matches(
                         stylist,
-                        element,
-                        context.extra_data.originating_element_style,
+                        start,
+                        originating_element_style,
                         &mut context.extra_data.cascade_input_flags,
                     )
                     .to_bool(/* unknown = */ false)

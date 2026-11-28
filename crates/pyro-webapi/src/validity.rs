@@ -6,34 +6,40 @@ use pyro_dom::forms::{InputType, Validity};
 use pyro_dom::NodeId;
 use pyro_js::{ClassDef, JsClass, JsResult, NoParent, Scope, Value};
 
+use crate::collections::NodeHold;
 use crate::node::NodeData;
 use crate::page::PageDom;
 use crate::util::*;
 
 pub struct ValidityState;
+/// The flags of the element a `ValidityState` belongs to, read when asked: the object is live
+/// (`[SameObject]` in the IDL), so one kept across `setCustomValidity()`, `setValidity()` or an
+/// attribute change reports the new state.
+fn flags(v: &NodeHold) -> Validity {
+    v.page.dom.borrow().validity_flags(v.id).unwrap_or_default()
+}
 impl JsClass for ValidityState {
     const NAME: &'static str = "ValidityState";
-    type Data = Validity;
+    type Data = NodeHold;
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
-        def.getter("valueMissing", |s, v| Ok(s.boolean(v.value_missing)));
-        def.getter("typeMismatch", |s, v| Ok(s.boolean(v.type_mismatch)));
-        def.getter("patternMismatch", |s, v| Ok(s.boolean(v.pattern_mismatch)));
-        def.getter("tooLong", |s, v| Ok(s.boolean(v.too_long)));
-        def.getter("tooShort", |s, v| Ok(s.boolean(v.too_short)));
-        def.getter("rangeUnderflow", |s, v| Ok(s.boolean(v.range_underflow)));
-        def.getter("rangeOverflow", |s, v| Ok(s.boolean(v.range_overflow)));
-        def.getter("stepMismatch", |s, v| Ok(s.boolean(v.step_mismatch)));
-        def.getter("badInput", |s, v| Ok(s.boolean(v.bad_input)));
-        def.getter("customError", |s, v| Ok(s.boolean(v.custom_error)));
-        def.getter("valid", |s, v| Ok(s.boolean(v.valid())));
+        def.getter("valueMissing", |s, v| Ok(s.boolean(flags(v).value_missing)));
+        def.getter("typeMismatch", |s, v| Ok(s.boolean(flags(v).type_mismatch)));
+        def.getter("patternMismatch", |s, v| Ok(s.boolean(flags(v).pattern_mismatch)));
+        def.getter("tooLong", |s, v| Ok(s.boolean(flags(v).too_long)));
+        def.getter("tooShort", |s, v| Ok(s.boolean(flags(v).too_short)));
+        def.getter("rangeUnderflow", |s, v| Ok(s.boolean(flags(v).range_underflow)));
+        def.getter("rangeOverflow", |s, v| Ok(s.boolean(flags(v).range_overflow)));
+        def.getter("stepMismatch", |s, v| Ok(s.boolean(flags(v).step_mismatch)));
+        def.getter("badInput", |s, v| Ok(s.boolean(flags(v).bad_input)));
+        def.getter("customError", |s, v| Ok(s.boolean(flags(v).custom_error)));
+        def.getter("valid", |s, v| Ok(s.boolean(flags(v).valid())));
     }
 }
 
-/// Snapshot of the element's validity (attributes are not live).
+/// The element's `ValidityState`.
 pub(crate) fn validity_state<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
-    let v = n.page().dom.borrow().validity_flags(n.id).js()?;
-    Ok(s.wrap::<ValidityState>(v, None)?.value())
+    Ok(s.wrap::<ValidityState>(NodeHold::new(n.page(), n.id)?, None)?.value())
 }
 
 pub(crate) fn will_validate(page: &PageDom, id: NodeId) -> bool {

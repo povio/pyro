@@ -979,12 +979,21 @@ impl SpecifiedValueInfo for Color {
 #[derive(Clone, Debug, MallocSizeOf, PartialEq, SpecifiedValueInfo, ToCss, ToShmem, ToTyped)]
 pub struct ColorPropertyValue(pub Color);
 
+std::thread_local! {
+    /// pyro: while a highlight pseudo-element is cascaded on a parent style that carries the parent
+    /// element's highlight colours (css-pseudo-4 highlight inheritance), the colour of the
+    /// pseudo-element's originating element: `color: currentcolor` of a highlight resolves against it
+    /// and not against the inherited highlight colour (the parent style's `color`).
+    pub static HIGHLIGHT_ORIGINATING_COLOR: std::cell::Cell<Option<AbsoluteColor>> = const { std::cell::Cell::new(None) };
+}
+
 impl ToComputedValue for ColorPropertyValue {
     type ComputedValue = AbsoluteColor;
 
     #[inline]
     fn to_computed_value(&self, context: &Context) -> Self::ComputedValue {
-        let current_color = context.builder.get_parent_inherited_text().get_color();
+        let originating = HIGHLIGHT_ORIGINATING_COLOR.with(|c| c.get()).filter(|_| context.builder.pseudo.is_some());
+        let current_color = originating.as_ref().unwrap_or_else(|| context.builder.get_parent_inherited_text().get_color());
         self.0
             .to_computed_value(context)
             .resolve_to_absolute(current_color)

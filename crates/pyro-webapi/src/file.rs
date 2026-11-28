@@ -207,14 +207,15 @@ impl JsClass for File {
 const FILES: &str = "__lpFileListFiles";
 
 pub struct FileListData {
-    len: usize,
+    /// Changes only when [`FileListBuilder::finish_into`] updates a live list (`DataTransfer.files`).
+    len: std::cell::Cell<usize>,
     wrapper: WrapperRef,
 }
 
 impl FileListData {
     /// The File at `index`, read from the hidden array of this list's own wrapper.
     fn get<'s>(&self, s: &Scope<'s>, index: usize) -> JsResult<Option<Value<'s>>> {
-        if index >= self.len {
+        if index >= self.len.get() {
             return Ok(None);
         }
         let array = self.wrapper.hidden(s, FILES)?.and_then(|v| v.as_object()).ok_or(JsError::ContextDestroyed)?;
@@ -244,10 +245,20 @@ impl<'s> FileListBuilder<'s> {
     pub(crate) fn finish(self, s: &Scope<'s>) -> JsResult<Value<'s>> {
         let page = crate::target::page_of(s)?;
         let identity = page.event_identity(page.next_event_id());
-        let data = FileListData { len: self.len, wrapper: WrapperRef::new(s, identity) };
+        let data = FileListData { len: std::cell::Cell::new(self.len), wrapper: WrapperRef::new(s, identity) };
         let list = s.wrap::<FileList>(data, Some(identity))?;
         s.set_hidden(list, FILES, self.array.value())?;
         Ok(list.value())
+    }
+
+    /// Makes the `FileList` `existing` hold these files instead (a reference script kept to
+    /// `DataTransfer.files` sees later changes of the items). Returns false, changing nothing,
+    /// when `existing` is not a FileList.
+    pub(crate) fn finish_into(&self, s: &Scope<'s>, existing: Value<'s>) -> JsResult<bool> {
+        let (Some(data), Some(list)) = (s.unwrap::<FileList>(existing), existing.as_object()) else { return Ok(false) };
+        s.set_hidden(list, FILES, self.array.value())?;
+        data.len.set(self.len);
+        Ok(true)
     }
 }
 
@@ -257,7 +268,7 @@ impl JsClass for FileList {
     type Data = FileListData;
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
-        def.getter("length", |s, l| Ok(s.number(l.len as f64)));
+        def.getter("length", |s, l| Ok(s.number(l.len.get() as f64)));
         def.pure_method("item", 1, |s, l, a| {
             let i = to_u32(a.get(0))? as usize;
             Ok(l.get(s, i)?.unwrap_or(s.null()))
@@ -286,7 +297,7 @@ pub(crate) fn clone_host<'s>(s: &Scope<'s>, value: Value<'s>) -> JsResult<Option
     }
     let Some(list) = s.unwrap::<FileList>(value) else { return Ok(None) };
     let mut files = FileListBuilder::new(s)?;
-    for i in 0..list.len {
+    for i in 0..list.len.get() {
         if let Some(f) = list.get(s, i)?.and_then(|v| s.unwrap::<Blob>(v)) {
             files.push(wrap_blob(s, &f)?.value())?;
         }
@@ -325,7 +336,7 @@ pub(crate) fn make_file_list<'s>(s: &Scope<'s>, files: pyro_js::Object<'s>) -> J
 
 /// The length of FileList `value` (0 for anything else).
 pub(crate) fn file_list_len(s: &Scope<'_>, value: Value<'_>) -> usize {
-    s.unwrap::<FileList>(value).map_or(0, |l| l.len)
+    s.unwrap::<FileList>(value).map_or(0, |l| l.len.get())
 }
 
 /// Whether `value` is a FileList.
@@ -411,8 +422,8 @@ pub(crate) fn set_input_files(s: &Scope<'_>, n: &NodeData, v: Value<'_>) -> JsRe
     if n.page().dom.borrow().input_type(n.id).js()? != pyro_dom::forms::InputType::File {
         return Ok(());
     }
-    let mut entries = Vec::with_capacity(list.len);
-    for i in 0..list.len {
+    let mut entries = Vec::with_capacity(list.len.get());
+    for i in 0..list.len.get() {
         let f = list
             .get(s, i)?
             .and_then(|v| s.unwrap::<File>(v))

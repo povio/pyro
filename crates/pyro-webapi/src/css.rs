@@ -414,6 +414,17 @@ impl StyleData {
         self.is_position_try().then_some(CssRuleType::PositionTry)
     }
 
+    /// Whether the property attribute `name` exists on this declaration object: a `@page` block keeps every
+    /// declaration (as Chrome's CSSOM does) and exposes the properties of the page box (css-page-3: the
+    /// `size`, `page-orientation`, `marks` and `bleed` descriptors and the margin, padding, border, outline
+    /// and background properties, `pagerule.style.paddingLeft` in css/css-page/parsing/margin-rules-002),
+    /// not the rest (`style.cssFloat` is `undefined` there, css/cssom/page-descriptors).
+    fn exposes(&self, name: &str) -> bool {
+        !self.is_page_rule()
+            || matches!(name, "size" | "page-orientation" | "marks" | "bleed")
+            || ["margin", "padding", "border", "outline", "background"].iter().any(|group| name.strip_prefix(group).is_some_and(|rest| rest.is_empty() || rest.starts_with('-')))
+    }
+
     fn allows(&self, name: &str) -> bool {
         if self.is_font_face() { return pyro_dom::font_face::DescriptorBlock::supports(name); }
         self.declaration_rule().is_none_or(|rule| DeclarationBlock::allowed_in_rule(name, rule))
@@ -888,12 +899,12 @@ impl JsClass for CssStyleDeclaration {
         });
         def.named(false, |s, st, name| {
             let Some(property) = named_property(name) else { return Ok(None) };
-            if !st.allows(&property) { return Ok(None); }
+            if !st.allows(&property) || !st.exposes(&property) { return Ok(None); }
             Ok(Some(s.string(&st.get(&property))))
         });
         def.named_setter(|_s, st, name, v| {
             let Some(property) = named_property(name) else { return Ok(false) };
-            if !st.allows(&property) { return Ok(false); }
+            if !st.allows(&property) || !st.exposes(&property) { return Ok(false); }
             let value = if v.is_null() { String::new() } else { dom_string(v)? };
             st.set(&property, &value, false)?;
             Ok(true)
@@ -1560,6 +1571,12 @@ impl JsClass for CssGroupRule {
         def.method("insertRule", 1, |s, r, a| {
             let rule = arg_string(&a, 0, "CSSGroupingRule.insertRule")?;
             let index = if a.get(1).is_undefined() { 0 } else { to_u32(a.get(1))? as usize };
+            if is_page(r.node()?) {
+                let model = r.owner.rules()?;
+                edit_page_margins(&model, r.node()?, index, Some(rule.as_str()))?;
+                r.owner.commit(&model);
+                return Ok(s.number(index as f64));
+            }
             let (RuleKind::Group { list, .. } | RuleKind::Style { list, .. }) = &r.node()?.kind else { return Ok(s.undefined()) };
             let model = r.owner.rules()?;
             let namespaces = model.namespaces.borrow().clone();
@@ -1570,6 +1587,12 @@ impl JsClass for CssGroupRule {
         def.method("deleteRule", 1, |s, r, a| {
             a.require(1, "CSSGroupingRule.deleteRule")?;
             let index = to_u32(a.get(0))? as usize;
+            if is_page(r.node()?) {
+                let model = r.owner.rules()?;
+                edit_page_margins(&model, r.node()?, index, None)?;
+                r.owner.commit(&model);
+                return Ok(s.undefined());
+            }
             let (RuleKind::Group { list, .. } | RuleKind::Style { list, .. }) = &r.node()?.kind else { return Ok(s.undefined()) };
             delete_from(list, index)?;
             r.owner.commit(&*r.owner.rules()?);
@@ -1640,11 +1663,7 @@ fn page_parts(body: &str) -> (String, Vec<String>) {
 }
 
 /// The margin names of `@page` (CSS Paged Media 3 §4.2).
-const MARGIN_RULES: &[&str] = &[
-    "top-left-corner", "top-left", "top-center", "top-right", "top-right-corner", "bottom-left-corner",
-    "bottom-left", "bottom-center", "bottom-right", "bottom-right-corner", "left-top", "left-middle",
-    "left-bottom", "right-top", "right-middle", "right-bottom",
-];
+const MARGIN_RULES: &[&str] = pyro_dom::cssom::PAGE_MARGIN_RULES;
 
 /// `CSSRule.type` of a margin rule.
 const MARGIN_RULE: u16 = 9;
@@ -1652,6 +1671,47 @@ const MARGIN_RULE: u16 = 9;
 
 fn is_page(node: &RuleNode) -> bool {
     matches!(&node.kind, RuleKind::Other { rule_type: 6, .. })
+}
+
+/// A margin at-rule as its node keeps it: `@top-left { }`, `@top-left { color: red; }`.
+fn margin_rule_text(m: &str) -> String {
+    match split_block(m) {
+        Some((head, body)) if body.trim().is_empty() => format!("{head} {{ }}"),
+        Some((head, body)) => format!("{head} {{ {} }}", body.trim()),
+        None => m.to_owned(),
+    }
+}
+
+/// `insertRule` / `deleteRule` of a `@page` rule: its child rules are its margin rules, kept in its text.
+/// `insert` is the rule text to insert at `index`, or `None` to delete the rule at `index`.
+fn edit_page_margins(model: &SheetModel, page: &Rc<RuleNode>, index: usize, insert: Option<&str>) -> JsResult<()> {
+    let mut nodes = page_margins(model, page);
+    match insert {
+        Some(rule) => {
+            if index > nodes.len() {
+                return Err(JsError::dom("IndexSizeError", "The index provided is larger than the number of rules."));
+            }
+            let rule = rule.trim();
+            let syntax = || JsError::dom("SyntaxError", format!("Failed to parse the rule '{rule}'."));
+            if !rule.starts_with('@') || split_block(rule).is_none() || !rule.ends_with('}') {
+                return Err(syntax());
+            }
+            if !MARGIN_RULES.contains(&at_name(rule).as_str()) {
+                return Err(JsError::dom("HierarchyRequestError", format!("'{rule}' may not be inserted inside an @page rule.")));
+            }
+            nodes.insert(index, RuleNode::new(ParsedRule::Other { rule_type: MARGIN_RULE, text: margin_rule_text(rule) }, Rc::downgrade(page)));
+        }
+        None => {
+            if index >= nodes.len() {
+                return Err(JsError::dom("IndexSizeError", "The index provided is outside the rule list."));
+            }
+            *nodes.remove(index).parent.borrow_mut() = Weak::new();
+        }
+    }
+    let texts = nodes.iter().map(|n| match &n.kind { RuleKind::Other { text, .. } => text.borrow().clone(), _ => String::new() }).collect();
+    model.margins.borrow_mut().insert((page.identity.0, page.identity.1), (texts, nodes));
+    write_page(model, page, None);
+    Ok(())
 }
 
 /// The margin rules of a `@page` rule.
@@ -1673,11 +1733,7 @@ fn page_margins(model: &SheetModel, page: &Rc<RuleNode>) -> Vec<Rc<RuleNode>> {
         let nodes: Vec<Rc<RuleNode>> = margins
             .iter()
             .map(|m| {
-                let text = match split_block(m) {
-                    Some((head, body)) if body.trim().is_empty() => format!("{head} {{ }}"),
-                    Some((head, body)) => format!("{head} {{ {} }}", body.trim()),
-                    None => m.clone(),
-                };
+                let text = margin_rule_text(m);
                 RuleNode::new(ParsedRule::Other { rule_type: MARGIN_RULE, text }, Rc::downgrade(page))
             })
             .collect();
@@ -1942,30 +1998,7 @@ rule_class!(CssMarginRule, "CSSMarginRule", CssRule, |def| {
     });
 });
 
-/// A page selector list as `CSSPageRule.selectorText` serializes it
-/// (`name:first`, pseudo-pages lowercased), or `None` when it is invalid.
-fn page_selector(text: &str) -> Option<String> {
-    let mut out = Vec::new();
-    for part in text.split(',') {
-        let part = part.trim_matches(|c: char| c.is_ascii_whitespace());
-        let (name, pseudos) = part.split_at(part.find(':').unwrap_or(part.len()));
-        let ident = |n: &str| n.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_' || !c.is_ascii());
-        if !ident(name) || (name.is_empty() && pseudos.is_empty() && text.contains(',')) {
-            return None;
-        }
-        let mut serialized = name.to_owned();
-        for pseudo in pseudos.split(':').skip(1) {
-            let lower = pseudo.to_ascii_lowercase();
-            if !matches!(lower.as_str(), "first" | "left" | "right" | "blank") {
-                return None;
-            }
-            serialized.push(':');
-            serialized.push_str(&lower);
-        }
-        out.push(serialized);
-    }
-    Some(out.join(", "))
-}
+use pyro_dom::cssom::page_selector;
 
 rule_class!(CssPageRule, "CSSPageRule", CssGroupRule, |def| {
     def.accessor("style", rule_style::<CssPageDescriptors>, |_s, r, v| {

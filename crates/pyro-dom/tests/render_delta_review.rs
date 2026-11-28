@@ -218,8 +218,15 @@ fn text_content_set_to_itself_leaves_no_ops_and_set_differently_one() {
     let text = dom.borrow().first_child(p).unwrap().unwrap();
     let since = dom.borrow().version();
     dom.borrow_mut().set_text_content(p, "same").unwrap();
+    // "String replace all" gives `p` a new text node whatever its text (as Chrome does, and its
+    // MutationObserver records say), so the renderer is told its one child: a Children op for `p`.
+    let fresh = dom.borrow().render_tree(d, &OPTS).unwrap();
     let delta = dom.borrow().render_delta(d, since, &OPTS).expect("incremental");
-    assert!(delta.ops.is_empty(), "{:?}", delta.ops);
+    let (nodes, children) = node_ops_match_fresh(&delta.ops, &fresh);
+    assert!(nodes.is_empty(), "{nodes:?}");
+    assert_eq!(children, [Some(render_key(p))]);
+    assert_ne!(dom.borrow().first_child(p).unwrap(), Some(text));
+    let since = dom.borrow().version();
     // Changed along with its container's attribute: the text node is
     // replaced (a Children op for `p`), the container alone.
     {

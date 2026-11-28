@@ -6,7 +6,9 @@
 //! An `OfflineAudioContext` renders its graph in blocks (128 frames by default) when
 //! `startRendering()` runs. A real-time `AudioContext` has no output device:
 //! its `currentTime` advances on the document clock while it runs and its
-//! sources end on time, but no sample is computed.
+//! sources end on time; the graph is computed for the quanta that clock passed
+//! only while something observes it (a worklet node, a script processor, an
+//! analyser), and what reaches the destination is dropped.
 //!
 //! `decodeAudioData` decodes with pyro-media (Symphonia and opus-pure) on a
 //! thread of its own, made for the call, and resamples to the context's
@@ -65,6 +67,10 @@ where
         "ChannelMergerNode",
         "ChannelSplitterNode",
         "OfflineAudioCompletionEvent",
+        "AudioParamMap",
+        "AudioWorkletNode",
+        "AudioProcessingEvent",
+        "ScriptProcessorNode",
     );
 }
 
@@ -103,6 +109,34 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         })?
         .value(),
     )?;
+    // `getOutputTimestamp` of another realm's AudioContext (an iframe's method called on this
+    // realm's context): the owner module's `localOutputTimestamp`, its result handed over.
+    natives.set_atom(
+        "foreignOutputTimestamp",
+        s.function("foreignOutputTimestamp", |s, _, a| {
+            let value = a.get(0);
+            let Some(owner) = value.as_object().and_then(|o| s.object_realm(o)) else { return Ok(s.undefined()) };
+            if owner.id() == s.realm_id() || owner.is_disposed() {
+                return Ok(s.undefined());
+            }
+            let scope = owner.scope()?;
+            let page = crate::target::page_of(&scope)?;
+            let Some(module) = MODULE.existing(&scope, &page)? else { return Ok(s.undefined()) };
+            let stamp = module
+                .get_atom("localOutputTimestamp")?
+                .as_object()
+                .expect("private Web Audio module")
+                .call(None, &[value])?;
+            Ok(Persistent::new(&scope, stamp).get(s))
+        })?
+        .value(),
+    )?;
+    // HTML "fully active": false once the document was replaced or its frame removed (its contexts
+    // are closed, their constructors throw and their promises reject).
+    natives.set_atom(
+        "fullyActive",
+        s.function("fullyActive", |s, _, _| Ok(s.boolean(crate::target::page_of(s)?.is_fully_active())))?.value(),
+    )?;
     natives.set_atom("makeConvolver", s.function("makeConvolver", make_convolver)?.value())?;
     let decode = s.function("decode", |s, _this, a| {
         let page = crate::target::page_of(s)?;
@@ -127,9 +161,20 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     natives.set_atom("decode", decode.value())?;
     let activated = s.function("activated", |s, _this, _a| {
         let page = crate::target::page_of(s)?;
-        Ok(s.boolean(page.has_sticky_activation()))
+        Ok(s.boolean(crate::media::autoplay_allowed(&page)))
     })?;
     natives.set_atom("activated", activated.value())?;
+    // `media-playback-while-not-visible`: the document's policy disables it and its frame is not
+    // rendered now (a context does not run, `resume()` rejects).
+    let blocked = s.function("mediaBlocked", |s, _this, _a| {
+        let page = crate::target::page_of(s)?;
+        let blocked = crate::media::frame_hidden_by_policy(&page);
+        if blocked {
+            page.media_audio_blocked.set(true);
+        }
+        Ok(s.boolean(blocked))
+    })?;
+    natives.set_atom("mediaBlocked", blocked.value())?;
     let can_update_stats = s.function("canUpdatePlaybackStats", |s, _, _| {
         let page = crate::target::page_of(s)?;
         Ok(s.boolean((page.is_fully_active() && !page.is_hidden()) || matches!(
@@ -173,11 +218,12 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         Ok(s.undefined())
     })?;
     natives.set_atom("clearTimer", clear.value())?;
-    // audioWorklet(sampleRate) -> a new AudioWorklet (crate::audio_worklet) for one context.
+    // audioWorklet(sampleRate, quantum) -> [AudioWorklet, host getter] (crate::audio_worklet) for one context.
     let audio_worklet = s.function("audioWorklet", |s, _this, a| {
         let page = crate::target::page_of(s)?;
         let rate = a.get(0).to_number()?;
-        crate::audio_worklet::make(s, &page, rate)
+        let quantum = a.get(1).to_number()?;
+        crate::audio_worklet::make(s, &page, rate, quantum)
     })?;
     natives.set_atom("audioWorklet", audio_worklet.value())?;
     // BaseAudioContext.audioWorklet is [SecureContext].
@@ -232,6 +278,12 @@ fn make_convolver<'s>(s: &Scope<'s>, _this: Value<'s>, args: pyro_js::Args<'s>) 
 
 fn decode(bytes: &[u8], rate: u32) -> Decoded {
     let decoded = pyro_media::audio::decode(bytes)?;
+    // A result longer than an AudioBuffer can be (its length is an unsigned long) is a decode error,
+    // found before the resampler allocates it.
+    let frames = decoded.len() as u128;
+    if decoded.sample_rate != rate && frames * u128::from(rate) / u128::from(decoded.sample_rate.max(1)) > u128::from(u32::MAX) {
+        return Err("the resampled audio is longer than an AudioBuffer can be".into());
+    }
     let channels = if decoded.sample_rate == rate {
         decoded.channels
     } else {
@@ -308,6 +360,20 @@ fn float32_array<'s>(s: &Scope<'s>, samples: &[f32]) -> JsResult<Value<'s>> {
             }
         }
         Ok(Value::from_raw(ctx, obj as sys::JSValueRef))
+    }
+}
+
+/// The document's frame became rendered or not rendered while its permissions policy disables
+/// `media-playback-while-not-visible` (`crate::media::refresh_frame_rendered`): running
+/// real-time contexts of the main-world realm are interrupted, interrupted ones run again.
+/// Nothing happens in a realm that never made the module (no contexts).
+pub(crate) fn frame_rendered_changed(page: &Rc<PageDom>, rendered: bool) {
+    let Some(realm) = page.main_world_realm() else { return };
+    let Ok(s) = realm.scope() else { return };
+    let Ok(Some(module)) = MODULE.existing(&s, page) else { return };
+    let Some(notify) = module.get_atom("frameRendered").ok().and_then(|v| v.as_object()) else { return };
+    if let Err(e) = notify.call(None, &[s.boolean(rendered)]) {
+        s.report_exception(&e);
     }
 }
 

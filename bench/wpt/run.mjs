@@ -19,7 +19,7 @@
 // Every page gets a new browser context, so a page's result does not depend on the page that ran before it in the
 // same worker (window.open popups, focus, storage), which changes with sharding; --reuse-context keeps one context
 // per worker, as this runner used to.
-// Reads window.report (bench/wpt/testharnessreport.js, served by serve.mjs) once the harness completes.
+// Reads window.__pyroWptReport, the shim's object, which a page's own global `report` cannot replace (bench/wpt/testharnessreport.js, served by serve.mjs) once the harness completes.
 import { createRequire } from 'node:module';
 import { spawn, execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -140,11 +140,13 @@ if (!BASE && WPTSERVE) {
 }
 
 // The origin a page loads from, as wptrunner picks it from the file name under wptserve: `.https.` (and
-// `.serviceworker.`) pages over https, `.www.` pages from the www subdomain. h2 is not served (wptserve --no-h2).
+// `.serviceworker.`) pages over https, `.www.` pages from the www subdomain. `.h2.` names and `?wpt_flags=h2` from wptserve's HTTP/2 server (the h2 port, https); `?wpt_flags=https` over https.
 function baseFor(url) {
   if (!wptserve) return BASE;
   const name = url.replace(/[?#].*$/, '').split('/').pop();
-  const https = /\.(https|serviceworker)\./.test(name);
+  // wptrunner's rule (tools/manifest/item.py): the flags are the dot-parts of the name and the `wpt_flags` query values.
+  if (/\.h2\./.test(name) || /[?&]wpt_flags=h2(&|#|$)/.test(url)) return `https://${BROWSER_HOST}:${wptserve.ports.h2}`;
+  const https = /\.(https|serviceworker)\./.test(name) || /[?&]wpt_flags=https(&|#|$)/.test(url);
   const host = /\.www\./.test(name) ? `www.${BROWSER_HOST}` : BROWSER_HOST;
   return https ? `https://${host}:${wptserve.ports.https}` : `http://${host}:${wptserve.ports.http}`;
 }
@@ -205,7 +207,7 @@ async function startBrowser() {
   child = spawn(BIN, ['serve', '--host', '127.0.0.1', '--port', String(port), '--log-level', 'error', '--load-resources', 'stylesheet', '--load-resources', 'iframe', '--cdp-max-connections', '64'],
     // PYRO_PARENT_PID: the browser exits with this runner however it ends. It runs in a process group of its own, so a
     // runner killed with its CI job (a cancelled or superseded run) left it serving on the self-hosted machine.
-    { stdio: KIND === 'crashtest' ? ['ignore', 'ignore', 'pipe'] : 'ignore', detached: true, env: { ...process.env, LIGHTPANDA_DISABLE_TELEMETRY: 'true', PYRO_PARENT_PID: String(process.pid), ...(RENDERS ? reftestEnv(WPT) : testharnessEnv(WPT)), ...(KIND === 'crashtest' ? { RUST_BACKTRACE: process.env.RUST_BACKTRACE ?? '0' } : {}) } });
+    { stdio: KIND === 'crashtest' ? ['ignore', 'ignore', 'pipe'] : 'ignore', detached: true, env: { ...process.env, LIGHTPANDA_DISABLE_TELEMETRY: 'true', PYRO_PARENT_PID: String(process.pid), PYRO_FAKE_MEDIA_DEVICES: '1' /* Chrome's WPT runs use --use-fake-device-for-media-stream */, ...(RENDERS ? reftestEnv(WPT) : testharnessEnv(WPT)), ...(KIND === 'crashtest' ? { RUST_BACKTRACE: process.env.RUST_BACKTRACE ?? '0' } : {}) } });
   if (child.stderr) watchStderr(child.stderr);
   for (let i = 0; i < 1000; i++) {
     try { const r = await fetch(`http://127.0.0.1:${port}/json/version`); if (r.ok) { endpoint = `http://127.0.0.1:${port}`; return; } } catch {}
@@ -223,13 +225,13 @@ function waitForReport(ms) {
     const finish = (complete) => {
       if (settled) return;
       settled = true;
-      const current = typeof report === 'object' && report ? report : null;
+      const current = typeof __pyroWptReport === 'object' && __pyroWptReport ? __pyroWptReport : null;
       resolve({ complete, log: current?.log ?? null, harnessStatus: current?.harnessStatus });
     };
     setTimeout(() => finish(false), ms);
     const hook = () => {
-      if (typeof report !== 'object' || !report) return setTimeout(hook, 5);
-      if (report.complete) return finish(true);
+      if (typeof __pyroWptReport !== 'object' || !__pyroWptReport) return setTimeout(hook, 5);
+      if (__pyroWptReport.complete) return finish(true);
       add_completion_callback(() => finish(true));
     };
     hook();
@@ -285,7 +287,7 @@ async function runOne(slot, t, gen) {
     if (r?.complete) return { status: 'complete', log: r.log, harnessStatus: r.harnessStatus, ms: Date.now() - t0 };
     if (!r) replaced();
     if (Date.now() - t0 >= t.limit) {
-      const partial = r?.log ?? (await page.evaluate(() => (typeof report === 'object' && report ? report.log : null)).catch(() => null));
+      const partial = r?.log ?? (await page.evaluate(() => (typeof __pyroWptReport === 'object' && __pyroWptReport ? __pyroWptReport.log : null)).catch(() => null));
       if (partial == null) replaced();
       return { status: 'timeout', log: partial, ms: Date.now() - t0 };
     }
@@ -319,7 +321,7 @@ async function resetSlot(slot) {
 // server's origin, whose port differs from run to run: named by wptserve's origin instead, so the name is the same
 // in every run (the baseline keys passes by name).
 // Under wptserve every port is free-picked: each is named by wptserve's default for it.
-const PORT_NAMES = wptserve ? [[wptserve.ports.http, 8000], [wptserve.ports.http2, 8001], [wptserve.ports.https, 8443], [wptserve.ports.https2, 8444], [wptserve.ports.ws, 8888], [wptserve.ports.wss, 8889]] : [];
+const PORT_NAMES = wptserve ? [[wptserve.ports.http, 8000], [wptserve.ports.http2, 8001], [wptserve.ports.https, 8443], [wptserve.ports.https2, 8444], [wptserve.ports.ws, 8888], [wptserve.ports.wss, 8889], [wptserve.ports.h2, 9000]] : [];
 const stableName = (s) => PORT_NAMES.reduce((x, [from, to]) => x.replaceAll(`:${from}`, `:${to}`), s.replaceAll(BASE, 'http://web-platform.test:8000'));
 const LINE = /^(.*?)\|(Pass|Fail|Timeout|Not Run|Optional Feature Unsupported)(?:\|(.*))?$/s;
 function parse(log) {

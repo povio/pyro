@@ -35,6 +35,7 @@
 
 use crate::frames::FrameKey;
 use crate::{Browser, HistoryHandling, LoaderId, NavigateOpts, PageEvent, PageId};
+use pyro_webapi::coep_report::{obtain_embedder, obtain_embedder_policy};
 use pyro_dom::parse::{DocumentParser, DomRef, ParseStep};
 use pyro_dom::script::ScriptKind;
 use pyro_dom::NodeId;
@@ -86,6 +87,10 @@ pub enum ResourceKind {
     Download,
     /// An `<object>` element's data (destination "object").
     Object,
+    /// An `<embed>` element's `src` (destination "embed").
+    Embed,
+    /// An SVG `<image>`'s `href`, fetched for its `load`/`error` events (no destination of its own).
+    SvgImage,
     /// A `<link rel=preload as=fetch>` (destination "", CORS mode).
     Fetch,
     /// A `<link rel=prefetch>`: destination "" (`Sec-Fetch-Dest: empty`), initiator "prefetch"
@@ -97,6 +102,64 @@ pub enum ResourceKind {
     /// `crossorigin` ("same-origin" without one), CSP `connect-src`. Fetched after the document's
     /// load event, never speculated.
     Dictionary,
+    /// A `Speculation-Rules` header's rule set: destination "speculationrules"
+    /// (`Sec-Fetch-Dest: speculationrules`), CORS mode, same-origin credentials, never speculated.
+    SpeculationRules,
+}
+
+/// What a request is for beyond its kind: a request that says so in `Sec-Purpose`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Purpose {
+    /// A speculation-rules prefetch of a document (nav-speculation "prefetch"): a
+    /// [`ResourceKind::Document`] navigation request (`Sec-Fetch-Dest: document`, mode `navigate`)
+    /// that says `Sec-Purpose: prefetch` and has no `Sec-Fetch-User`. `cross_site`: its initiator
+    /// is another site, so it carries no cookies and no non-default client hints. Its result goes
+    /// to the initiator document's prefetch cache (`crate::prefetch`), never to a frame. `tags`:
+    /// the `Sec-Speculation-Tags` value (`crate::speculation_tags::tag_header`) the net client
+    /// sends on each hop to the initiator's site.
+    /// `cookies`: where the `Set-Cookie` headers of a cross-site prefetch's responses go instead
+    /// of the jar (`pyro_net::Request::deferred_cookies`): the cache entry applies them when a
+    /// navigation uses the response and drops them with the entry.
+    /// `head`: where the loader leaves the final response's head, which a navigation that uses
+    /// the prefetch reports to the Network domain (`Browser::deliver_prefetched`).
+    Prefetch {
+        cross_site: bool,
+        /// The initiator document's site (`pyro_net::cookies::partition_key`): no redirect hop of
+        /// the prefetch may leave it (`pyro_net::PrefetchRedirectStop::site_bound`).
+        initiator_site: Option<String>,
+        tags: Option<String>,
+        cookies: std::sync::Arc<pyro_net::DeferredCookies>,
+        head: std::sync::Arc<PrefetchedHead>,
+    },
+}
+
+/// The response head of a speculation-rules prefetch, left by the loader for the prefetch cache.
+/// Equal and hashed by identity: it is a shared slot, not a value.
+#[derive(Debug, Default)]
+pub struct PrefetchedHead(std::sync::Mutex<Option<pyro_net::ResponseHead>>);
+
+impl PrefetchedHead {
+    fn set(&self, head: pyro_net::ResponseHead) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(head);
+    }
+
+    pub(crate) fn take(&self) -> Option<pyro_net::ResponseHead> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).take()
+    }
+}
+
+impl PartialEq for PrefetchedHead {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other)
+    }
+}
+
+impl Eq for PrefetchedHead {}
+
+impl std::hash::Hash for PrefetchedHead {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::ptr::hash(self, state);
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -131,6 +194,9 @@ pub struct FetchRequest {
     /// Only part of the body is needed (a media element's headers):
     /// `Resource::partial` says when the body was cut.
     pub part: Option<pyro_webapi::BodyPart>,
+    /// The `Accept-Signature` value of a request with Ed25519 integrity metadata (Signature-based
+    /// SRI, `pyro_webapi::signature_sri::accept_signature_for`), which the network loader sends.
+    pub accept_signature: Option<String>,
     /// The CSP guard of a request its initiator checked (`pyro_webapi::csp`): the client
     /// checks each redirect against it. `None`: unchecked, or no policy.
     pub csp: Option<std::sync::Arc<pyro_net::csp::RequestCsp>>,
@@ -139,6 +205,8 @@ pub struct FetchRequest {
     /// `Sec-Required-CSP` (on every hop of its redirects). The commit checks the response against
     /// the same snapshot.
     pub required_csp: Option<String>,
+    /// `Some`: the request says what it is for in `Sec-Purpose` (see [`Purpose`]).
+    pub purpose: Option<Purpose>,
 }
 
 impl FetchRequest {
@@ -201,12 +269,33 @@ pub struct Resource {
     /// A document's `Last-Modified` response header as Unix milliseconds, if valid
     /// (`document.lastModified`).
     pub last_modified: Option<f64>,
-    /// A document's `Reporting-Endpoints` response header, if any (the
-    /// endpoints its CSP `report-to` names; `PageDom::set_reporting_endpoints`).
+    /// A document's `Reporting-Endpoints` response header, if any, with its `Report-To` header
+    /// after a newline (`pyro_webapi::csp_report::pack_reporting_headers`; the endpoints its
+    /// reports go to, `PageDom::set_reporting_endpoints`).
     pub reporting_endpoints: Option<String>,
+    /// A document's `Connection-Allowlist` and `Connection-Allowlist-Report-Only` response
+    /// headers, parsed against its response URL (`response-origin`); `None` without a valid one.
+    pub connection_allowlist: Option<std::sync::Arc<pyro_net::connection_allowlist::ConnectionPolicy>>,
+    /// A document's `Link` header relations that fetch (`preload`, `modulepreload`, `prefetch`),
+    /// started when it commits.
+    pub link_fetches: Vec<crate::preload::LinkFetch>,
+    /// The response's `Unencoded-Digest` / `Signature` headers and what its signatures cover, kept
+    /// for the element's integrity check (`pyro_webapi::signature_sri`); `None` for a response with
+    /// neither header.
+    pub integrity_headers: Option<Box<pyro_webapi::signature_sri::Facts>>,
+    /// A document's `Permissions-Policy` response header, with its `Permissions-Policy-Report-Only`
+    /// header after a newline (`pyro_webapi::permissions_policy::pack_headers`; its declared
+    /// policy, `PageDom::set_permissions_policy_headers`). The legacy `Feature-Policy` is not read.
+    pub permissions_policy: Option<String>,
     /// A document's `Link: <url>; rel="compression-dictionary"` headers, resolved: fetched after
     /// its `load` event.
     pub dictionary_links: Vec<String>,
+    /// A top-level document's `Speculation-Rules` header values (one per header line), raw;
+    /// `speculation_rules::parse_header_urls` reads them.
+    pub speculation_rules: Vec<String>,
+    /// A document's `No-Vary-Search` response header (`None`: absent), which the prefetch cache
+    /// matches a navigation's URL against (`crate::prefetch`).
+    pub no_vary_search: Option<pyro_net::nvs::NoVarySearch>,
     /// The response's `Referrer-Policy` header (a document's default policy).
     pub referrer_policy: Option<pyro_net::ReferrerPolicy>,
     /// A document's response asked for an origin-keyed agent cluster
@@ -214,6 +303,29 @@ pub struct Resource {
     /// context, and only by the first document of its origin in the browsing
     /// context group ([`crate::frames::FrameHost::record_origin_keying`]).
     pub origin_agent_cluster: bool,
+    /// A document's response carries `Document-Policy: force-load-at-top`: no scroll to the fragment
+    /// or text directive on load.
+    pub force_load_at_top: bool,
+    /// A document's `Document-Isolation-Policy` (`pyro_webapi::coep_report::obtain_isolation_policy`): 0 none, 1 `isolate-and-require-corp`,
+    /// 2 `isolate-and-credentialless`. Two same-origin documents of different policies are in different
+    /// agent clusters: each sees the other as cross-origin (`frames::isolation_of`).
+    pub isolation_policy: u8,
+    /// The navigation that fetched this really carried the ephemeral cookie jar of a credentialless
+    /// frame tree (its request's `RequestDefaults::ephemeral_cookies` was set), as opposed to a frame
+    /// whose container was marked `credentialless` only after the request went out. Only then does
+    /// `embedder_policy_blocks` skip the embedder-policy check.
+    pub ephemeral_jar: bool,
+    /// A document's `Cross-Origin-Embedder-Policy` (HTML § 7.1.4 "obtain an embedder policy"):
+    /// `unsafe-none` for other kinds and for a local-scheme document, which inherits its creator's
+    /// ([`pyro_webapi::csp::InheritedCsp::embedder_policy`]).
+    pub embedder_policy: pyro_net::EmbedderPolicy,
+    /// The reporting parts of the embedder policies (`report-to`, the report-only policy): kept with the
+    /// document next to `embedder_policy`; default for other kinds and a local-scheme document.
+    pub embedder_reporting: pyro_net::EmbedderReporting,
+    /// A document navigation's Cross-Origin-Opener-Policy per response of its redirect chain, in
+    /// order, each with the origin of the response's URL; the last is the committed document's.
+    /// Empty: the loader does not say (nothing is enforced).
+    pub coop: Vec<CoopResponse>,
     /// A navigation's `Referer` as its last hop sent it (`document.referrer`
     /// of the document it commits; empty: none was sent). `None`: the
     /// loader does not say, and it is computed from the navigation.
@@ -422,14 +534,24 @@ impl ResourceLoader for NetLoader {
             ResourceKind::Audio => pyro_net::Destination::Audio,
             ResourceKind::Video => pyro_net::Destination::Video,
             ResourceKind::Track => pyro_net::Destination::Track,
-            ResourceKind::Download | ResourceKind::Object => pyro_net::Destination::Other,
+            ResourceKind::Object => pyro_net::Destination::Object,
+            ResourceKind::Embed => pyro_net::Destination::Embed,
+            ResourceKind::Download | ResourceKind::SvgImage => pyro_net::Destination::Other,
             ResourceKind::Fetch => pyro_net::Destination::Fetch,
             // Destination "": `Other` sends `Sec-Fetch-Dest: empty` in no-cors mode.
             ResourceKind::Prefetch => pyro_net::Destination::Other,
             ResourceKind::Dictionary => pyro_net::Destination::CompressionDictionary,
+            ResourceKind::SpeculationRules => pyro_net::Destination::SpeculationRules,
         };
         // Resource Timing: the document that gets this fetch's entry.
         let document = requesting_document(browser, &request);
+        // A document shown by an `<object>` or `<embed>` is requested with that destination.
+        let destination = match (destination, request.kind) {
+            (pyro_net::Destination::Iframe, ResourceKind::Iframe) => {
+                document.as_deref().and_then(|d| embedding_destination(browser, &request, d)).unwrap_or(destination)
+            }
+            _ => destination,
+        };
         let timed = request.initiator.zip(document.clone());
         let render_blocking = request.kind == ResourceKind::Stylesheet;
         let priority = request.loader_id.as_ref().filter(|_| request.parser_priority || request.kind == ResourceKind::Image)
@@ -437,8 +559,54 @@ impl ResourceLoader for NetLoader {
         let mut req = pyro_net::Request::get(url, destination);
         req.parser_priority = request.parser_priority;
         req.csp = request.csp.clone();
+        // Signature-based SRI: the request asks for a signature by the keys of its integrity metadata.
+        if let Some(value) = request.accept_signature.as_deref().and_then(|v| v.parse().ok()) {
+            req.headers.insert(http::header::HeaderName::from_static("accept-signature"), value);
+        }
         if let Some(page) = browser.page(request.page) {
             req.defaults = page.request_defaults.clone();
+            // Mixed Content / Upgrade Insecure Requests: the requesting document's state (for a
+            // nested navigation the embedding document's); a top-level navigation has none.
+            if request.kind != ResourceKind::Document {
+                if let Some(d) = &document {
+                    req.defaults.insecure = d.insecure_policy();
+                    // Its cross-origin embedder policy: a no-cors subresource's response check, and
+                    // for a nested navigation the embedding document's (HTML § 7.1.4).
+                    if request.kind == ResourceKind::Iframe {
+                        d.apply_embedder_navigation_defaults(&mut req.defaults);
+                    } else {
+                        d.apply_embedder_defaults(&mut req.defaults);
+                    }
+                }
+                // A credentialless document's requests (and its frames' navigations) use the
+                // cookie jar of its anonymous partition, never the normal one. Taken from the frame
+                // (its container and ancestors) when the requesting document cannot be resolved: such
+                // a request must not fall back to the normal jar.
+                req.defaults.ephemeral_cookies = anonymous_cookies(browser, &request, document.as_ref());
+                // A credentialless frame's navigation response needs no `Cross-Origin-Resource-Policy`
+                // of its own under the embedder's `require-corp` (`embedder_policy_blocks`, which
+                // checks `Resource::ephemeral_jar`: the navigation really carried the ephemeral jar).
+                if request.kind == ResourceKind::Iframe && req.defaults.ephemeral_cookies.is_some() {
+                    req.defaults.embedder_policy = pyro_net::EmbedderPolicy::UnsafeNone;
+                }
+                // Storage Access API: the embedding document's third-party cookie decision (none
+                // unless its context has a blocking rule), and for a frame's navigation that keeps
+                // the frame's storage access its grant. Without a resolvable document the page's top-level
+                // document decides, with no grant (never "no decision").
+                req.defaults.cookie_blocking = match &document {
+                    Some(d) => d.cookie_blocking().map(|b| {
+                        if request.kind != ResourceKind::Iframe {
+                            return b;
+                        }
+                        std::sync::Arc::new(if keeps_storage_access(browser, &request, &req.url) { b.granted_for(&req.url) } else { b.without_grant() })
+                    }),
+                    None => browser
+                        .page(request.page)
+                        .and_then(|p| p.frames.page_dom(crate::frames::FrameKey { page: request.page, child: None }))
+                        .and_then(|root| root.cookie_blocking())
+                        .map(|b| std::sync::Arc::new(b.without_grant())),
+                };
+            }
             if request.kind == ResourceKind::Document {
                 req.top_level_site = pyro_net::cookies::partition_key(&req.url);
             } else {
@@ -448,7 +616,7 @@ impl ResourceLoader for NetLoader {
                 req.cross_site_ancestor = document.is_none_or(|d| d.cookie_site_context() == pyro_net::cookies::SiteContext::CrossSite);
             }
         }
-        if matches!(request.kind, ResourceKind::ModuleScript | ResourceKind::Dictionary) || request.crossorigin.is_some() {
+        if matches!(request.kind, ResourceKind::ModuleScript | ResourceKind::Dictionary | ResourceKind::SpeculationRules) || request.crossorigin.is_some() {
             req.mode = pyro_net::RequestMode::Cors;
         } else if request.kind == ResourceKind::Track {
             req.mode = pyro_net::RequestMode::SameOrigin;
@@ -484,7 +652,36 @@ impl ResourceLoader for NetLoader {
         let referrer = request_referrer(browser, &request);
         req.referrer = referrer.referrer;
         req.referrer_policy = referrer.policy;
+        // A speculation-rules prefetch says so on every hop (the client keeps a request's headers
+        // across redirects); it is not a user's navigation, and cross-site it is credential-less.
+        if let Some(Purpose::Prefetch { cross_site, tags, cookies, .. }) = &request.purpose {
+            req.headers.insert(pyro_net::http::HeaderName::from_static("sec-purpose"), pyro_net::http::HeaderValue::from_static("prefetch"));
+            req.cross_site_prefetch = *cross_site;
+            // A speculation prefetch is kept in memory until a navigation uses it: a larger
+            // response fails it (the navigation fetches it itself).
+            req.max_body = Some(crate::prefetch::MAX_BODY_BYTES.min(self.client.config().max_body));
+            req.deferred_cookies = cross_site.then(|| cookies.clone());
+            if let Some(value) = tags.as_deref().and_then(|t| pyro_net::http::HeaderValue::from_str(t).ok()) {
+                req.headers.insert(pyro_net::http::HeaderName::from_static("sec-speculation-tags"), value);
+            }
+        }
+        let prefetch_head = match &request.purpose {
+            Some(Purpose::Prefetch { head, .. }) => Some(head.clone()),
+            None => None,
+        };
         let part = request.part;
+        // HTML "sandboxed downloads browsing context flag": a navigation of a frame sandboxed
+        // without `allow-downloads` that turns out to be a download (`Content-Disposition:
+        // attachment`) is dropped at its response head, the transfer cancelled: the server never
+        // sees the body through (WPT the-iframe-element/iframe_sandbox_*_download_block_downloads).
+        let ephemeral_jar = req.defaults.ephemeral_cookies.is_some();
+        let downloads_blocked = matches!(request.kind, ResourceKind::Document | ResourceKind::Iframe)
+            && request
+                .frame_id
+                .as_deref()
+                .and_then(|id| browser.page(request.page)?.frames.key_of(id))
+                .and_then(|key| browser.doc(key))
+                .is_some_and(|d| d.main_frame.sandbox.downloads_blocked);
         if let Some(start) = part.map(|p| p.start).filter(|&s| s > 0) {
             if let Ok(value) = pyro_net::http::HeaderValue::from_str(&format!("bytes={start}-")) {
                 req.headers.insert(pyro_net::http::header::RANGE, value);
@@ -506,6 +703,11 @@ impl ResourceLoader for NetLoader {
                 req.headers.insert(pyro_net::http::HeaderName::from_static("sec-required-csp"), value);
             }
         }
+        if request.kind == ResourceKind::Iframe {
+            // The embedder whose policy the navigation's response is checked for (a nested
+            // navigation has no `origin`).
+            req.defaults.embedder_origin = parent_origin(browser, request.page, request.frame_id.as_deref());
+        }
         // Resource Timing: an iframe navigation's entry goes to the parent,
         // so its TAO check runs against the parent's origin, not `origin`
         // (a POST's: the frame's own document).
@@ -519,7 +721,36 @@ impl ResourceLoader for NetLoader {
         let document = matches!(request.kind, ResourceKind::Document | ResourceKind::Iframe);
         // A service worker's `fetch` event first, in a context with
         // registrations; one emptiness test otherwise.
-        let service_worker = service_worker_route(browser, request.page, &req, document);
+        let mut service_worker = service_worker_route(browser, request.page, &req, document);
+        if matches!(request.purpose, Some(Purpose::Prefetch { .. })) {
+            // A speculation-rules prefetch goes through the worker's `fetch` event as a navigation
+            // does, with the document that asked as its client; its redirects are not followed (the
+            // worker sees `redirect: "manual"`) and none may enter another worker's scope.
+            if let Some(route) = service_worker.take() {
+                let initiator = browser.doc(crate::frames::FrameKey::from(request.page)).and_then(|d| d.main_frame.page_dom.clone());
+                service_worker = Some(match initiator {
+                    Some(initiator) => route.for_prefetch(&initiator),
+                    None => route,
+                });
+                req.redirect = pyro_net::RedirectMode::Manual;
+            } else {
+                // The scopes a hop may not enter, and (always) the site every hop must stay in:
+                // the client fails the prefetch before sending a hop that leaves it.
+                let mut stop = browser
+                    .page(request.page)
+                    .and_then(|page| {
+                        let settings = page.frames.settings.borrow();
+                        (settings.services.may_route_loads() && !page.bypass_service_worker)
+                            .then(|| pyro_webapi::prefetch_redirect_stop(&settings.services))
+                    })
+                    .unwrap_or_default();
+                if let Some(Purpose::Prefetch { cross_site, initiator_site, .. }) = &request.purpose {
+                    stop.site_bound = true;
+                    stop.initiator_site = initiator_site.clone().filter(|_| !cross_site);
+                }
+                req.prefetch_redirect_stop = Some(std::sync::Arc::new(stop));
+            }
+        }
         // A preloaded static file: answered here, on the browser thread, with
         // no I/O-thread round trip. Observers still get the Network events.
         if let Some(hit) = self.client.static_direct(&req).filter(|_| service_worker.is_none()) {
@@ -566,10 +797,18 @@ impl ResourceLoader for NetLoader {
                 refresh: None,
                 content_language: None,
                 last_modified: None,
-                reporting_endpoints: None,
+                reporting_endpoints: None, permissions_policy: None,
+                connection_allowlist: None,
+                link_fetches: Vec::new(),
+                integrity_headers: None,
                 dictionary_links: Vec::new(),
+                speculation_rules: Vec::new(),
+                no_vary_search: None,
                 referrer_policy: None,
-                origin_agent_cluster: false,
+                origin_agent_cluster: false, force_load_at_top: false, isolation_policy: 0, ephemeral_jar: false,
+                embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
+                embedder_reporting: Default::default(),
+                coop: Vec::new(),
                 sent_referrer: document.then(|| {
                     pyro_net::referrer::ReferrerChain::new(req.referrer.clone(), req.referrer_policy)
                         .header(&req.url)
@@ -598,6 +837,8 @@ impl ResourceLoader for NetLoader {
         }
         let mut head: Option<pyro_net::ResponseHead> = None;
         let mut body: Vec<u8> = Vec::new();
+        // A navigation's Cross-Origin-Opener-Policy per redirect response (the final one joins at the end).
+        let mut coop_responses: Vec<CoopResponse> = Vec::new();
         // A navigation's referrer, followed across its redirects as the
         // client sends it: the last hop's is `document.referrer`.
         let mut chain =
@@ -620,11 +861,56 @@ impl ResourceLoader for NetLoader {
             // failure) is dropped.
             _ if cut => {}
             pyro_net::ResponseEvent::Redirect { from, headers, .. } => {
+                if document {
+                    coop_responses.push(coop_response(&headers, &from, true));
+                }
                 if let Some(chain) = chain.as_mut() {
                     chain.redirect(&from, &headers);
                 }
             }
             pyro_net::ResponseEvent::Response(h) => {
+                let attachment = (downloads_blocked && h.status.is_success())
+                    .then(|| h.headers.get(http::header::CONTENT_DISPOSITION).and_then(|v| v.to_str().ok()).filter(|v| is_attachment(v)).map(str::to_owned))
+                    .flatten();
+                if let Some(disposition) = attachment {
+                    cut = true;
+                    let resource = Resource {
+                        embedder_reporting: Default::default(),
+                        isolation_policy: 0, ephemeral_jar: false,
+                        url: h.url.to_string(),
+                        status: h.status.as_u16(),
+                        mime: h.mime,
+                        charset: h.charset,
+                        body: Vec::new().into(),
+                        immutable_local: false,
+                        content_disposition: Some(disposition),
+                        header_csp: None,
+                        allow_csp_from: None,
+                        refresh: None,
+                        content_language: None,
+                        last_modified: None,
+                        reporting_endpoints: None, permissions_policy: None,
+                        connection_allowlist: None,
+                        link_fetches: Vec::new(),
+                        integrity_headers: None,
+                        dictionary_links: Vec::new(),
+                        speculation_rules: Vec::new(),
+                        no_vary_search: None,
+                        referrer_policy: None,
+                        origin_agent_cluster: false, force_load_at_top: false,
+                        embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
+                        coop: Vec::new(),
+                        sent_referrer: None,
+                        timing: None,
+                        partial: None,
+                        nosniff: false,
+                        opaque: h.kind == pyro_net::ResponseKind::Opaque,
+                    };
+                    let priority = priority.clone();
+                    let _ = handle.post(move |b: &mut Browser| b.fetch_ready(priority, id, Ok(resource)));
+                    net.cancel(native_id);
+                    return;
+                }
                 if part.is_some() && !h.headers.contains_key(http::header::CONTENT_ENCODING) {
                     total =
                         h.headers.get(http::header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()?.trim().parse().ok());
@@ -652,10 +938,18 @@ impl ResourceLoader for NetLoader {
                     refresh: None,
                     content_language: None,
                     last_modified: None,
-                    reporting_endpoints: None,
+                    reporting_endpoints: None, permissions_policy: None,
+                    connection_allowlist: None,
+                    link_fetches: Vec::new(),
+                    integrity_headers: None,
                     dictionary_links: Vec::new(),
+                    speculation_rules: Vec::new(),
+                    no_vary_search: None,
                     referrer_policy: None,
-                    origin_agent_cluster: false,
+                    origin_agent_cluster: false, force_load_at_top: false, isolation_policy: 0, ephemeral_jar: false,
+                    embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
+                    embedder_reporting: Default::default(),
+                    coop: Vec::new(),
                     sent_referrer: None,
                     timing: None,
                     partial: (!whole).then_some(pyro_webapi::Partial { total }),
@@ -685,7 +979,11 @@ impl ResourceLoader for NetLoader {
                         render_blocking: false,
                     }))
                 };
-                let result = match head.take() {
+                let finished = head.take();
+                if let (Some(slot), Some(h)) = (&prefetch_head, &finished) {
+                    slot.set(h.clone());
+                }
+                let result = match finished {
                     Some(h) => Ok(Resource {
                         allow_csp_from: document.then(|| allow_csp_from_header(&h.headers)).flatten(),
                         timing: timing(&h),
@@ -723,11 +1021,49 @@ impl ResourceLoader for NetLoader {
                             .flatten()
                             .and_then(pyro_net::parse_http_date)
                             .map(|secs| secs * 1000.0),
+                        // `Reporting-Endpoints` and the legacy `Report-To`, packed in one value
+                        // (`pyro_webapi::csp_report::pack_reporting_headers`).
                         reporting_endpoints: document
                             .then(|| {
-                                let values = h.headers.get_all("reporting-endpoints");
-                                let values: Vec<&str> = values.iter().filter_map(|v| v.to_str().ok()).collect();
-                                (!values.is_empty()).then(|| values.join(","))
+                                let joined = |name: &str| {
+                                    let values = h.headers.get_all(name);
+                                    let values: Vec<&str> = values.iter().filter_map(|v| v.to_str().ok()).collect();
+                                    (!values.is_empty()).then(|| values.join(","))
+                                };
+                                pyro_webapi::csp_report::pack_reporting_headers(joined("reporting-endpoints"), joined("report-to"))
+                            })
+                            .flatten(),
+                        connection_allowlist: document
+                            .then(|| {
+                                let joined = |name: &str| {
+                                    let values: Vec<&str> =
+                                        h.headers.get_all(name).iter().filter_map(|v| v.to_str().ok()).collect();
+                                    (!values.is_empty()).then(|| values.join(", "))
+                                };
+                                let (enforce, report_only) = (joined("connection-allowlist"), joined("connection-allowlist-report-only"));
+                                if enforce.is_none() && report_only.is_none() {
+                                    return None;
+                                }
+                                pyro_net::connection_allowlist::ConnectionPolicy::from_headers(enforce.as_deref(), report_only.as_deref(), &h.url)
+                            })
+                            .flatten(),
+                        integrity_headers: pyro_webapi::signature_sri::capture(&h.url, h.status.as_u16(), &h.headers),
+                        link_fetches: if document {
+                            crate::preload::link_header_fetches(
+                                h.headers.get_all(http::header::LINK).iter().filter_map(|v| v.to_str().ok()),
+                                &h.url,
+                            )
+                        } else {
+                            Vec::new()
+                        },
+                        permissions_policy: document
+                            .then(|| {
+                                let joined = |name: &str| {
+                                    let values = h.headers.get_all(name);
+                                    let values: Vec<&str> = values.iter().filter_map(|v| v.to_str().ok()).collect();
+                                    (!values.is_empty()).then(|| values.join(","))
+                                };
+                                pyro_webapi::permissions_policy::pack_headers(joined("permissions-policy"), joined("permissions-policy-report-only"))
                             })
                             .flatten(),
                         dictionary_links: if document {
@@ -738,10 +1074,30 @@ impl ResourceLoader for NetLoader {
                         } else {
                             Vec::new()
                         },
+                        speculation_rules: if document {
+                            h.headers.get_all("speculation-rules").iter().filter_map(|v| v.to_str().ok().map(str::to_owned)).collect()
+                        } else {
+                            Vec::new()
+                        },
+                        no_vary_search: document
+                            .then(|| pyro_net::nvs::NoVarySearch::from_headers(&h.headers))
+                            .filter(|nvs| !nvs.is_default()),
                         referrer_policy: pyro_net::ReferrerPolicy::from_header(
                             h.headers.get_all("referrer-policy").iter().filter_map(|v| v.to_str().ok()),
                         ),
                         origin_agent_cluster: document && origin_agent_cluster_requested(&h.headers),
+                        force_load_at_top: document && force_load_at_top_policy(&h.headers),
+                        isolation_policy: if document { pyro_webapi::coep_report::obtain_isolation_policy(&h.headers, &h.url) } else { 0 },
+                        ephemeral_jar,
+                        embedder_policy: if document { obtain_embedder(&h.headers, &h.url).0 } else { pyro_net::EmbedderPolicy::UnsafeNone },
+                        embedder_reporting: if document { obtain_embedder(&h.headers, &h.url).1 } else { Default::default() },
+                        coop: if document {
+                            let mut responses = std::mem::take(&mut coop_responses);
+                            responses.push(coop_response(&h.headers, &h.url, false));
+                            responses
+                        } else {
+                            Vec::new()
+                        },
                         sent_referrer: chain.as_ref().map(|c| c.header(&h.url).unwrap_or_default()),
                         body: std::mem::take(&mut body).into(),
                         immutable_local: false,
@@ -764,13 +1120,314 @@ impl ResourceLoader for NetLoader {
             }
             None => sink,
         };
+        // A navigation a service worker may see the redirects of (HTML "navigate", Fetch "HTTP
+        // fetch": a worker handles the request with the manual redirect mode and the browser
+        // follows the redirect it answers with, asking the registration of each next URL): the
+        // loader follows the hops itself. Without a worker for the first URL, the client follows
+        // them until one enters a scope.
+        let hop_eligible = document && request.purpose.is_none() && part.is_none();
+        let stop = if hop_eligible && service_worker.is_none() { navigation_redirect_stop(browser, request.page) } else { None };
+        let mut hops: Option<std::sync::Arc<NavigationHops>> = None;
+        let sink = if hop_eligible && (service_worker.is_some() || stop.is_some()) {
+            let state = std::sync::Arc::new(NavigationHops {
+                inner: std::sync::Mutex::new(HopInner {
+                    client: self.client.clone(),
+                    handle: browser.loop_handle(),
+                    page: request.page,
+                    sink,
+                    req: req.clone(),
+                    chain: pyro_net::referrer::ReferrerChain::new(req.referrer.clone(), req.referrer_policy),
+                    redirects: 0,
+                    cross_origin: false,
+                    redirect_end: None,
+                    last_client: service_worker.as_ref().map(|route| (req.url.origin(), route.resulting_client().to_owned())),
+                }),
+                current: std::sync::atomic::AtomicU64::new(native_id.0),
+                cancelled: std::sync::atomic::AtomicBool::new(false),
+            });
+            hops = Some(state.clone());
+            hop_sink(state)
+        } else {
+            sink
+        };
+        req.prefetch_redirect_stop = stop.or(req.prefetch_redirect_stop.take());
         match service_worker {
-            Some(route) => route.dispatch(&self.client, native_id, req, sink),
+            Some(route) => {
+                if hops.is_some() {
+                    req.redirect = pyro_net::RedirectMode::Manual;
+                }
+                route.dispatch(&self.client, native_id, req, sink)
+            }
             None => self.client.fetch_with_id(native_id, req, sink),
         }
         let client = self.client.clone();
-        Some(ResourceCancellation::new(move || client.cancel(native_id)))
+        match hops {
+            Some(hops) => Some(ResourceCancellation::new(move || {
+                hops.cancelled.store(true, std::sync::atomic::Ordering::SeqCst);
+                client.cancel(pyro_net::RequestId(hops.current.load(std::sync::atomic::Ordering::SeqCst)));
+            })),
+            None => Some(ResourceCancellation::new(move || client.cancel(native_id))),
+        }
     }
+}
+
+/// The hops of one navigation that service workers may handle (see `fetch_cancellable`): the
+/// state they share, locked briefly (never across a call that may deliver an event).
+struct NavigationHops {
+    inner: std::sync::Mutex<HopInner>,
+    /// The request in flight (the cancellation's target).
+    current: std::sync::atomic::AtomicU64,
+    cancelled: std::sync::atomic::AtomicBool,
+}
+
+struct HopInner {
+    client: pyro_net::NetClient,
+    handle: pyro_runtime::LoopHandle<Browser>,
+    page: PageId,
+    /// The loader's own sink: it hears every redirect and the final response.
+    sink: pyro_net::ResponseSink,
+    /// The request as the last hop sent it.
+    req: pyro_net::Request,
+    /// The referrer the next hop sends (Referrer Policy: each hop's is the previous one's).
+    chain: pyro_net::referrer::ReferrerChain,
+    redirects: u16,
+    /// Some hop went to another origin (Navigation Timing hides redirects then).
+    cross_origin: bool,
+    redirect_end: Option<std::time::Instant>,
+    /// The origin of the last hop a worker handled and the `resultingClientId` it was given: a
+    /// next hop of that origin gets the same one.
+    last_client: Option<(url::Origin, String)>,
+}
+
+/// Fetch's limit of consecutive redirects.
+const MAX_NAVIGATION_HOPS: u16 = 20;
+
+/// The scopes a redirect of a navigation no worker handled yet must hand back to the loader at
+/// (`None`: the page bypasses service workers, or no registration has an active worker).
+fn navigation_redirect_stop(browser: &Browser, page: PageId) -> Option<std::sync::Arc<pyro_net::PrefetchRedirectStop>> {
+    let page = browser.page(page)?;
+    if page.bypass_service_worker {
+        return None;
+    }
+    let settings = page.frames.settings.borrow();
+    if !settings.services.may_route_loads() {
+        return None;
+    }
+    let stop = pyro_webapi::navigation_redirect_stop(&settings.services);
+    (!stop.scopes.is_empty()).then(|| std::sync::Arc::new(stop))
+}
+
+/// The sink of one hop: an opaque-redirect response (a manual redirect from the network, or a
+/// worker's answer) starts the next hop on the browser thread; everything else is the loader's.
+fn hop_sink(hops: std::sync::Arc<NavigationHops>) -> pyro_net::ResponseSink {
+    let mut redirect: Option<pyro_net::ResponseHead> = None;
+    Box::new(move |event| match event {
+        pyro_net::ResponseEvent::Response(head) if head.kind == pyro_net::ResponseKind::OpaqueRedirect => redirect = Some(head),
+        pyro_net::ResponseEvent::Finished { .. } if redirect.is_some() => {
+            let Some(head) = redirect.take() else { return };
+            let handle = hops.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner).handle.clone();
+            let next = hops.clone();
+            let _ = handle.post(move |b: &mut Browser| run_hop(b, next, head));
+        }
+        other => {
+            redirect = None;
+            if let pyro_net::ResponseEvent::Redirect { from, to, status, headers } = &other {
+                // A hop the network client followed itself (before one entered a scope): the
+                // request the next hop continues from has the method and body that hop left,
+                // not the loader's original (a POST a 302 turned into GET stays a GET).
+                let mut inner = hops.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                carry_redirect(&mut inner.req, *status, from.origin() != to.origin());
+                inner.chain.redirect(from, headers);
+            }
+            forward_hop_event(&hops, other);
+        }
+    })
+}
+
+/// An event of the hop in flight, for the loader: the final response carries the redirects the
+/// hops made (Navigation and Resource Timing).
+fn forward_hop_event(hops: &NavigationHops, event: pyro_net::ResponseEvent) {
+    let mut inner = hops.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let event = match event {
+        pyro_net::ResponseEvent::Response(mut head) if inner.redirects > 0 => {
+            head.timing.redirect_count = head.timing.redirect_count.saturating_add(inner.redirects);
+            head.timing.redirect_end = inner.redirect_end.or(head.timing.redirect_end);
+            head.timing.cross_origin_redirect |= inner.cross_origin;
+            pyro_net::ResponseEvent::Response(head)
+        }
+        other => other,
+    };
+    (inner.sink)(event);
+}
+
+/// What a redirect response of a navigation leads to.
+enum Hop {
+    /// The events to give the loader: the navigation ends here.
+    Deliver(Vec<pyro_net::ResponseEvent>),
+    /// The next request.
+    Next { req: pyro_net::Request, client: pyro_net::NetClient, page: PageId },
+}
+
+/// `Location` as Fetch reads it: a header value's bytes, a non-ASCII one percent-encoded.
+fn redirect_location(bytes: &[u8]) -> String {
+    let mut text = String::with_capacity(bytes.len());
+    for &b in bytes {
+        if b.is_ascii() {
+            text.push(char::from(b));
+        } else {
+            text.push_str(&format!("%{b:02X}"));
+        }
+    }
+    text
+}
+
+/// Fetch "HTTP-redirect fetch" step 12 and the credential strip: a redirect `status` turns a POST
+/// (301/302) or any other non-GET/HEAD method (303) into a body-less GET, and a cross-origin hop
+/// drops `Authorization` and `Cookie`. Applied to `req`, the request the hop that got the redirect
+/// sent, so the next hop continues from that hop's method and body.
+fn carry_redirect(req: &mut pyro_net::Request, status: pyro_net::http::StatusCode, cross_origin: bool) {
+    use pyro_net::http::{header, Method, StatusCode};
+    if (status == StatusCode::SEE_OTHER && req.method != Method::HEAD && req.method != Method::GET)
+        || (matches!(status.as_u16(), 301 | 302) && req.method == Method::POST)
+    {
+        req.method = Method::GET;
+        req.body = None;
+        for name in [header::CONTENT_TYPE, header::CONTENT_LENGTH, header::CONTENT_ENCODING, header::CONTENT_LANGUAGE, header::CONTENT_LOCATION] {
+            req.headers.remove(name);
+        }
+    }
+    if cross_origin {
+        req.headers.remove(header::AUTHORIZATION);
+        req.headers.remove(header::COOKIE);
+    }
+}
+
+/// Fetch "HTTP-redirect fetch" for the redirect `head` answered the last hop with: the next
+/// request, or the end of the navigation.
+fn advance_hop(inner: &mut HopInner, head: pyro_net::ResponseHead) -> Hop {
+    use pyro_net::http::header;
+    let fail = |error: pyro_net::NetError| Hop::Deliver(vec![pyro_net::ResponseEvent::Failed(error)]);
+    let status = head.status;
+    let location = head.headers.get(header::LOCATION).map(|v| redirect_location(v.as_bytes()));
+    let Some(location) = location.filter(|_| matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308)) else {
+        // No redirect to follow: the response is an ordinary one (as the client delivers a 3xx
+        // without `Location`).
+        let mut head = head;
+        head.kind = pyro_net::ResponseKind::Basic;
+        return Hop::Deliver(vec![
+            pyro_net::ResponseEvent::Response(head),
+            pyro_net::ResponseEvent::Finished { encoded_len: 0, decoded_len: 0 },
+        ]);
+    };
+    let from = head.url.clone();
+    let Ok(mut target) = from.join(&location) else { return fail(pyro_net::NetError::InvalidUrl) };
+    // A Location without a fragment keeps the current URL's.
+    if target.fragment().is_none() {
+        target.set_fragment(from.fragment());
+    }
+    if !matches!(target.scheme(), "http" | "https") {
+        return fail(pyro_net::NetError::Blocked("net::ERR_UNSAFE_REDIRECT".into()));
+    }
+    inner.redirects += 1;
+    if inner.redirects > MAX_NAVIGATION_HOPS {
+        return fail(pyro_net::NetError::TooManyRedirects);
+    }
+    if inner.req.csp.as_ref().is_some_and(|csp| !csp.allows_redirect(&target)) {
+        return fail(pyro_net::NetError::Blocked(pyro_net::csp::BLOCKED_BY_CSP.into()));
+    }
+    inner.redirect_end = Some(std::time::Instant::now());
+    let cross_origin = from.origin() != target.origin();
+    inner.cross_origin |= cross_origin;
+    // The loader's bookkeeping of the redirect (opener policies, referrer chain).
+    (inner.sink)(pyro_net::ResponseEvent::Redirect { from: from.clone(), to: target.clone(), status, headers: head.headers.clone() });
+    let req = &mut inner.req;
+    carry_redirect(req, status, cross_origin);
+    inner.chain.redirect(&from, &head.headers);
+    req.referrer = inner.chain.referrer.clone();
+    req.referrer_policy = inner.chain.policy;
+    req.url = target;
+    Hop::Next { req: req.clone(), client: inner.client.clone(), page: inner.page }
+}
+
+/// The next hop of a navigation, on the browser thread: the registration of the new URL decides
+/// whether a worker sees it.
+fn run_hop(browser: &mut Browser, hops: std::sync::Arc<NavigationHops>, head: pyro_net::ResponseHead) {
+    if hops.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    let step = {
+        let mut inner = hops.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        advance_hop(&mut inner, head)
+    };
+    match step {
+        Hop::Deliver(events) => {
+            for event in events {
+                forward_hop_event(&hops, event);
+            }
+        }
+        Hop::Next { mut req, client, page } => {
+            let id = client.next_request_id();
+            hops.current.store(id.0, std::sync::atomic::Ordering::SeqCst);
+            let sink = hop_sink(hops.clone());
+            match service_worker_route(browser, page, &req, true) {
+                Some(mut route) => {
+                    let origin = req.url.origin();
+                    let kept = {
+                        let inner = hops.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                        inner.last_client.as_ref().filter(|(last, _)| *last == origin).map(|(_, id)| id.clone())
+                    };
+                    if let (Some(id), Some(page)) = (kept, browser.page(page)) {
+                        route.keep_resulting_client(&page.frames.settings.borrow().services, &id, req.frame_id.as_deref());
+                    }
+                    hops.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner).last_client =
+                        Some((origin, route.resulting_client().to_owned()));
+                    req.redirect = pyro_net::RedirectMode::Manual;
+                    route.dispatch(&client, id, req, sink)
+                }
+                None => {
+                    req.redirect = pyro_net::RedirectMode::Follow;
+                    req.prefetch_redirect_stop = navigation_redirect_stop(browser, page);
+                    client.fetch_with_id(id, req, sink)
+                }
+            }
+        }
+    }
+}
+
+/// URL Fragment Text Directives "remove the fragment directive": `url` without the directive of
+/// its fragment (a fragment left empty is dropped), and the directives it held.
+fn strip_fragment_directive(url: &str) -> Option<(String, String)> {
+    if !url.contains(":~:") {
+        return None;
+    }
+    let mut parsed = pyro_net::Url::parse(url).ok()?;
+    let (fragment, directives) = {
+        let (fragment, directives) = pyro_webapi::highlights::split_fragment_directive(parsed.fragment()?)?;
+        (fragment.to_owned(), directives.to_owned())
+    };
+    parsed.set_fragment((!fragment.is_empty()).then_some(fragment.as_str()));
+    Some((parsed.to_string(), directives))
+}
+
+/// The `Document-Policy` response header's `force-load-at-top` feature (Document Policy: a
+/// structured dictionary of booleans; a bare key is true, `no-` prefixed the negation): the
+/// document does not scroll on load, to a fragment (text directive or element) or to a restored
+/// position.
+fn force_load_at_top_policy(headers: &http::HeaderMap) -> bool {
+    let mut forced = false;
+    for value in headers.get_all("document-policy").iter().filter_map(|v| v.to_str().ok()) {
+        for member in value.split(',') {
+            let member = member.split(';').next().unwrap_or("").trim();
+            let (key, value) = member.split_once('=').map_or((member, "?1"), |(k, v)| (k.trim(), v.trim()));
+            let on = value != "?0";
+            match key {
+                "force-load-at-top" => forced = on,
+                "no-force-load-at-top" => forced = !on,
+                _ => {}
+            }
+        }
+    }
+    forced
 }
 
 /// The `Origin-Agent-Cluster` response header is the structured-field boolean `?1` (HTML
@@ -783,12 +1440,179 @@ fn origin_agent_cluster_requested(headers: &http::HeaderMap) -> bool {
         .is_some_and(|v| v.split(';').next().is_some_and(|item| item.trim_matches(|c| c == ' ' || c == '\t') == "?1"))
 }
 
+/// A Cross-Origin-Opener-Policy value (HTML § 7.1.3 "cross-origin opener policy value").
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CoopValue {
+    #[default]
+    UnsafeNone,
+    SameOriginAllowPopups,
+    SameOrigin,
+    /// `same-origin` of a document that is cross-origin isolated (its COEP is `require-corp` or `credentialless`).
+    SameOriginPlusCoep,
+    NoopenerAllowPopups,
+}
+
+/// The Cross-Origin-Opener-Policy of a top-level browsing context's active document: its value,
+/// the origin of the document, and whether it is a popup's initial about:blank document (which has
+/// its creator's policy, not one of its own).
+#[derive(Clone, Debug, Default)]
+pub struct CoopState {
+    pub value: CoopValue,
+    pub origin: String,
+    pub initial_blank: bool,
+    /// The `report-to` endpoint name of the enforced policy (HTML "cross-origin opener policy" struct's
+    /// reporting endpoint).
+    pub report_to: Option<String>,
+    /// The document's report-only policy (`Cross-Origin-Opener-Policy-Report-Only`).
+    pub report_only: CoopPolicy,
+    /// The document that owns the reporters: the committed document, or for a popup's initial
+    /// about:blank document its creator's (`crate::coop_report`).
+    pub reporter: Option<std::rc::Weak<pyro_webapi::PageDom>>,
+    /// The virtual browsing context group (`crate::coop_report`); 0: not yet numbered.
+    pub vbcg: u64,
+    /// The URL a popup's first navigation requested (`initialPopupURL` of access reports).
+    pub initial_popup_url: Option<String>,
+    /// Access reports made already: (from the reporter's side, the other page, property).
+    pub reported: Vec<(bool, u64, String)>,
+}
+
+/// A COOP value with the endpoint its reports go to (HTML § 7.1.3 "cross-origin opener policy":
+/// value and reporting endpoint).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CoopPolicy {
+    pub value: CoopValue,
+    pub report_to: Option<String>,
+}
+
+/// One response of a navigation's redirect chain with its two cross-origin opener policies
+/// (enforced and report-only), the origin and URL it came from and, for a redirect (which never
+/// becomes a document), the endpoints its `Reporting-Endpoints` header names.
+#[derive(Clone, Debug, Default)]
+pub struct CoopResponse {
+    pub enforced: CoopPolicy,
+    pub report_only: CoopPolicy,
+    pub origin: String,
+    pub url: String,
+    pub endpoints: Vec<(String, pyro_net::Url)>,
+}
+
+impl CoopState {
+    /// Whether a COOP reporting endpoint is named by this document's policies.
+    pub(crate) fn has_reporting(&self) -> bool {
+        self.report_to.is_some() || self.report_only.report_to.is_some()
+    }
+}
+
+/// HTML "obtain a cross-origin opener policy" of a response for `url`: the
+/// `Cross-Origin-Opener-Policy` header as a structured-field token (parameters allowed) and its
+/// `report-to` parameter when that is a string; `unsafe-none` when absent, malformed, unrecognised
+/// (the historical `same-site` and `unsafe-allow-outgoing` included) or sent from a context that is
+/// not potentially trustworthy; `same-origin` of a response whose `Cross-Origin-Embedder-Policy` is
+/// `require-corp` or `credentialless` is `same-origin-plus-COEP`.
+pub(crate) fn obtain_coop(headers: &http::HeaderMap, url: &pyro_net::Url) -> CoopPolicy {
+    parse_coop(headers, url, "cross-origin-opener-policy", false)
+}
+
+/// The same for `Cross-Origin-Opener-Policy-Report-Only`, whose `same-origin` is
+/// `same-origin-plus-COEP` also when the response's `Cross-Origin-Embedder-Policy-Report-Only` is
+/// `require-corp` or `credentialless`.
+pub(crate) fn obtain_coop_report_only(headers: &http::HeaderMap, url: &pyro_net::Url) -> CoopPolicy {
+    parse_coop(headers, url, "cross-origin-opener-policy-report-only", true)
+}
+
+fn parse_coop(headers: &http::HeaderMap, url: &pyro_net::Url, name: &str, report_only: bool) -> CoopPolicy {
+    let trustworthy = url.scheme() == "https"
+        || url.host_str().is_some_and(|h| h == "localhost" || h == "127.0.0.1" || h == "[::1]" || h.ends_with(".localhost"));
+    if !trustworthy {
+        return CoopPolicy::default();
+    }
+    // Repeated headers combine with ", ", which no single structured item parses as.
+    let field = |name: &str| -> Option<String> {
+        let values: Vec<&str> = headers.get_all(name).iter().map(|v| v.to_str().ok()).collect::<Option<_>>()?;
+        (!values.is_empty()).then(|| values.join(", "))
+    };
+    let Some(coop) = field(name) else { return CoopPolicy::default() };
+    let value = match pyro_webapi::coep_report::structured_item_token(&coop) {
+        Some("same-origin") => {
+            let isolated = obtain_embedder_policy(headers, url) != pyro_net::EmbedderPolicy::UnsafeNone
+                || (report_only
+                    && field("cross-origin-embedder-policy-report-only")
+                        .is_some_and(|v| matches!(pyro_webapi::coep_report::structured_item_token(&v), Some("require-corp" | "credentialless"))));
+            if isolated {
+                CoopValue::SameOriginPlusCoep
+            } else {
+                CoopValue::SameOrigin
+            }
+        }
+        Some("same-origin-allow-popups") => CoopValue::SameOriginAllowPopups,
+        Some("noopener-allow-popups") => CoopValue::NoopenerAllowPopups,
+        Some("unsafe-none") => CoopValue::UnsafeNone,
+        _ => return CoopPolicy::default(),
+    };
+    CoopPolicy { value, report_to: pyro_webapi::coep_report::report_to_param(&coop) }
+}
+
+/// The COOP policies of one response of a navigation, from `from` (its URL).
+pub(crate) fn coop_response(headers: &http::HeaderMap, from: &pyro_net::Url, redirect: bool) -> CoopResponse {
+    let endpoints = if redirect {
+        // A redirect never becomes a document: the endpoints its own header names are where the
+        // reports about it go.
+        let values: Vec<&str> = headers.get_all("reporting-endpoints").iter().filter_map(|v| v.to_str().ok()).collect();
+        if values.is_empty() || !pyro_net::is_potentially_trustworthy_url(from) {
+            Vec::new()
+        } else {
+            pyro_webapi::csp_report::parse_reporting_endpoints(&values.join(","), from)
+        }
+    } else {
+        Vec::new()
+    };
+    CoopResponse {
+        enforced: obtain_coop(headers, from),
+        report_only: obtain_coop_report_only(headers, from),
+        origin: origin_of(from.as_str()),
+        url: from.to_string(),
+        endpoints,
+    }
+}
+
+/// HTML "check if COOP values require a browsing context group switch": whether a navigation
+/// whose response has policy `response` from `response_origin` leaves the group of the active
+/// document, which has `current` from `current_origin` (`initial_blank`: it is a popup's initial
+/// about:blank document, whose policy is its creator's).
+pub(crate) fn coop_requires_switch(
+    initial_blank: bool,
+    current: CoopValue,
+    current_origin: &str,
+    response: CoopValue,
+    response_origin: &str,
+) -> bool {
+    use CoopValue::*;
+    // Both `unsafe-none`: nothing isolates either side.
+    if current == UnsafeNone && response == UnsafeNone {
+        return false;
+    }
+    // A popup of a document that allows popups may stay with its opener on its initial document's
+    // way to a document without a policy.
+    if initial_blank && matches!(current, SameOriginAllowPopups | NoopenerAllowPopups) && response == UnsafeNone {
+        return false;
+    }
+    if current == UnsafeNone || response == UnsafeNone {
+        return true;
+    }
+    // `noopener-allow-popups` never matches (it is the policy of a document without openers).
+    if response == NoopenerAllowPopups {
+        return true;
+    }
+    // The same policy and the same (tuple) origin keep the group.
+    !(current == response && current_origin == response_origin && current_origin != "null")
+}
+
 /// The service worker route of a loader fetch: a navigation goes to the
 /// worker whose registration its URL matches (unless the page bypasses
 /// service workers), any other request to the requesting document's
 /// controller. `None` at the cost of one emptiness test when the context has
 /// no registrations.
-fn service_worker_route(
+pub(crate) fn service_worker_route(
     browser: &Browser,
     page: PageId,
     req: &pyro_net::Request,
@@ -824,7 +1648,8 @@ pub(crate) fn csp_dest(request: &FetchRequest) -> Option<pyro_net::csp::RequestD
         ResourceKind::Image => RequestDest::Image,
         ResourceKind::Font => RequestDest::Font,
         ResourceKind::Audio | ResourceKind::Video | ResourceKind::Track => RequestDest::Media,
-        ResourceKind::Object => RequestDest::Object,
+        ResourceKind::Object | ResourceKind::SvgImage => RequestDest::Object,
+        ResourceKind::Embed => RequestDest::Embed,
         // `<link rel=preload as=fetch>`: the empty destination, connect-src.
         ResourceKind::Fetch => RequestDest::Empty,
         // `<link rel=prefetch>`: default-src, or any fetch directive that allows it (Chrome).
@@ -832,6 +1657,9 @@ pub(crate) fn csp_dest(request: &FetchRequest) -> Option<pyro_net::csp::RequestD
         // A compression dictionary: connect-src (Fetch's "compression-dictionary" destination).
         ResourceKind::Dictionary => RequestDest::Empty,
         ResourceKind::Document | ResourceKind::Download => return None,
+        // A header-supplied rule set is exempt from the document's CSP (WPT's
+        // `out-of-document-rule-set` CSPExemption case).
+        ResourceKind::SpeculationRules => return None,
     })
 }
 
@@ -919,6 +1747,90 @@ fn requesting_document(browser: &Browser, request: &FetchRequest) -> Option<Rc<p
         _ => key,
     };
     frames.page_dom(key)
+}
+
+/// The cookie jar of the credentialless partition `request`, made by document `d`, belongs to: `d`'s own
+/// when it is credentialless (its tree is), and for the navigation of a child frame of `d` whose
+/// container has the `credentialless` attribute the partition of `d`'s top-level document (taken as
+/// the navigation began). `None`: the browser context's jar.
+fn anonymous_cookies(browser: &Browser, request: &FetchRequest, d: Option<&Rc<pyro_webapi::PageDom>>) -> Option<pyro_net::cookies::EphemeralCookies> {
+    if let Some(anonymous) = d.and_then(|d| d.anonymous()) {
+        return Some(anonymous.cookies);
+    }
+    let frames = browser.page(request.page)?.frames.clone();
+    let key = request.frame_id.as_deref().and_then(|id| frames.key_of(id));
+    let credentialless = match (d, key) {
+        // The document is known and is not in the partition: only a navigation's own container decides.
+        (Some(_), Some(key)) => request.kind == ResourceKind::Iframe && browser.doc(key)?.main_frame.fullscreen_container.credentialless,
+        (Some(_), None) => false,
+        // No document: the frame's own container and its ancestors' say (a document of the tree is
+        // credentialless iff a container on its path is).
+        (None, Some(mut key)) => loop {
+            if browser.doc(key).is_some_and(|doc| doc.main_frame.fullscreen_container.credentialless) {
+                break true;
+            }
+            let parent = frames.parent_key(key);
+            if parent == key {
+                break false;
+            }
+            key = parent;
+        },
+        (None, None) => false,
+    };
+    if !credentialless {
+        return None;
+    }
+    match frames.page_dom(crate::frames::FrameKey { page: request.page, child: None }) {
+        Some(root) => Some(root.credentialless_partition().anonymous().cookies),
+        // The tree's root document is gone: an empty jar of its own, never the normal one.
+        None => Some(Default::default()),
+    }
+}
+
+/// Storage Access API: whether the navigation of a child frame that `request` is keeps the storage
+/// access its current document was granted: to a document of the same origin, started by the frame
+/// itself or by a document of the target's site (its container's `src` change included; one from
+/// another site, the top-level page's, does not keep it). The loader is noted, so that
+/// the document it commits takes the grant (`bindings::create`).
+fn keeps_storage_access(browser: &Browser, request: &FetchRequest, url: &pyro_net::Url) -> bool {
+    let (Some(frame_id), Some(loader_id)) = (request.frame_id.as_deref(), request.loader_id.as_ref()) else { return false };
+    let Some(host) = browser.page(request.page).map(|p| p.frames.clone()) else { return false };
+    let Some(key) = host.key_of(frame_id) else { return false };
+    if !host.page_dom(key).is_some_and(|d| d.storage_access_granted()) {
+        return false;
+    }
+    let same_origin = frame_origin(browser, request.page, frame_id).is_some_and(|o| o != "null" && o == origin_of(url.as_str()));
+    let same_site_initiator = request
+        .referrer
+        .as_deref()
+        .and_then(|r| pyro_net::Url::parse(r).ok())
+        .is_some_and(|r| pyro_net::cookies::partition_key(&r).is_some() && pyro_net::cookies::partition_key(&r) == pyro_net::cookies::partition_key(url));
+    if !(same_origin && same_site_initiator) {
+        return false;
+    }
+    let mut carry = host.storage_access_carry.borrow_mut();
+    if carry.len() >= 64 {
+        carry.clear();
+    }
+    carry.insert(loader_id.clone(), origin_of(url.as_str()));
+    true
+}
+
+/// `Object` or `Embed` when the child frame `request` navigates is the nested browsing context of
+/// an `<object>` or `<embed>` of `parent` (its owner element), else `None` (an `<iframe>`).
+fn embedding_destination(browser: &Browser, request: &FetchRequest, parent: &pyro_webapi::PageDom) -> Option<pyro_net::Destination> {
+    let frames = &browser.page(request.page)?.frames;
+    let key = frames.key_of(request.frame_id.as_deref()?)?;
+    let owner = frames.with_frame(key, |f| f.owner)??;
+    let dom = parent.dom.borrow();
+    if !dom.is_document_object(owner) {
+        return None;
+    }
+    match &*dom.element(owner).ok()?.name.local {
+        "object" => Some(pyro_net::Destination::Object),
+        "embed" => Some(pyro_net::Destination::Embed),
+        _ => None,
+    }
 }
 
 /// The referrer source and policy `request` is sent with: its own policy,
@@ -1100,10 +2012,18 @@ impl ResourceLoader for StaticLoader {
                         refresh: None,
                         content_language: None,
                         last_modified: None,
-                        reporting_endpoints: None,
+                        reporting_endpoints: None, permissions_policy: None,
+                        connection_allowlist: None,
+                        link_fetches: Vec::new(),
+                        integrity_headers: None,
                         dictionary_links: Vec::new(),
+                        speculation_rules: Vec::new(),
+                        no_vary_search: None,
                         referrer_policy,
-                        origin_agent_cluster: false,
+                        origin_agent_cluster: false, force_load_at_top: false, isolation_policy: 0, ephemeral_jar: false,
+                        embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
+                        embedder_reporting: Default::default(),
+                        coop: Vec::new(),
                         sent_referrer: sent_referrer.clone(),
                         timing: None,
                         partial,
@@ -1560,15 +2480,31 @@ pub(crate) fn resolve_url(base: &str, href: &str) -> Option<String> {
 
 /// The object a `blob:` URL names, from the blob URL store of a document of
 /// `page` with the URL's origin: the requesting document's own, or a parent's
-/// or child's for a same-origin frame (a parent's blob as an iframe `src`).
+/// or child's for a same-origin frame (a parent's blob as an iframe `src`), or, for a
+/// popup, its opener's (`window.open(blobURL)`: the popup is a page of its own, and the
+/// store the URL is in belongs to the document that made it).
 fn blob_body(browser: &Browser, page: PageId, url: &str) -> Option<pyro_net::BlobBody> {
     let host = browser.page(page)?.frames.clone();
     let origin = origin_of(url);
-    host.keys().into_iter().find_map(|key| {
-        let page_dom = browser.doc(key).filter(|d| d.main_frame.origin == origin)?.main_frame.page_dom.clone()?;
-        let (bytes, mime) = page_dom.blob_url(url)?;
-        Some(pyro_net::BlobBody { bytes, mime })
-    })
+    let find = |host: &crate::frames::FrameHost| {
+        host.keys().into_iter().find_map(|key| {
+            let page_dom = browser.doc(key).filter(|d| d.main_frame.origin == origin)?.main_frame.page_dom.clone()?;
+            let (bytes, mime) = page_dom.blob_url(url)?;
+            Some(pyro_net::BlobBody { bytes, mime })
+        })
+    };
+    if let Some(found) = find(&host) {
+        return Some(found);
+    }
+    let mut creator = host.opener.borrow().as_ref().and_then(std::rc::Weak::upgrade);
+    for _ in 0..8 {
+        let opener = creator?;
+        if let Some(found) = find(&opener) {
+            return Some(found);
+        }
+        creator = opener.opener.borrow().as_ref().and_then(std::rc::Weak::upgrade);
+    }
+    None
 }
 
 /// The base URL `node`'s document resolves its URLs against: its first
@@ -1621,7 +2557,11 @@ impl ScriptFetch {
     fn of(info: &pyro_dom::script::ScriptInfo) -> ScriptFetch {
         ScriptFetch {
             parser_priority: false,
-            integrity: info.integrity.clone().filter(|v| !pyro_webapi::sri::is_empty(v)),
+            // (Metadata with an Ed25519 key counts too: Signature-based SRI.)
+            integrity: info
+                .integrity
+                .clone()
+                .filter(|v| !pyro_webapi::sri::is_empty(v) || !pyro_webapi::signature_sri::parse_keys(v).is_empty()),
             crossorigin: info.crossorigin.clone(),
             module: None,
             referrer_policy: pyro_net::ReferrerPolicy::from_attribute(info.referrerpolicy.as_deref()),
@@ -1675,6 +2615,24 @@ pub(crate) fn integrity_error(
     cors: bool,
     document_origin: &str,
 ) -> Option<String> {
+    // Signature-based SRI and `Unencoded-Digest`: Ed25519 keys of the metadata must have signed the
+    // response, and what the response says about its own body must hold, with or without metadata.
+    let keys = integrity.map(pyro_webapi::signature_sri::parse_keys).unwrap_or_default();
+    if !keys.is_empty() && is_opaque(resource, cors, document_origin) {
+        return Some(format!(
+            "Subresource Integrity: The resource '{}' has an integrity attribute, but the resource requires the \
+             request to be CORS enabled to check the integrity, and it is not. The resource has been blocked \
+             because the integrity cannot be enforced.",
+            resource.url
+        ));
+    }
+    if !pyro_webapi::signature_sri::verify_facts(resource.integrity_headers.as_deref(), &resource.body, &keys) {
+        return Some(format!(
+            "Subresource Integrity: The resource '{}' failed its signature or Unencoded-Digest check. The \
+             resource has been blocked.",
+            resource.url
+        ));
+    }
     let integrity = integrity.filter(|v| !pyro_webapi::sri::is_empty(v))?;
     if is_opaque(resource, cors, document_origin) {
         return Some(format!(
@@ -1787,6 +2745,8 @@ impl Browser {
                 return Ok(());
             }
         }
+        // Bounce Tracking Mitigations: a top-level navigation starts (or continues) an extended navigation.
+        self.bounce_navigation_started(page, &opts);
         if let Some(mut p) = self.doc_mut(page) {
             p.pending_loader = Some(loader_id.clone());
             p.pending_script = script.then(|| (loader_id.clone(), opts.url.clone()));
@@ -1795,9 +2755,22 @@ impl Browser {
         // sends it; the response is judged against it at commit (whatever loader answered), and
         // the committed document keeps it to bound its own frames' requirements.
         let requirement = crate::csp_embedded::requirement(self, page, &opts.url);
+        // Connection-Allowlist: a top-level navigation a script, a link or a form started is a
+        // connection of the document that started it (the frame's current one). It carries the
+        // guard, which fails it unsent when the allowlist refuses it and checks its redirects;
+        // a child frame's navigation is checked against its parent's list by `csp_precheck`.
+        let nav_guard = (script && page.child.is_none())
+            .then(|| self.doc(page).and_then(|p| p.main_frame.page_dom.clone()))
+            .flatten()
+            .and_then(|dom| {
+                let url = url::Url::parse(&opts.url).ok()?;
+                let guard = pyro_webapi::csp::allowlist_guard(&dom, &url)?;
+                Some((dom, guard))
+            });
         let req = FetchRequest {
-            csp: None,
+            csp: nav_guard.as_ref().map(|(_, guard)| guard.clone()),
             required_csp: requirement.as_ref().map(|r| r.policy.clone()),
+            purpose: None,
             parser_priority: false,
             credentials: None,
             post: opts.post.clone(),
@@ -1813,16 +2786,32 @@ impl Browser {
             // (`src` processing) is reported, to the parent. One the frame's
             // document starts, a reload or a traversal stays the frame's own:
             // its URLs are not the parent's to read.
-            initiator: (page.child.is_some() && opts.reason == crate::NavigationReason::InitialFrameNavigation)
-                .then_some(pyro_webapi::resource_timing::Initiator::Iframe),
+            initiator: (page.child.is_some() && opts.reason == crate::NavigationReason::InitialFrameNavigation).then(|| {
+                // The initiator type is the container's element name: "frame" for a <frame>.
+                let frame = self.doc(page).and_then(|d| d.main_frame.owner).zip(self.page(page.page).map(|p| p.frames.clone()));
+                match frame {
+                    Some((owner, host)) if host.dom.borrow().element(owner).is_ok_and(|e| &*e.name.local == "frame") => {
+                        pyro_webapi::resource_timing::Initiator::Frame
+                    }
+                    _ => pyro_webapi::resource_timing::Initiator::Iframe,
+                }
+            }),
             module: None,
             part: None,
+            accept_signature: None,
         };
         let pending_id = loader_id.clone();
-        let cancel = loader.fetch_cancellable(
-            self,
-            req,
-            Box::new(move |b, res| {
+        // A speculation-rules prefetch of this URL, made by the document that navigates, answers it
+        // instead of the network (`crate::prefetch`).
+        // Chrome does not serve a reload or a history traversal from the prefetch cache (it could
+        // be minutes old, and the entry's document is not the one being reloaded).
+        let reloading = opts.reason == crate::NavigationReason::History || matches!(history, HistoryHandling::Traverse | HistoryHandling::Reload);
+        let claim = if reloading { None } else { self.claim_prefetch(page, &opts) };
+        let claim_url = opts.url.clone();
+        let done: FetchDone = Box::new(move |b, res| {
+                if let Some((dom, guard)) = &nav_guard {
+                    pyro_webapi::csp::report_guard(dom, Some(guard), None);
+                }
                 let current = b.doc(page).and_then(|p| p.pending_loader.clone());
                 if current.as_ref() != Some(&loader_id) {
                     return; // superseded by another navigation
@@ -1842,6 +2831,12 @@ impl Browser {
                 };
                 let required_csp = requirement.map(|r| r.policy);
                 match res {
+                    Ok(resource) if matches!(resource.status, 204 | 205) => {
+                        // HTML "process a navigate response": a 204 or 205 response is not a navigation, whatever its `Content-Disposition` (Chrome starts no download). The
+                        // frame keeps the document it shows (an iframe its initial about:blank one, Window
+                        // object included), as Chrome does, which reports net::ERR_ABORTED to Page.navigate.
+                        b.navigation_failed(page, &opts, loader_id, "net::ERR_ABORTED".into());
+                    }
                     Ok(resource)
                         if (200..300).contains(&resource.status)
                             && resource.content_disposition.as_deref().is_some_and(is_attachment) =>
@@ -1873,6 +2868,19 @@ impl Browser {
                                 },
                             );
                         }
+                    }
+                    Ok(resource) if b.coop_sandbox_blocks(page, &resource) => {
+                        // HTML "enforce a response's cross-origin opener policy": a sandboxed
+                        // top-level navigation whose response has a COOP is a network error.
+                        b.navigation_failed(page, &opts, loader_id, BLOCKED_BY_RESPONSE.into());
+                    }
+                    Ok(resource) if b.embedder_policy_blocks(page, &resource) => {
+                        // HTML "check a navigation response's adherence to its embedder policy": a
+                        // frame of a `require-corp` or `credentialless` document refuses a response
+                        // without a COEP of its own; as for `frame-ancestors`, Chrome commits its
+                        // opaque-origin error document.
+                        b.prepare_required_csp(page, required_csp, None);
+                        b.commit_error_document(page, opts, loader_id, BLOCKED_BY_RESPONSE.into(), history);
                     }
                     Ok(resource) if b.frame_ancestors_block(page, &resource) => {
                         // CSP `frame-ancestors` refuses this frame's ancestors: Chrome commits
@@ -1911,12 +2919,169 @@ impl Browser {
                 if let Some(nav) = b.doc(page).filter(|p| p.pending_loader.is_none()).map(|p| p.nav.clone()) {
                     nav.abandon_traversal();
                 }
-            }),
-        );
+        });
+        let fallback_id = pending_id.clone();
+        let cancel = match claim {
+            Some(crate::prefetch::Claim::Ready(prefetched)) => {
+                self.deliver_prefetched(page, &req, pending_id.clone(), prefetched, done);
+                None
+            }
+            Some(crate::prefetch::Claim::Pending(prefetch, started)) => {
+                let target = url::Url::parse(&claim_url).ok();
+                let waiter: crate::prefetch::Waiter = Box::new(move |b, prefetched| match prefetched {
+                    Some(mut prefetched) => {
+                        crate::prefetch::rebase_timing(&mut prefetched.resource, started);
+                        b.deliver_prefetched(page, &req, fallback_id.clone(), prefetched, done);
+                    }
+                    // The prefetch failed, was not a success, was cleared, or its response does not
+                    // serve this URL: the navigation goes to the network after all.
+                    None => {
+                        if !b.doc(page).is_some_and(|d| d.pending_loader.as_ref() == Some(&fallback_id)) {
+                            return;
+                        }
+                        let cancel = loader.fetch_cancellable(b, req, done);
+                        if let Some(mut d) = b.doc_mut(page).filter(|d| d.pending_loader.as_ref() == Some(&fallback_id)) {
+                            d.pending_cancel = cancel;
+                        }
+                    }
+                });
+                match target {
+                    Some(target) => self.prefetch_wait(prefetch, target, waiter),
+                    None => waiter(self, None),
+                }
+                None
+            }
+            None => loader.fetch_cancellable(self, req, done),
+        };
         if let Some(mut d) = self.doc_mut(page).filter(|d| d.pending_loader.as_ref() == Some(&pending_id)) {
             d.pending_cancel = cancel;
         }
         Ok(())
+    }
+
+    /// Answers the navigation `nav` of `page` with the response of a speculation-rules prefetch:
+    /// the Network domain sees the navigation's request and response as Chrome reports a
+    /// prefetched one (`pyro_net::NetClient::report_prefetched`), then `done` gets the response
+    /// in a task, like a response from the network.
+    fn deliver_prefetched(
+        &mut self,
+        page: FrameKey,
+        nav: &FetchRequest,
+        loader_id: LoaderId,
+        prefetched: crate::prefetch::Prefetched,
+        done: FetchDone,
+    ) {
+        let crate::prefetch::Prefetched { resource, head } = prefetched;
+        let network = self.report_prefetched_navigation(page, nav, &loader_id, &resource, head);
+        let data_bytes = resource.body.len() as u64;
+        self.scheduler().post(TaskSource::Networking, move |b| {
+            if let Some(id) = network {
+                b.report_resource_delivery(
+                    page.page,
+                    Some(&loader_id),
+                    id,
+                    pyro_net::NetworkDelivery { response: true, data_bytes, terminal: true },
+                );
+            }
+            done(b, Ok(resource));
+        });
+    }
+
+    /// Publishes the Network events of `nav` answered by `resource` (see `deliver_prefetched`)
+    /// and lets observers drain the request announcement now, keeping the response behind its
+    /// delivery frontier. `None`: no client, or no page.
+    fn report_prefetched_navigation(
+        &self,
+        page: FrameKey,
+        nav: &FetchRequest,
+        loader_id: &LoaderId,
+        resource: &Resource,
+        head: pyro_net::ResponseHead,
+    ) -> Option<pyro_net::RequestId> {
+        let state = self.page(page.page)?;
+        let net = self.context_net(state.context)?;
+        let url = url::Url::parse(&nav.url).ok()?;
+        let mut req = pyro_net::Request::get(url, pyro_net::Destination::Document);
+        let referrer = request_referrer(self, nav);
+        req.referrer = referrer.referrer;
+        req.referrer_policy = referrer.policy;
+        req.frame_id = nav.frame_id.clone();
+        req.loader_id = nav.loader_id.clone();
+        req.defaults = state.request_defaults.clone();
+        req.top_level_site = pyro_net::cookies::partition_key(&req.url);
+        let encoded = resource.timing.as_ref().and_then(|t| t.response.as_ref()).map_or(resource.body.len() as u64, |r| r.encoded);
+        let body = resource.body.clone();
+        let id = net.report_prefetched(&req, head, move || bytes::Bytes::from(body.as_ref().clone()), encoded);
+        self.report_resource_delivery(page.page, Some(loader_id), id, pyro_net::NetworkDelivery { response: false, data_bytes: 0, terminal: false });
+        Some(id)
+    }
+
+    /// Whether `resource`, the response of top-level frame `page`'s navigation, is refused for
+    /// having a Cross-Origin-Opener-Policy other than `unsafe-none` (on it or on a redirect before
+    /// it) while the navigation is sandboxed: the popup sandboxing flags of its creator or the
+    /// response's own CSP `sandbox` (HTML "enforce a response's cross-origin opener policy").
+    fn coop_sandbox_blocks(&self, page: FrameKey, resource: &Resource) -> bool {
+        if page.child.is_some() || resource.coop.iter().all(|r| r.enforced.value == CoopValue::UnsafeNone) {
+            return false;
+        }
+        let Some(p) = self.page(page.page) else { return false };
+        let csp_sandbox = !p.bypass_csp
+            && resource.header_csp.as_deref().is_some_and(|csp| {
+                crate::frames::Sandbox::from_csp(csp.split_once('\n').map_or(csp, |(enforce, _)| enforce)).is_some()
+            });
+        p.popup_sandbox.is_some() || csp_sandbox
+    }
+
+    /// HTML "check if COOP values require a browsing context group switch": the top-level page
+    /// `left` moved to a new browsing context group, so a popup it had opened is no longer related
+    /// to it: the popup's `opener` is null and `left` sees a closed window for it.
+    fn sever_openees(&self, left: &Rc<crate::frames::FrameHost>) {
+        for page in &self.pages {
+            let opened_by_left =
+                page.frames.opener.borrow().as_ref().and_then(std::rc::Weak::upgrade).is_some_and(|opener| Rc::ptr_eq(&opener, left));
+            if opened_by_left {
+                if let Some(ticket) = page.frames.popup.borrow().clone() {
+                    ticket.sever();
+                }
+            }
+        }
+    }
+
+    /// HTML "check a navigation response's adherence to its embedder policy": whether `resource`, the
+    /// response of child frame `page`'s navigation, is refused because the embedding document's
+    /// cross-origin embedder policy is `require-corp` or `credentialless` and the response's is
+    /// `unsafe-none`. A local-scheme document inherits its creator's policy and is not checked.
+    fn embedder_policy_blocks(&self, page: FrameKey, resource: &Resource) -> bool {
+        if page.child.is_none() || resource.embedder_policy != pyro_net::EmbedderPolicy::UnsafeNone || is_local_scheme(&resource.url) {
+            return false;
+        }
+        let Some(host) = self.page(page.page).map(|p| p.frames.clone()) else { return false };
+        // A credentialless frame (its container's attribute, or an ancestor's) may embed a document
+        // without a COEP under a `require-corp` or `credentialless` parent: its storage and
+        // credentials are ephemeral already. That holds only when this navigation really went out with
+        // the ephemeral jar, not when the container's attribute changed since the request was made.
+        if resource.ephemeral_jar {
+            return false;
+        }
+        let parent = host.parent_key(page);
+        let Some(dom) = host.page_dom(parent) else { return false };
+        // A credentialless embedder's frames need no policy of their own.
+        if dom.is_credentialless() {
+            return false;
+        }
+        // The embedding document reports the mismatch: what its report-only policy would refuse
+        // (`reporting`) and, when its enforced policy refuses it, that too (`enforce`).
+        use pyro_webapi::coep_report::queue_violation;
+        // (A Document-Isolation-Policy constrains subresources, not the frames it embeds.)
+        let reporting = dom.embedder_reporting();
+        if reporting.report_only != pyro_net::EmbedderPolicy::UnsafeNone && !reporting.report_only_dip {
+            queue_violation(&dom, None, "navigation", &resource.url, None, true);
+        }
+        let blocks = dom.embedder_policy() != pyro_net::EmbedderPolicy::UnsafeNone && !reporting.dip;
+        if blocks {
+            queue_violation(&dom, None, "navigation", &resource.url, None, false);
+        }
+        blocks
     }
 
     /// Whether CSP `frame-ancestors` blocks `resource`, the response of child frame `page`'s
@@ -1924,7 +3089,8 @@ impl Browser {
     /// that bypasses CSP has none) against the origins of every frame above it. The
     /// violations are not fired at any document: the response never becomes one, and Chrome
     /// fires no `securitypolicyviolation` at the embedder (they only go to the response
-    /// policy's `report-uri`, which is not delivered yet). `X-Frame-Options` is not checked.
+    /// policy's `report-uri` / `report-to`, sent from here, report-only ones too).
+    /// `X-Frame-Options` is not checked.
     fn frame_ancestors_block(&self, page: FrameKey, resource: &Resource) -> bool {
         if page.child.is_none() || self.page(page.page).is_some_and(|p| p.bypass_csp) {
             return false;
@@ -1946,7 +3112,14 @@ impl Browser {
             ancestors.push(if frame.origin == "null" { None } else { url::Url::parse(&frame.origin).ok() });
             next = frame.parent;
         }
-        list.frame_ancestors_check(&ancestors).blocked
+        let outcome = list.frame_ancestors_check(&ancestors);
+        if !outcome.violations.is_empty() {
+            // The frame's current document supplies the network the reports go out on.
+            if let Some(bindings) = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()) {
+                pyro_webapi::csp::report_response_violations(&bindings, &outcome.violations, &resource.url, resource.status);
+            }
+        }
+        outcome.blocked
     }
 
     /// The document request of a navigation failed on the network. A new
@@ -2028,10 +3201,18 @@ impl Browser {
             refresh: None,
             content_language: None,
             last_modified: None,
-            reporting_endpoints: None,
+            reporting_endpoints: None, permissions_policy: None,
+            connection_allowlist: None,
+            link_fetches: Vec::new(),
+            integrity_headers: None,
             dictionary_links: Vec::new(),
+            speculation_rules: Vec::new(),
+            no_vary_search: None,
             referrer_policy: None,
-            origin_agent_cluster: false,
+            origin_agent_cluster: false, force_load_at_top: false, isolation_policy: 0, ephemeral_jar: false,
+            embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
+            embedder_reporting: Default::default(),
+            coop: Vec::new(),
             sent_referrer: None,
             timing: None,
             partial: None,
@@ -2069,6 +3250,10 @@ impl Browser {
         error: String,
     ) {
         let Some(frame_id) = self.doc(page).map(|p| p.main_frame.id.clone()) else { return };
+        // The activation this navigation carried dies with it: no later commit may take it.
+        if let Some(state) = self.doc(page) {
+            state.nav.directive_gesture.set(None);
+        }
         self.forget_network_activity(page, &loader_id);
         self.emit(
             page.page,
@@ -2093,7 +3278,7 @@ impl Browser {
     /// parent's; for `about:blank`, `blob:` and `data:` its parent's, or in a popup's top-level
     /// frame its creator's (as the document that started the navigation usually is); `None` for
     /// any other URL. What a `javascript:` result set aside is taken only by its own frame.
-    fn local_scheme_csp(&mut self, page: FrameKey, url: &str) -> Option<pyro_webapi::csp::InheritedCsp> {
+    pub(crate) fn local_scheme_csp(&mut self, page: FrameKey, url: &str) -> Option<pyro_webapi::csp::InheritedCsp> {
         if self.csp_inherit_next.as_ref().is_some_and(|(k, _)| *k == page) {
             return self.csp_inherit_next.take().map(|(_, i)| i);
         }
@@ -2107,6 +3292,48 @@ impl Browser {
         }
         let creator = host.creator_csp.borrow().clone();
         creator
+    }
+
+    /// The Document-Isolation-Policy of the document that creates a local-scheme document in frame `page`: its
+    /// parent's, or in a popup's top-level frame its opener's (`None`: no creator).
+    pub(crate) fn creator_isolation(&self, page: FrameKey) -> Option<u8> {
+        let host = self.page(page.page).map(|p| p.frames.clone())?;
+        if page.child.is_some() {
+            return host.page_dom(host.parent_key(page)).map(|dom| dom.document_isolation());
+        }
+        let opener = host.opener.borrow().as_ref().and_then(std::rc::Weak::upgrade)?;
+        let creator = host.opener_frame.get().filter(|k| k.page == opener.page).unwrap_or(FrameKey { page: opener.page, child: None });
+        opener.page_dom(creator).map(|dom| dom.document_isolation())
+    }
+
+    /// Whether the navigation to `url` may invoke a text directive of it (URL Fragment Text
+    /// Directives "should allow text fragment"): a browser-initiated one (an address bar
+    /// navigation) or one started with a user activation, of a top-level document that has no
+    /// opener (a popup `window.open` made keeps one unless `noopener`), or of a frame
+    /// same-origin with its top-level document. A traversal and a frame's `src` never do.
+    fn text_directive_allowed(&self, page: FrameKey, opts: &NavigateOpts, url: &str) -> bool {
+        use crate::NavigationReason;
+        let Some(state) = self.doc(page) else { return false };
+        let gesture = state.nav.directive_gesture.get();
+        let Some(host) = self.page(page.page).map(|p| p.frames.clone()) else { return false };
+        if page.child.is_some() {
+            let top_origin = self.doc(FrameKey::from(page.page)).map(|d| d.main_frame.origin.clone());
+            return matches!(opts.reason, NavigationReason::Script | NavigationReason::Anchor | NavigationReason::FormGet) && gesture == Some(true) && top_origin.as_deref() == Some(origin_of(url).as_str());
+        }
+        // A window that kept its opener invokes none (the opener could read the scroll position
+        // through the document).
+        let has_opener = host.opener.borrow().as_ref().and_then(std::rc::Weak::upgrade).is_some()
+            && !host.popup.borrow().as_ref().is_some_and(|t| t.opener_cleared());
+        if has_opener {
+            return false;
+        }
+        match opts.reason {
+            NavigationReason::AddressBar => opts.cdp_request_id.is_some() || gesture != Some(false),
+            NavigationReason::Anchor | NavigationReason::FormGet | NavigationReason::FormPost | NavigationReason::Script => {
+                gesture == Some(true)
+            }
+            NavigationReason::History | NavigationReason::InitialFrameNavigation => false,
+        }
     }
 
     pub(crate) fn begin_document(
@@ -2141,6 +3368,22 @@ impl Browser {
         // CSP Embedded Enforcement: the required policy this document accepted, taken before
         // anything can fail (`Browser::prepare_required_csp`).
         let enforce_required = self.doc_mut(page).and_then(|mut p| p.enforce_required_csp.take());
+        // URL Fragment Text Directives: the directive leaves the document's URL (and its session
+        // history entry); whether it activates is decided now, while the document it replaces
+        // is still the active one.
+        let stripped;
+        let mut opts = opts;
+        let mut text_directive = None;
+        if unreachable.is_none() {
+            if let Some((url, directives)) = strip_fragment_directive(&resource.url) {
+                let allowed = self.text_directive_allowed(page, opts, &resource.url);
+                text_directive = Some((directives, allowed));
+                resource.url = url.clone();
+                stripped = NavigateOpts { url, ..opts.clone() };
+                opts = &stripped;
+            }
+        }
+        let activation = self.doc(page).and_then(|d| d.nav.directive_gesture.take());
         let origin = origin_of(&resource.url);
         // The policy the navigation request was sent with (its initiator's).
         let policy = match (&opts.referrer, opts.referrer_policy) {
@@ -2184,6 +3427,13 @@ impl Browser {
                 kept_csp = Some(pyro_webapi::csp::InheritedCsp::of(&dom));
             }
         }
+        // The same container's embedder policy (HTML § 7.1.4) goes with it: a top-level local-scheme
+        // document a script navigated to (`location = blobURL`) has the one of the document that did.
+        let prior_embedder = (document_initiated && page.child.is_none() && is_local_scheme(&resource.url))
+            .then(|| {
+                self.doc(page).and_then(|d| d.main_frame.page_dom.as_ref().map(|dom| (dom.embedder_policy(), dom.embedder_reporting())))
+            })
+            .flatten();
         let csp_sandbox = resource
             .header_csp
             .as_deref()
@@ -2196,6 +3446,29 @@ impl Browser {
         if let Some(mut state) = self.doc_mut(page) {
             state.committing_csp_sandbox = csp_sandbox;
         }
+        let error_document = unreachable.is_some();
+        // Bounce Tracking Mitigations: the sites this response's redirect chain went through.
+        if !error_document {
+            self.bounce_response_committed(page, Browser::bounce_response_sites(&resource.coop, &resource.url));
+        }
+        // COOP navigation reports (HTML "cross-origin opener policy reporting"): the reports about
+        // the document being replaced and about redirects go out now, while that document is the
+        // active one; those the new document receives are queued once it has its endpoints.
+        let coop_reports = if page.child.is_none() && !error_document && !resource.coop.is_empty() {
+            let host = self.page(page.page).map(|p| p.frames.clone());
+            let carrier = self.doc(page).and_then(|p| p.main_frame.page_dom.clone());
+            let referrer = resource.sent_referrer.clone().or_else(|| opts.referrer.clone()).unwrap_or_default();
+            host.map(|host| {
+                crate::coop_report::queue_navigation_reports(&host, carrier.as_ref(), &resource.coop, &referrer, &opts.url)
+            })
+        } else {
+            None
+        };
+        // The Document-Isolation-Policy of the document that is about to commit: its response's, or for a
+        // local-scheme document its creator's (`commit_document` compares it with the previous document's
+        // for Window reuse).
+        let isolation = if is_local_scheme(&resource.url) { self.creator_isolation(page).unwrap_or(0) } else { resource.isolation_policy };
+        self.isolation_next = Some((page, isolation));
         let committed = self.commit_document(page, opts, loader_id.clone(), &origin, history, unreachable);
         if let Some(nav) = &nav {
             nav.set_incoming_fetch(None);
@@ -2210,6 +3483,56 @@ impl Browser {
                 let requested =
                     resource.origin_agent_cluster && crate::window::frame_chain_secure(&host, page, &resource.url);
                 host.record_origin_keying(&origin, requested);
+            }
+        }
+        // HTML "enforce a response's cross-origin opener policy": a top-level document whose
+        // response (or one of its redirects) does not match the policy of the document it
+        // replaces joins a new browsing context group: a popup is cut from its opener before the
+        // new document runs anything. The document's policy is what the next navigation matches.
+        if page.child.is_none() && !error_document {
+            if let Some(host) = self.page(page.page).map(|p| p.frames.clone()) {
+                let left_group = match resource.coop.last().cloned() {
+                    Some(last) => {
+                        let switched = host.coop_requires_switch(&resource.coop);
+                        let left = host.coop_committed(last.enforced.value, last.origin.clone(), switched);
+                        if switched {
+                            self.sever_openees(&host);
+                        }
+                        let virtual_switch = switched || coop_reports.as_ref().is_some_and(|r| r.virtual_switch);
+                        host.coop_note_commit(&last, &page_dom, virtual_switch);
+                        left
+                    }
+                    // A document the loader says nothing of (a local scheme, a cached or embedder
+                    // supplied one) has no policy; a popup's initial about:blank keeps its creator's.
+                    None if resource.url != "about:blank" => {
+                        let left = host.coop_committed(CoopValue::UnsafeNone, origin.clone(), false);
+                        host.coop_note_commit(&CoopResponse::default(), &page_dom, false);
+                        left
+                    }
+                    None => false,
+                };
+                if left_group {
+                    // The popup's own copy of its browsing context name.
+                    if let Some(p) = self.page_mut(page.page) {
+                        p.main_frame.name.clear();
+                    }
+                    self.sync_root(page.page);
+                }
+            }
+        }
+        // URL Fragment Text Directives and HTML "try to scroll to the fragment": a document a
+        // navigation committed scrolls to the fragment's text, else its element, once there is
+        // one (a traversal or a reload too: Pyro restores no scroll position across documents).
+        let has_directive = text_directive.is_some();
+        if !error_document {
+            let fragment = pyro_net::Url::parse(&resource.url).ok().and_then(|u| u.fragment().map(str::to_owned));
+            let directives = text_directive.take().filter(|(_, allowed)| *allowed).map(|(d, _)| d);
+            pyro_webapi::highlights::begin_fragment_scroll(&page_dom, fragment.as_deref(), directives, resource.force_load_at_top);
+        }
+        // An activation the document did not use stays for a client redirect while it loads.
+        if activation == Some(true) && !has_directive {
+            if let Some(nav) = &nav {
+                nav.directive_gesture.set(Some(true));
             }
         }
         match resource.sent_referrer.take() {
@@ -2236,8 +3559,37 @@ impl Browser {
             Some(kept) => Some(kept),
             None => self.local_scheme_csp(page, &resource.url),
         };
+        // The embedder policy of the document (HTML § 7.1.4): its response's, or for a local-scheme
+        // document (`about:blank`, `srcdoc`, `blob:`, `data:`, a `javascript:` result) its
+        // creator's, before its scripts make a request.
+        let (embedder_policy, embedder_reporting) = match (&inherited, prior_embedder) {
+            (Some(i), _) => (i.embedder_policy, i.embedder_reporting.clone()),
+            (None, Some(prior)) => prior,
+            (None, None) => (resource.embedder_policy, resource.embedder_reporting.clone()),
+        };
+        // HTML "obtain an embedder policy": a document that is not a secure context (an HTTPS frame below an
+        // HTTP page, a document of an insecure origin) has the default policy whatever its response says.
+        let secure = self.page(page.page).map(|p| p.frames.clone()).is_none_or(|host| crate::window::frame_chain_secure(&host, page, &resource.url));
+        let (embedder_policy, embedder_reporting) = if secure { (embedder_policy, embedder_reporting) } else { Default::default() };
+        page_dom.set_embedder_policy(embedder_policy);
+        page_dom.set_embedder_reporting(embedder_reporting);
+        // Its Document-Isolation-Policy likewise (`isolation`, decided before the commit): the response's, or
+        // the creator's for a local-scheme document. A policy keys the agent cluster with the origin.
+        page_dom.set_document_isolation(isolation);
+        if isolation != 0 {
+            if let Some(host) = self.page(page.page).map(|p| p.frames.clone()) {
+                if let Some(key) = host.with_frame(page, |f| format!("{}#isolation{isolation}", crate::frames::frame_origin_key(f))) {
+                    page_dom.set_window_agent_cluster(host.cluster_group.get(), key);
+                }
+            }
+        }
         if let Some(inherited) = inherited.filter(|_| !bypass_csp && resource.header_csp.is_none()) {
             inherited.apply(&page_dom);
+        }
+        // The document's own `Connection-Allowlist` (a local-scheme document's, inherited just above,
+        // stands: its resource carries none).
+        if resource.connection_allowlist.is_some() {
+            page_dom.set_connection_allowlist(resource.connection_allowlist.clone());
         }
         if let Some(csp) = resource.header_csp.as_deref().filter(|_| !bypass_csp) {
             let (enforce, report_only) = csp.split_once('\n').unwrap_or((csp, ""));
@@ -2262,9 +3614,13 @@ impl Browser {
                 sandbox.forms_blocked |= flags.forms_blocked;
                 sandbox.propagates_to_popups |= flags.propagates_to_popups;
                 sandbox.downloads_blocked |= flags.downloads_blocked;
+                sandbox.storage_access_blocked |= flags.storage_access_blocked;
             }
             if flags.forms_blocked {
                 page_dom.set_forms_sandboxed(true);
+            }
+            if flags.storage_access_blocked {
+                page_dom.set_storage_access_sandboxed(true);
             }
             if flags.scripts_disabled {
                 page_dom.set_scripting_disabled(true);
@@ -2285,17 +3641,47 @@ impl Browser {
         if !resource.dictionary_links.is_empty() {
             self.dictionary_headers(page, resource.dictionary_links.clone());
         }
+        if !resource.link_fetches.is_empty() {
+            self.link_headers(page, resource.link_fetches.clone());
+        }
+        // Speculation rules are fetched for top-level documents only.
+        if crate::speculation_rules::SUPPORTED && !resource.speculation_rules.is_empty() && page.child.is_none() {
+            self.speculation_header(page, &resource.url, &resource.speculation_rules);
+        }
         if resource.content_language.is_some() {
             let _ = dom.borrow_mut().set_content_language(doc, resource.content_language.as_deref());
         }
         // The document's Reporting API endpoints (CSP `report-to`); a document without the header
         // has none, and the previous document's report state goes.
         page_dom.set_reporting_endpoints(resource.reporting_endpoints.as_deref());
+        // The COOP navigation reports of this document (to its own endpoints, now known).
+        if let Some(reports) = coop_reports {
+            for report in reports.to_document {
+                pyro_webapi::reporting_store::queue_endpoint_report(&page_dom, report);
+            }
+        }
+        // The document's declared permissions policy (`Permissions-Policy`, and report-only); its
+        // inherited one was set when the document was made (`bindings::create`).
+        page_dom.set_permissions_policy_headers(resource.permissions_policy.as_deref());
+        // `bindings::create` parses every `about:blank` document from the blank markup (html,
+        // head, body). A document made from a body at that URL (a `javascript:` URL's string
+        // result replacing an about:blank document keeps its URL) must start empty: the parser
+        // cannot add its html element to a document that has one, and the string's markup is lost.
+        if resource.url == "about:blank" {
+            let mut dom = dom.borrow_mut();
+            let children: Vec<NodeId> = dom.children(doc).map(|c| c.collect()).unwrap_or_default();
+            for child in children {
+                let _ = dom.remove_child(doc, child);
+            }
+        }
         let json_document = pyro_net::is_json_mime(&resource.mime);
         let mut parser = if json_document {
             DocumentParser::new_json(dom.clone(), doc, &resource.mime)
         } else if resource.mime == "text/plain" {
             DocumentParser::new_plaintext(dom.clone(), doc)
+        } else if resource.mime == "text/css" || resource.mime == "text/vtt" || pyro_net::is_javascript_mime(&resource.mime) {
+            // HTML "page load processing model for text files": shown as text, with the resource's own type.
+            DocumentParser::new_text_as(dom.clone(), doc, &resource.mime)
         } else if pyro_dom::parse::is_xml_mime(&resource.mime) {
             DocumentParser::new_xml(dom.clone(), doc, &resource.mime)
         } else {
@@ -2320,6 +3706,13 @@ impl Browser {
         // Otherwise the locale default: windows-1252 for Chrome's en-US, no UTF-8
         // sniffing (encoding/sniffing.html). file: keeps UTF-8, which Chrome detects there.
         let http = resource.url.starts_with("http://") || resource.url.starts_with("https://");
+        // Chrome runs its encoding detector on an unlabelled http(s) document unless a same-origin parent supplies one.
+        parser.set_detect_charset(http && inherited.is_none());
+        let tld = url::Url::parse(&resource.url).ok().and_then(|u| match u.host() {
+            Some(url::Host::Domain(d)) => d.trim_end_matches('.').rsplit('.').next().map(str::to_owned),
+            _ => None,
+        });
+        parser.set_detect_tld(tld.as_deref());
         parser.set_fallback_charset(inherited.or(http.then_some("windows-1252")));
         // An image is shown in an image document (HTML § 7.6.6 "Page load processing model for
         // media"): Chromium's markup, the image at the top left in a frame, centred on a dark
@@ -2560,6 +3953,17 @@ impl Browser {
             }
             info
         };
+        if info.kind == ScriptKind::SpeculationRules {
+            let rules_base = {
+                let d = dom.borrow();
+                d.node_document(node).ok().and_then(|doc| d.document_base_url(doc).ok().map(str::to_owned))
+            };
+            // Until speculation rules are supported the script is inert, as in a browser without them.
+            if crate::speculation_rules::SUPPORTED {
+                self.add_speculation_rules(page, &dom, node, &info, rules_base.as_deref().unwrap_or(&base));
+            }
+            return;
+        }
         if info.kind == ScriptKind::ImportMap {
             let map_base = {
                 let d = dom.borrow();
@@ -2669,10 +4073,11 @@ impl Browser {
                     l.inline_module_seq
                 };
                 let url = self.inline_module_identity(page, &script_base, &seq.to_string());
+                let text = at_start_line(&info.inline_text, info.start_line);
                 if info.async_ {
-                    self.execute_module(page, &info.inline_text, &url, false, Some(element), false);
+                    self.execute_module(page, &text, &url, false, Some(element), false);
                 } else {
-                    let ps = PendingScript { element, ty, url, source: Some(Ok(info.inline_text)), external: false };
+                    let ps = PendingScript { element, ty, url, source: Some(Ok(text)), external: false };
                     self.load_mut(page).expect("load").deferred.push_back(Rc::new(RefCell::new(ps)));
                 }
             }
@@ -2887,6 +4292,7 @@ impl Browser {
         let req = FetchRequest {
             csp: csp_guard.clone(),
             required_csp: None,
+            purpose: None,
             parser_priority,
             post: None,
             url,
@@ -2901,6 +4307,7 @@ impl Browser {
             initiator,
             module,
             part: None,
+            accept_signature: integrity.as_deref().and_then(pyro_webapi::signature_sri::accept_signature_for),
         };
         let cancel = self.fetch_document_resource(
             page,
@@ -2917,12 +4324,9 @@ impl Browser {
                 }
                 let res = match res {
                     Ok(r) if (200..300).contains(&r.status) => {
-                        let blocked = integrity
-                            .as_deref()
-                            .and_then(|i| {
-                                let origin = b.doc(page).map(|p| p.main_frame.origin.clone()).unwrap_or_default();
-                                integrity_error(&r, Some(i), cors, &origin)
-                            })
+                        // (Without `integrity` too: the response's own `Unencoded-Digest` and signatures.)
+                        let origin = b.doc(page).map(|p| p.main_frame.origin.clone()).unwrap_or_default();
+                        let blocked = integrity_error(&r, integrity.as_deref(), cors, &origin)
                             .or_else(|| {
                                 module.and_then(|ty| pyro_webapi::module_script::mime_error(ty, &r.mime, &r.url))
                             })
@@ -2937,6 +4341,17 @@ impl Browser {
                                         )
                                     })
                             });
+                        // CSP Integrity: a script that passed its checks is reported with its hash to the
+                        // policies asking for it (an opaque response has none to give).
+                        if blocked.is_none() {
+                            if let Some(bindings) = &page_dom {
+                                if let Some(list) = pyro_webapi::csp::policy_list(bindings) {
+                                    let origin = b.doc(page).map(|p| p.main_frame.origin.clone()).unwrap_or_default();
+                                    let data = (!is_opaque(&r, cors, &origin)).then_some(&r.body[..]);
+                                    pyro_webapi::csp_report::report_script_hashes(bindings, &list, &request_url, data);
+                                }
+                            }
+                        }
                         match blocked {
                             Some(e) => Err(e),
                             // A module script is UTF-8 whatever its charset
@@ -2953,6 +4368,10 @@ impl Browser {
                                         bindings.set_script_errors_muted(&r.url, muted);
                                         bindings.set_script_errors_muted(&request_url, muted);
                                     }
+                                }
+                                // The script's base URL is its response's: where a redirect led.
+                                if let Some(mut doc) = b.doc_mut(page) {
+                                    doc.preloads.note_script_response(&request_url, &r.url);
                                 }
                                 Ok(pyro_net::decode_text_first(
                                     &r.body,
@@ -2981,7 +4400,10 @@ impl Browser {
         let Some(bindings) = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()) else { return true };
         let kind = pyro_webapi::csp::InlineKind::Script;
         let nonce = nonce.map_or_else(|| pyro_webapi::csp::element_nonce(&bindings, info.node), str::to_owned);
-        pyro_webapi::csp::inline_allowed(&bindings, kind, &nonce, &info.inline_text, Some(info.node))
+        // A parser-created inline script is located at its start tag's end (no script runs then).
+        let location = if info.parser_inserted { pyro_webapi::csp::parser_location(&bindings, info.node) } else { None };
+        let list = pyro_webapi::csp::policy_list(&bindings);
+        pyro_webapi::csp::inline_allowed_in_at(&bindings, list.as_deref(), kind, &nonce, &info.inline_text, Some(info.node), location.as_ref())
     }
 
     /// [`Browser::inline_script_allowed`] for an inline script the parser did not insert
@@ -3275,6 +4697,17 @@ impl Browser {
             let _ = d.mark_script_started(node);
             info
         };
+        if info.kind == ScriptKind::SpeculationRules {
+            let rules_base = {
+                let d = dom.borrow();
+                d.node_document(node).ok().and_then(|doc| d.document_base_url(doc).ok().map(str::to_owned))
+            };
+            // Until speculation rules are supported the script is inert, as in a browser without them.
+            if crate::speculation_rules::SUPPORTED {
+                self.add_speculation_rules(page, &dom, node, &info, rules_base.as_deref().unwrap_or(&base));
+            }
+            return;
+        }
         if info.kind == ScriptKind::ImportMap {
             let map_base = {
                 let d = dom.borrow();
@@ -3347,7 +4780,7 @@ impl Browser {
             (ScriptType::Module, None) => {
                 let script_base = node_base_url(&element.dom.borrow(), node).unwrap_or(base);
                 let url = self.dynamic_inline_module_identity(page, &script_base);
-                self.execute_module(page, &info.inline_text, &url, false, Some(element), false);
+                self.execute_module(page, &at_start_line(&info.inline_text, info.start_line), &url, false, Some(element), false);
                 self.drain_dom_resources(page);
             }
         }
@@ -3436,6 +4869,7 @@ impl Browser {
                 let req = FetchRequest {
                     csp: None,
                     required_csp: None,
+                    purpose: None,
                     parser_priority: false,
                     credentials: None,
                     post: None,
@@ -3450,6 +4884,7 @@ impl Browser {
                     initiator: None,
                     module: None,
                     part: None,
+                    accept_signature: None,
                 };
                 loader.fetch(
                     self,
@@ -3505,6 +4940,10 @@ impl Browser {
     /// document.
     pub(crate) fn stop_loading(&mut self, page: FrameKey) {
         if self.doc(page).is_some_and(|d| d.pending_loader().is_some()) {
+            // The cancelled navigation's activation goes with it.
+            if let Some(state) = self.doc(page) {
+                state.nav.directive_gesture.set(None);
+            }
             self.cancel_pending_document(page);
         }
         if self.document_aborted(page) {
@@ -3581,6 +5020,9 @@ impl Browser {
         self.sync_root(page.page);
         if let Some(dom) = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()) {
             pyro_webapi::lifecycle::dom_content_loaded(&dom, dom.document());
+            // The document's content is parsed and its DOMContentLoaded handlers have run: the
+            // load's fragment (text directive or element) can be scrolled to now.
+            pyro_webapi::highlights::try_fragment_scroll(&dom, true);
         }
         self.emit(page.page, PageEvent::FrameDomContentLoaded { frame_id, loader_id, timestamp: self.timestamp() });
         self.maybe_fire_load(page);
@@ -3661,6 +5103,8 @@ impl Browser {
         self.sync_root(page.page);
         if let Some(dom) = &frame.page_dom {
             pyro_webapi::lifecycle::load(dom, dom.document());
+            // The attempt after `load` is the last one: a text not found falls back to the element.
+            pyro_webapi::highlights::try_fragment_scroll(dom, false);
             // HTML "update the rendering" reveals a document at its first rendering opportunity;
             // one that requested no animation frame gets a frame now, so `pagereveal` fires.
             if pyro_webapi::lifecycle::reveal_pending(dom) {
@@ -3706,6 +5150,9 @@ impl Browser {
     pub(crate) fn stylesheets_changed(&mut self, page: FrameKey) {
         self.drain_dom_resources(page);
         if !self.stylesheets_block_scripts(page) {
+            if let Some(dom) = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()) {
+                pyro_webapi::lifecycle::autofocus_unblocked(&dom);
+            }
             let pending = self.load_mut(page).and_then(|mut l| l.stylesheet_blocked_script.take());
             if let Some((element, source, nonce)) = pending {
                 self.load_mut(page).expect("load").blocked = false;
@@ -3734,14 +5181,15 @@ impl Browser {
                 return;
             }
         }
+        // A redirected script is the response URL's (its base URL, for the `import()`s in it).
+        let redirected = self.doc(page).and_then(|p| p.preloads.script_response_url(url));
+        let url = redirected.as_deref().unwrap_or(url);
         let outer = bindings.as_ref().and_then(|dom| dom.current_script());
         if let Some(dom) = &bindings {
             dom.set_executing_classic_script(element.node);
             pyro_webapi::trusted_types::sync_compile_strings(&scope, dom);
         }
-        if let Err(e) = scope.eval(text, Some(url), i32::try_from(line).unwrap_or(i32::MAX)) {
-            scope.report_exception(&e);
-        }
+        eval_and_report(&scope, text, url, i32::try_from(line).unwrap_or(i32::MAX));
         if let Some(dom) = &bindings {
             dom.set_current_script(outer);
         }
@@ -3752,18 +5200,7 @@ impl Browser {
     fn add_import_map(&mut self, page: FrameKey, info: &pyro_dom::script::ScriptInfo, base: &str) {
         let Some(realm) = self.main_realm(page) else { return };
         let Ok(scope) = realm.scope() else { return };
-        // Spec: an external import map is an error event; there is no fetch.
-        if info.src.is_some() {
-            scope.console_warn("External import maps are not supported: <script type=\"importmap\"> ignored its src.");
-            return;
-        }
-        match scope.add_import_map(&info.inline_text, base) {
-            Ok(warnings) => warnings.iter().for_each(|w| scope.console_warn(&format!("Import map: {w}"))),
-            Err(JsError::Unsupported(what)) => {
-                scope.console_warn(&format!("Ignored <script type=\"importmap\">: {what}"))
-            }
-            Err(e) => scope.report_exception(&e),
-        }
+        register_import_map(&scope, info, base);
     }
 
     /// Runs a script the network parser reached with the parser lent to the
@@ -3920,7 +5357,7 @@ impl Browser {
                 let url = self.dynamic_inline_module_identity(page, &script_base);
                 let element =
                     dom.borrow_mut().add_ref(node).ok().map(|_| Rc::new(ResourceNode { dom: dom.clone(), node }));
-                self.execute_module(page, &info.inline_text, &url, false, element, false);
+                self.execute_module(page, &at_start_line(&info.inline_text, info.start_line), &url, false, element, false);
             }
             return;
         };
@@ -4019,18 +5456,31 @@ impl Browser {
         let counted = self.load_mut(page).is_some();
         // Ends the script in a task, after it ran: the element's event
         // (`Some(true)` load, `Some(false)` error), then what waits for it.
+        // The element's `load` is fired where the module's evaluation error was reported, in the
+        // same turn (HTML "execute the script element": the event follows the run, nothing
+        // between): the task below then finds it fired.
+        let fired = Rc::new(std::cell::Cell::new(false));
         let finish = {
             let element = element.clone();
+            let fired = fired.clone();
             Rc::new(move |event: Option<bool>| {
                 let loader_id = loader_id.clone();
                 let element = element.clone();
                 let after = after.clone();
+                let fired = fired.clone();
                 sched.post(TaskSource::Networking, move |b| {
                     let complete = || {
                     if b.frame_loader(page) != loader_id {
                         return;
                     }
                     if let Some(element) = &element {
+                        // The element's event fires once: whichever of this task and the
+                        // evaluation's late rejection report gets there first fires it (a
+                        // module awaiting at top level rejects long after this task).
+                        let event = event.filter(|_| !fired.get());
+                        if event.is_some() {
+                            fired.set(true);
+                        }
                         b.script_ran(page, element, event);
                     }
                     // The handler may have replaced the document.
@@ -4064,13 +5514,28 @@ impl Browser {
                 let (fetched, failed) = (finish.clone(), finish.clone());
                 let url = url.to_owned();
                 let bindings = self.doc(page).and_then(|p| p.main_frame.page_dom.clone());
+                // `load` at the element, right after the error report (see `fired`).
+                let fire = {
+                    let (element, bindings, fired) = (element.clone(), bindings.clone(), fired.clone());
+                    Rc::new(move || {
+                        if let (Some(element), Some(bindings)) = (&element, &bindings) {
+                            if !fired.replace(true) {
+                                bindings.unblock_rendering(element.node);
+                                if let Some(ok) = ran {
+                                    pyro_webapi::lifecycle::resource_loaded(bindings, element.node, ok);
+                                }
+                            }
+                        }
+                    })
+                };
+                let fire_parse_error = fire.clone();
                 // The script runs as soon as its graph is ready, with no task
                 // in between (one could deliver an event, an <object>'s load,
                 // before the script's listener for it exists).
                 scope.then(
                     loaded,
                     move |s, _v| {
-                        run_module_graph(s, bindings.as_ref(), &url);
+                        run_module_graph(s, bindings.as_ref(), &url, fire);
                         fetched(ran)
                     },
                     move |s, e| {
@@ -4078,6 +5543,7 @@ impl Browser {
                         // reports the error; one a fetch failed has no result.
                         if module_graph_has_script(s, e) {
                             s.report_exception(&JsError::thrown(Persistent::new(s, e)));
+                            fire_parse_error();
                             failed(ran);
                         } else {
                             failed(Some(false));
@@ -4208,14 +5674,18 @@ impl Browser {
 /// a link error and an evaluation error are reported upon the evaluation
 /// promise's rejection, so after the microtasks the evaluation queued (it
 /// runs inside a microtask, where they do not drain on return).
-fn run_module_graph(scope: &pyro_js::Scope<'_>, bindings: Option<&Rc<pyro_webapi::PageDom>>, url: &str) {
+fn run_module_graph(scope: &pyro_js::Scope<'_>, bindings: Option<&Rc<pyro_webapi::PageDom>>, url: &str, reported_error: Rc<dyn Fn()>) {
     let evaluated = match bindings {
         Some(dom) => dom.with_destructive_writes_ignored(|| scope.link_and_evaluate_module(url)),
         None => scope.link_and_evaluate_module(url),
     };
-    let report = |s: &pyro_js::Scope<'_>, e: pyro_js::Value<'_>| {
+    // `reported_error` (the script element's `load`) follows the report at once: another
+    // script's report must not come between them.
+    let thrown = reported_error.clone();
+    let report = move |s: &pyro_js::Scope<'_>, e: pyro_js::Value<'_>| {
         s.note_module_evaluation_error(e);
-        s.report_exception(&JsError::thrown(Persistent::new(s, e)))
+        s.report_exception(&JsError::thrown(Persistent::new(s, e)));
+        reported_error();
     };
     let reported = match evaluated {
         Ok(promise) => scope.then(promise, |_s, _v| {}, report),
@@ -4225,7 +5695,8 @@ fn run_module_graph(scope: &pyro_js::Scope<'_>, bindings: Option<&Rc<pyro_webapi
                 scope.undefined(),
                 move |s, _v| {
                     s.note_module_evaluation_error(error.get(s));
-                    s.report_exception(&JsError::Thrown(error))
+                    s.report_exception(&JsError::Thrown(error));
+                    thrown();
                 },
                 |_s, _v| {},
             )
@@ -4257,7 +5728,15 @@ fn module_graph_has_script(scope: &pyro_js::Scope<'_>, error: pyro_js::Value<'_>
             .get_atom("message")
             .ok()
             .and_then(|m| m.as_string())
-            .is_some_and(|m| m.starts_with("Failed to resolve module specifier")),
+            // JavaScriptCore's resolution errors: a bare specifier without an import-map hit
+            // (`Module specifier: x does not start with "/", "./", or "../".`) and an unknown
+            // `with { type }` (`Import attribute type "x" is not valid`) both reject the graph
+            // although no fetch failed: the module script reports them and then fires `load`.
+            .is_some_and(|m| {
+                m.starts_with("Failed to resolve module specifier")
+                    || m.starts_with("Module specifier: ")
+                    || m.starts_with("Import attribute type ")
+            }),
         _ => false,
     }
 }
@@ -4285,6 +5764,21 @@ fn graph_loaded(
     });
 }
 
+/// Registers the import map of the script `info` in `scope`'s realm (HTML "register an import
+/// map"); its problems go to the console or `error` reporting.
+fn register_import_map(scope: &pyro_js::Scope<'_>, info: &pyro_dom::script::ScriptInfo, base: &str) {
+    // Spec: an external import map is an error event; there is no fetch.
+    if info.src.is_some() {
+        scope.console_warn("External import maps are not supported: <script type=\"importmap\"> ignored its src.");
+        return;
+    }
+    match scope.add_import_map(&info.inline_text, base) {
+        Ok(warnings) => warnings.iter().for_each(|w| scope.console_warn(&format!("Import map: {w}"))),
+        Err(JsError::Unsupported(what)) => scope.console_warn(&format!("Ignored <script type=\"importmap\">: {what}")),
+        Err(e) => scope.report_exception(&e),
+    }
+}
+
 /// "Prepare the script element" for a script the parser did not insert
 /// (`PageHooks::script_connected`, a post-connection step), before the DOM
 /// call that connected it (or gave it its text or `src`) returns: an inline
@@ -4304,7 +5798,9 @@ pub(crate) fn prepare_inserted_script(frame: &crate::Frame, node: NodeId) {
         if info.already_started || info.parser_inserted || !dom.is_connected(node).unwrap_or(false) {
             return None;
         }
-        if (info.src.is_none() && info.inline_text.is_empty()) || info.kind == ScriptKind::Data {
+        // (An empty inline script is dropped below, after Trusted Types' "prepare the script
+        // text": the default policy may make it non-empty.)
+        if info.kind == ScriptKind::Data {
             return None;
         }
         Some(info)
@@ -4328,6 +5824,15 @@ pub(crate) fn prepare_inserted_script(frame: &crate::Frame, node: NodeId) {
             Some(source) => {
                 info = fresh;
                 info.inline_text = source;
+                // The policy made it empty: prepare returns on an empty source text BEFORE it sets
+                // "already started", so a later text set can still run the script. Stashed as a
+                // data block, as the rejection below, so the resource event its insertion queued
+                // does not ask the policy again.
+                if info.src.is_none() && info.inline_text.is_empty() {
+                    info.kind = ScriptKind::Data;
+                    let _ = dom.stash_prepared_script(node, info, bindings.document());
+                    return;
+                }
             }
             None => {
                 // Not prepared (nor started). The resource event its insertion queued finds it
@@ -4340,9 +5845,32 @@ pub(crate) fn prepare_inserted_script(frame: &crate::Frame, node: NodeId) {
             }
         }
     }
+    // Prepare: no `src` and an empty source text (the default policy did not run for it).
+    if info.src.is_none() && info.inline_text.is_empty() {
+        return;
+    }
     let (text, line) = {
         let Ok(mut dom) = bindings.dom.try_borrow_mut() else { return };
         let _ = dom.mark_script_started(node);
+        // An inline import map is registered as the script is prepared, before the inserting call
+        // returns (HTML "prepare the script element": "register an import map"): an `import()`
+        // right after the insertion already sees it. Its CSP inline check is the other scripts'.
+        if info.src.is_none() && info.kind == ScriptKind::ImportMap {
+            let base = dom
+                .node_document(node)
+                .ok()
+                .and_then(|doc| dom.document_base_url(doc).ok().map(str::to_owned))
+                .unwrap_or_else(|| frame.base_url.clone());
+            drop(dom);
+            let nonce = pyro_webapi::csp::element_nonce(&bindings, node);
+            if !pyro_webapi::csp::inserted_script_allowed(&bindings, &nonce, &info.inline_text, node) {
+                return;
+            }
+            if let Ok(scope) = realm.scope() {
+                register_import_map(&scope, &info, &base);
+            }
+            return;
+        }
         if info.src.is_some() || info.kind != ScriptKind::Classic || info.nomodule {
             let document = bindings.document();
             let _ = dom.stash_prepared_script(node, info, document);
@@ -4430,6 +5958,37 @@ fn suggested_filename(attribute: &str, url: &str) -> String {
 }
 
 /// Whether a Content-Disposition value has the `attachment` type.
+/// HTML "run a classic script" for a script the parser or the loader runs: the exception is
+/// reported (step 7.3, the `error` event) BEFORE "clean up after running script" (step 7.2's
+/// microtask checkpoint). JavaScriptCore checkpoints when the outermost call returns, so the
+/// evaluation and the report share one script frame ([`pyro_js::Scope::in_script_frame`]); a
+/// microtask the script queued then runs after the `error` listeners. WPT
+/// html/semantics/scripting-1/the-script-element/microtasks/evaluation-order-1.
+fn eval_and_report(scope: &pyro_js::Scope<'_>, text: &str, url: &str, line: i32) {
+    let (source, name) = (text.to_owned(), url.to_owned());
+    let ran = scope.in_script_frame(move |s| {
+        if let Err(e) = s.eval(&source, Some(&name), line) {
+            s.report_exception(&e);
+        }
+    });
+    if ran.is_err() {
+        if let Err(e) = scope.eval(text, Some(url), line) {
+            scope.report_exception(&e);
+        }
+    }
+}
+
+/// An inline module script's source text placed at its document line: the engine numbers a module's
+/// lines from 1, so the lines before the script's own are blank ones (columns are kept; WPT
+/// html/semantics/scripting-1/the-script-element/module/evaluation-error-5 reports the document line).
+fn at_start_line(text: &str, start_line: u32) -> String {
+    let before = start_line.saturating_sub(1).min(1_000_000) as usize;
+    let mut out = String::with_capacity(before + text.len());
+    out.extend(std::iter::repeat('\n').take(before));
+    out.push_str(text);
+    out
+}
+
 fn is_attachment(value: &str) -> bool {
     value.split(';').next().is_some_and(|t| t.trim().eq_ignore_ascii_case("attachment"))
 }
@@ -4514,10 +6073,18 @@ mod disposition_tests {
             refresh: None,
             content_language: None,
             last_modified: None,
-            reporting_endpoints: None,
+            reporting_endpoints: None, permissions_policy: None,
+            connection_allowlist: None,
+            link_fetches: Vec::new(),
+            integrity_headers: None,
             dictionary_links: Vec::new(),
+            speculation_rules: Vec::new(),
+            no_vary_search: None,
             referrer_policy: None,
-            origin_agent_cluster: false,
+            origin_agent_cluster: false, force_load_at_top: false, isolation_policy: 0, ephemeral_jar: false,
+            embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
+            embedder_reporting: Default::default(),
+            coop: Vec::new(),
             sent_referrer: None,
             timing: None,
             partial: None,

@@ -522,6 +522,7 @@ impl ResourceHandler<NestedStylesheetHandler> {
             &self.data.lock.read(),
             self.data.loader.abort_signal.as_ref(),
             None,
+            None,
         );
 
         let import_rule = self.data.import_rule.clone();
@@ -626,6 +627,7 @@ pub(crate) fn fetch_font_face(
     read_guard: &SharedRwLockReadGuard,
     abort_signal: Option<&AbortSignal>,
     device: Option<&style::device::Device>,
+    pending: Option<&mut Vec<PendingFont>>,
 ) {
     fetch_font_face_rules(
         sheet.contents(read_guard).rules(read_guard).iter(),
@@ -637,7 +639,59 @@ pub(crate) fn fetch_font_face(
         read_guard,
         abort_signal,
         device,
+        pending,
     )
+}
+
+/// pyro: a face of an `@font-face` rule with a `unicode-range`, whose fetch waits until some text of
+/// the document has a code point in the range (CSS Fonts 4 § 4.5: "the user agent must not download
+/// or use the font for code points outside this set"; Chromium starts a face's load when text needs it).
+/// [`BaseDocument::start_pending_fonts`](crate::BaseDocument) starts it.
+pub(crate) struct PendingFont {
+    url: Url,
+    format: FontFaceSourceFormatKeyword,
+    pub(crate) overrides: FontFaceOverrides,
+    pub(crate) node_id: Option<NodeId>,
+}
+
+impl PendingFont {
+    /// Whether one of `code_points` is in the face's `unicode-range`.
+    pub(crate) fn needed_by(&self, code_points: &[u32]) -> bool {
+        self.overrides.unicode_range.as_ref().is_none_or(|range| code_points.iter().any(|c| range.contains(*c)))
+    }
+
+    /// Starts the face's fetch.
+    pub(crate) fn fetch(
+        self,
+        tx: Sender<DocumentEvent>,
+        doc_id: usize,
+        network_provider: &Arc<dyn NetProvider>,
+        shell_provider: &Arc<dyn ShellProvider>,
+        abort_signal: Option<&AbortSignal>,
+    ) {
+        fetch_font(self.url, self.format, self.overrides, tx, doc_id, self.node_id, network_provider, shell_provider, abort_signal);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fetch_font(
+    url: Url,
+    format: FontFaceSourceFormatKeyword,
+    overrides: FontFaceOverrides,
+    tx: Sender<DocumentEvent>,
+    doc_id: usize,
+    node_id: Option<NodeId>,
+    network_provider: &Arc<dyn NetProvider>,
+    shell_provider: &Arc<dyn ShellProvider>,
+    abort_signal: Option<&AbortSignal>,
+) {
+    let mut request = stamped_request(url, abort_signal);
+    request.options.destination = blitz_traits::net::Destination::Font;
+    network_provider.fetch(
+        doc_id,
+        request,
+        ResourceHandler::boxed(tx, doc_id, node_id, shell_provider.clone(), FontFaceHandler { format, overrides }),
+    );
 }
 
 /// Fetch the fonts of the `@font-face` rules among `rules`
@@ -652,6 +706,7 @@ pub(crate) fn fetch_font_face_rules<'a>(
     read_guard: &'a SharedRwLockReadGuard,
     abort_signal: Option<&AbortSignal>,
     device: Option<&style::device::Device>,
+    mut pending: Option<&mut Vec<PendingFont>>,
 ) {
     // pyro: `@font-face` rules nested in conditional group rules (`@media`, `@supports`) and
     // `@layer` blocks count too (css-conditional at-media-content-002 / at-supports-content-002).
@@ -720,7 +775,7 @@ pub(crate) fn fetch_font_face_rules<'a>(
                     slant_range: style.and_then(|style| match style {
                         FontStyleRange::Italic => None,
                         FontStyleRange::Oblique(min, max) => {
-                            Some((min.degrees().unwrap_or(0.0), max.degrees().unwrap_or(0.0)))
+                            Some((descriptor_angle(min).unwrap_or(0.0), descriptor_angle(max).unwrap_or(0.0)))
                         }
                     }),
                     unicode_range: descriptor.unicode_range.as_deref().map(unicode_range),
@@ -765,19 +820,15 @@ pub(crate) fn fetch_font_face_rules<'a>(
         })
         .for_each(|(source_list, overrides)| {
             if let Some((url, format)) = preferred_font_source(source_list) {
-                let mut request = stamped_request(url, abort_signal);
-                request.options.destination = blitz_traits::net::Destination::Font;
-                network_provider.fetch(
-                    doc_id,
-                    request,
-                    ResourceHandler::boxed(
-                        tx.clone(),
-                        doc_id,
-                        node_id,
-                        shell_provider.clone(),
-                        FontFaceHandler { format, overrides },
-                    ),
-                );
+                // pyro: a face of a `unicode-range` is fetched once text needs it, where the caller
+                // keeps the pending faces (`BaseDocument::start_pending_fonts`); else at once.
+                if overrides.unicode_range.is_some() {
+                    if let Some(pending) = pending.as_mut() {
+                        pending.push(PendingFont { url, format, overrides, node_id });
+                        return;
+                    }
+                }
+                fetch_font(url, format, overrides, tx.clone(), doc_id, node_id, network_provider, shell_provider, abort_signal);
             }
         })
 }
@@ -892,6 +943,19 @@ fn font_format_from_extension(url: &Url) -> FontFaceSourceFormatKeyword {
         .map_or(FontFaceSourceFormatKeyword::None, |(_, format)| *format)
 }
 
+/// pyro: the degrees of an angle of a `font-style` descriptor for font matching: an explicit `oblique 14deg`
+/// is stored one fixed-point step above the keyword so the two serialize apart (`SpecifiedFontStyle::parse`),
+/// but is 14deg for matching (CSS Fonts 4 § 5.2).
+pub(crate) fn descriptor_angle(angle: &style::values::specified::Angle) -> Option<f32> {
+    angle.degrees().map(|degrees| {
+        if degrees == style::values::computed::font::FontStyle::EXPLICIT_DEFAULT_OBLIQUE_DEGREES {
+            style::values::computed::font::FontStyle::DEFAULT_OBLIQUE_DEGREES as f32
+        } else {
+            degrees
+        }
+    })
+}
+
 /// Translate stylo's `@font-face` `font-style` descriptor into the fontique
 /// `FontStyle` enum used by parley. Stylo encodes Italic and Oblique-with-
 /// angle distinctly; CSS's bare `normal` is parsed as `Oblique(0deg, 0deg)`
@@ -902,13 +966,13 @@ fn stylo_to_fontique_style(style: &FontStyleRange) -> parley::fontique::FontStyl
     match style {
         FontStyleRange::Italic => Fq::Italic,
         FontStyleRange::Oblique(min, max) => {
-            let angle = min.degrees();
+            let angle = descriptor_angle(min);
             // Stylo emits `Oblique(0deg, 0deg)` for the literal CSS `normal`
             // keyword. Map that back to `Normal` so parley's font matching
             // doesn't misclassify upright fonts.
             // pyro: a range that has 0deg in it (`oblique 0deg 15deg`, a variable font's `slnt`
             // axis) is an upright face that can slant (`FontFaceOverrides::slant_range`).
-            let (low, high) = (angle.unwrap_or(0.0), max.degrees().unwrap_or(0.0));
+            let (low, high) = (angle.unwrap_or(0.0), descriptor_angle(max).unwrap_or(0.0));
             if low.min(high) <= 0.0 && low.max(high) >= 0.0 {
                 Fq::Normal
             } else {
@@ -995,9 +1059,15 @@ impl NetHandler for ResourceHandler<ImageHandler> {
             };
         if opaque || redirected {
             match &result {
-                Ok(Resource::Image(_, _, _, pixels, _)) => note_opaque_image(image_key(pixels)),
+                Ok(Resource::Image(_, _, _, pixels, _)) => {
+                    let weak = pixels.downgrade();
+                    note_opaque_image(image_key(pixels), Box::new(move || weak.upgrade().is_some()));
+                }
                 #[cfg(feature = "svg")]
-                Ok(Resource::Svg(_, svg)) => note_opaque_image(svg_image_key(svg)),
+                Ok(Resource::Svg(_, svg)) => {
+                    let weak = std::sync::Arc::downgrade(&svg.tree);
+                    note_opaque_image(svg_image_key(svg), Box::new(move || weak.strong_count() > 0));
+                }
                 _ => {}
             }
         }
@@ -1012,8 +1082,28 @@ pub use pyro_raster::decode_jpeg;
 /// pyro: the images whose response was opaque (a no-cors response tainted by another origin, a
 /// redirect through one included), by [`image_key`]/[`svg_image_key`]: HTML-in-Canvas privacy
 /// (blitz-paint `Privacy`) leaves them out of what a page can read back from a canvas.
-static OPAQUE_IMAGES: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<u64>>> =
-    std::sync::LazyLock::new(Default::default);
+///
+/// Bounded by what is alive: each key is kept with a weak handle to its image and forgotten once
+/// the image is dropped (swept when the set doubles), never while the image lives, so an opaque
+/// image cannot read as clean because the set filled up. (A weak handle also keeps an SVG tree's
+/// address from being reused by another image while its key is here.)
+static OPAQUE_IMAGES: std::sync::LazyLock<std::sync::Mutex<OpaqueImages>> = std::sync::LazyLock::new(Default::default);
+
+type Alive = Box<dyn Fn() -> bool + Send>;
+
+struct OpaqueImages {
+    keys: std::collections::HashMap<u64, Alive>,
+    /// The size at which the next sweep of dropped images runs.
+    sweep_at: usize,
+}
+
+impl Default for OpaqueImages {
+    fn default() -> Self {
+        Self { keys: Default::default(), sweep_at: OPAQUE_SWEEP_MIN }
+    }
+}
+
+const OPAQUE_SWEEP_MIN: usize = 1024;
 
 /// pyro: the key of a decoded raster image's pixels (its `Blob` id, kept by every clone).
 pub fn image_key(pixels: &linebender_resource_handle::Blob<u8>) -> u64 {
@@ -1029,12 +1119,17 @@ pub fn svg_image_key(svg: &crate::node::SvgImageData) -> u64 {
 
 /// pyro: whether the image with `key` came from an opaque response ([`OPAQUE_IMAGES`]).
 pub fn is_opaque_image(key: u64) -> bool {
-    OPAQUE_IMAGES.lock().is_ok_and(|set| set.contains(&key))
+    OPAQUE_IMAGES.lock().is_ok_and(|set| set.keys.contains_key(&key))
 }
 
-fn note_opaque_image(key: u64) {
+/// Notes the image with `key` as opaque while `alive` says it lives.
+fn note_opaque_image(key: u64, alive: Alive) {
     if let Ok(mut set) = OPAQUE_IMAGES.lock() {
-        set.insert(key);
+        set.keys.insert(key, alive);
+        if set.keys.len() >= set.sweep_at {
+            set.keys.retain(|_, alive| alive());
+            set.sweep_at = OPAQUE_SWEEP_MIN.max(set.keys.len() * 2);
+        }
     }
 }
 

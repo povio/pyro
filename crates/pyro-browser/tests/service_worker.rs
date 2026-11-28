@@ -597,8 +597,9 @@ fn service_worker_registration_errors() {
     assert_eq!(get("allowed"), format!("ok:{}/other/", server.origin));
     assert!(get("cross").starts_with("SecurityError:"), "{}", get("cross"));
     assert!(get("slash").starts_with("TypeError:"), "{}", get("slash"));
-    // A redirected script would escape the max scope of the URL it was registered with.
-    assert!(get("redirect").starts_with("TypeError:"), "{}", get("redirect"));
+    // A redirected script would escape the max scope of the URL it was registered with: the script
+    // fetch's redirect mode is "error", and Chrome rejects with a SecurityError.
+    assert!(get("redirect").starts_with("SecurityError:") && get("redirect").contains("redirect"), "{}", get("redirect"));
     eval(
         &thread,
         page,

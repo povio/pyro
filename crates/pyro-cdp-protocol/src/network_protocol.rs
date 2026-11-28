@@ -85,6 +85,8 @@ struct ResponseJson<'a> {
     connection_reused: bool,
     encoded_data_length: u64,
     from_disk_cache: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    from_prefetch_cache: bool,
     from_service_worker: bool,
     headers: Headers<'a>,
     mime_type: &'a str,
@@ -107,6 +109,7 @@ fn response_json(head: &ResponseHead, encoded_len: u64) -> ResponseJson<'_> {
         connection_reused: false,
         encoded_data_length: encoded_len,
         from_disk_cache: head.from_cache,
+        from_prefetch_cache: head.from_prefetch_cache,
         from_service_worker: false,
         headers: Headers(&head.headers),
         mime_type: &head.mime,
@@ -529,8 +532,10 @@ pub fn fetch_resource_type(destination: pyro_net::Destination) -> ResourceType {
         D::Font => ResourceType::Font,
         D::Xhr | D::Fetch | D::EventSource => ResourceType::XHR,
         D::WebSocket => ResourceType::WebSocket,
-        D::Beacon => ResourceType::Ping,
-        D::CompressionDictionary | D::Other => ResourceType::Other,
+        D::Beacon | D::Report => ResourceType::Ping,
+        D::CompressionDictionary | D::SpeculationRules | D::Object | D::Embed | D::AudioWorklet | D::PaintWorklet | D::Other => {
+            ResourceType::Other
+        }
     }
 }
 
@@ -921,6 +926,7 @@ mod tests {
             charset: charset.map(Into::into),
             redirected: false,
             from_cache: true,
+            from_prefetch_cache: false,
             kind: ResponseKind::Basic,
             remote_addr: remote.map(Into::into),
             protocol: if h2 { pyro_net::http::Version::HTTP_2 } else { pyro_net::http::Version::HTTP_11 },
@@ -1087,6 +1093,7 @@ mod tests {
                 charset: None,
                 redirected: false,
                 from_cache: false,
+                from_prefetch_cache: false,
                 kind: ResponseKind::Basic,
                 remote_addr: Some("127.0.0.1:8080".into()),
                 protocol: pyro_net::http::Version::HTTP_11,

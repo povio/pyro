@@ -897,7 +897,7 @@ pub mod columns {
     pub use crate::properties::generated::shorthands::columns::*;
 
     use super::*;
-    use crate::properties::longhands::{column_count, column_height, column_width};
+    use crate::properties::longhands::{column_count, column_height, column_width, column_wrap};
 
     pub fn parse_value(
         context: &ParserContext,
@@ -948,6 +948,8 @@ pub mod columns {
             column_count: unwrap_or_initial!(column_count),
             column_width: unwrap_or_initial!(column_width),
             column_height: unwrap_or_initial!(column_height),
+            // pyro: css-multicol-2: `columns` also resets `column-wrap`, to its initial `auto`.
+            column_wrap: column_wrap::get_initial_specified_value(),
         })
     }
 
@@ -956,6 +958,10 @@ pub mod columns {
         where
             W: fmt::Write,
         {
+            // pyro: a `column-wrap` other than `auto` cannot be expressed by `columns`.
+            if *self.column_wrap != column_wrap::get_initial_specified_value() {
+                return Ok(());
+            }
             if self.column_width.is_auto() {
                 self.column_count.to_css(dest)?;
             } else {

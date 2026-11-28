@@ -528,6 +528,7 @@ impl BaseDocument {
                 &guard,
                 self.abort_signal.as_ref(),
                 Some(self.stylist.device()),
+                Some(&mut self.pending_fonts),
             );
         }
         let (change_kind, ancestors) = match &list {

@@ -52,7 +52,7 @@ macro_rules! global_events {
             "progress", "ratechange", "reset", "resize", "scroll", "scrollend", "scrollsnapchange", "scrollsnapchanging",
             "securitypolicyviolation", "seeked",
             "seeking", "select", "selectionchange", "selectstart", "slotchange", "stalled", "submit", "suspend",
-            "timeupdate", "toggle", "volumechange", "waiting", "wheel", "pointerdown", "pointerup", "pointermove",
+            "timeupdate", "toggle", "volumechange", "waiting", "wheel", "pointerdown", "pointerup", "pointermove", "pointerrawupdate",
             "pointerover", "pointerout", "pointerenter", "pointerleave", "pointercancel", "gotpointercapture",
             "lostpointercapture", "animationstart", "animationend", "animationiteration", "animationcancel",
             "transitionstart", "transitionend", "transitionrun", "transitioncancel", "webkitanimationstart",
@@ -72,10 +72,17 @@ macro_rules! window_events {
     };
 }
 
+/// Device Orientation and Motion: `[SecureContext]` handlers of the Window alone (not of `<body>`).
+macro_rules! device_events {
+    ($callback:ident!($($args:tt)*)) => {
+        $callback!($($args)* ["devicemotion", "deviceorientation", "deviceorientationabsolute"])
+    };
+}
+
 /// Document-only handlers.
 macro_rules! document_events {
     ($callback:ident!($($args:tt)*)) => {
-        $callback!($($args)* ["readystatechange", "visibilitychange"])
+        $callback!($($args)* ["readystatechange", "visibilitychange", "pointerlockchange", "pointerlockerror"])
     };
 }
 
@@ -89,6 +96,20 @@ macro_rules! handler_accessors {
     ($def:expr, $get:expr, [$($ty:literal),* $(,)?]) => {
         $(
             $def.accessor(
+                concat!("on", $ty),
+                |s, d| event_handler(s, $get(d), $ty),
+                |s, d, v| set_event_handler(s, $get(d), $ty, v),
+            );
+        )*
+    };
+}
+
+/// The same accessors for a [Global] interface: WebIDL puts a global's attributes on the global
+/// object itself, not on the interface prototype (`Window.prototype` has no `onclick`).
+macro_rules! global_handler_accessors {
+    ($def:expr, $get:expr, [$($ty:literal),* $(,)?]) => {
+        $(
+            $def.global_accessor(
                 concat!("on", $ty),
                 |s, d| event_handler(s, $get(d), $ty),
                 |s, d, v| set_event_handler(s, $get(d), $ty, v),
@@ -114,6 +135,8 @@ pub(crate) const PERMISSION_ELEMENT: &[&str] =
     &["stream", "track", "location", "promptaction", "promptdismiss", "validationstatuschange"];
 /// HTML-in-Canvas: `HTMLCanvasElement.onpaint` (see [`element_handler`]).
 pub(crate) const CANVAS_ELEMENT: &[&str] = &["paint"];
+/// Encrypted Media Extensions: `HTMLMediaElement.onencrypted` and `onwaitingforkey` (defined in `media.rs`).
+pub(crate) const MEDIA_ELEMENT: &[&str] = &["encrypted", "waitingforkey"];
 
 /// Whether the HTML element named `local` has its own event handler for `ty` beyond
 /// GlobalEventHandlers: the permission elements' (`HTMLUserMediaElement.onstream`, ...).
@@ -124,9 +147,14 @@ pub(crate) fn element_handler(local: &str, ty: &str) -> bool {
         "geolocation" => matches!(ty, "location" | "promptaction" | "promptdismiss" | "validationstatuschange"),
         "install" => ty == "validationstatuschange",
         "canvas" => ty == "paint",
+        "video" | "audio" => MEDIA_ELEMENT.contains(&ty),
         _ => false,
     }
 }
+
+/// The timing event handlers of `SVGAnimationElement`: the attribute's name after `on` and the event type.
+pub(crate) const SVG_ANIMATION_ATTRIBUTES: &[(&str, &str)] =
+    &[("begin", "beginEvent"), ("end", "endEvent"), ("repeat", "repeatEvent")];
 
 /// The event type of an event handler content attribute named `local`
 /// (`onclick`), compared ASCII case-insensitively.
@@ -136,6 +164,11 @@ pub(crate) fn is_handler_attribute(local: &str) -> Option<&'static str> {
     }
     // The first two bytes are ASCII: a char boundary follows them.
     let ty = &local[2..];
+    // SVG animation elements' `onbegin`, `onend` and `onrepeat` listen for `beginEvent`, `endEvent`
+    // and `repeatEvent` (SVG Animations); `onendEvent` is no handler.
+    if let Some(event) = SVG_ANIMATION_ATTRIBUTES.iter().find(|(name, _)| name.eq_ignore_ascii_case(ty)).map(|(_, event)| *event) {
+        return Some(event);
+    }
     GLOBAL
         .iter()
         .chain(WINDOW)
@@ -143,6 +176,7 @@ pub(crate) fn is_handler_attribute(local: &str) -> Option<&'static str> {
         .chain(FULLSCREEN)
         .chain(PERMISSION_ELEMENT)
         .chain(CANVAS_ELEMENT)
+        .chain(MEDIA_ELEMENT)
         .find(|t| t.eq_ignore_ascii_case(ty))
         .copied()
 }
@@ -184,8 +218,9 @@ where
     W: JsClass,
     W::Data: WindowHost,
 {
-    global_events!(handler_accessors!(def, window_target::<W::Data>,));
-    window_events!(handler_accessors!(def, window_target::<W::Data>,));
+    global_events!(global_handler_accessors!(def, window_target::<W::Data>,));
+    window_events!(global_handler_accessors!(def, window_target::<W::Data>,));
+    device_events!(global_handler_accessors!(def, window_target::<W::Data>,));
 }
 
 /// The Window's handlers for a `<body>`/`<frameset>` of the page's document;
@@ -439,4 +474,27 @@ pub(crate) fn define_touch_handlers(s: &Scope<'_>) -> JsResult<()> {
         define.call(None, &[s.global().value(), s.string(&format!("on{ty}")), desc.value()])?;
     }
     Ok(())
+}
+
+/// Every event handler content attribute name (`onclick`, ...): the HTML list of
+/// event handler content attributes, which the Sanitizer API's built-in safe baseline removes.
+pub(crate) fn event_handler_attributes() -> &'static [String] {
+    static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    NAMES.get_or_init(|| {
+        let mut names: Vec<String> = GLOBAL
+            .iter()
+            .chain(WINDOW)
+            .chain(DOCUMENT)
+            .chain(FULLSCREEN)
+            .chain(PERMISSION_ELEMENT)
+            .chain(CANVAS_ELEMENT)
+            .chain(MEDIA_ELEMENT)
+            .copied()
+            .chain(SVG_ANIMATION_ATTRIBUTES.iter().map(|(name, _)| *name))
+            .map(|ty| format!("on{ty}"))
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+    })
 }

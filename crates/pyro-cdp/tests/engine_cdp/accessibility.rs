@@ -336,3 +336,105 @@ fn modal_dialog_leaves_the_blocked_document_out_of_the_tree() {
     eval_value(&mut h, "document.getElementById('d').close(); 1");
     assert_eq!(unignored_buttons(&mut h), ["Outside"]);
 }
+
+/// The role of the node of `selector` alone (`fetchRelatives: false`), as WebDriver's Get Computed Role reads it.
+fn own_role(h: &mut Harness, selector: &str) -> String {
+    let id = object(h, selector);
+    let r = h.page("Accessibility.getPartialAXTree", json!({"objectId": id, "fetchRelatives": false}));
+    nodes(&r)[0]["role"]["value"].as_str().unwrap_or_else(|| panic!("{selector}: {r}")).to_owned()
+}
+
+#[test]
+fn role_tokens_fall_back_and_html_aam_context_roles() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r##"<!doctype html><body>
+<nav id="invalid" role="foo">x</nav>
+<div id="fallback" role="foo Link" tabindex="0" aria-label="x">x</div>
+<nav id="unnamed-region" role="region group">x</nav>
+<nav id="unnamed-form" role="form">x</nav>
+<div id="named-region" role="foo ReGiOn" aria-label="x">x</div>
+<div id="dpub" role="doc-abstract">x</div>
+<main><footer id="main-footer">x</footer><header id="main-header">x</header></main>
+<footer id="page-footer">x</footer>
+<dir id="dir"><li>x</li></dir>
+<ul id="directory" role="directory"><li>x</li></ul>
+<article><aside id="nested-aside">x</aside><aside id="named-aside" aria-label="n">x</aside></article>
+<h1 id="conflict" role="none" aria-label="x">x</h1>
+<p id="plain-none" role="none">x</p>
+<ul role="none"><li id="inherited" aria-describedby="conflict">x</li></ul>
+<table><tbody id="tbody" aria-label="rows"><tr><td>x</td></tr></tbody></table>
+<svg><a id="svg-a" href="#" aria-label="l">x</a><a id="svg-xlink" xlink:href="#" xlink:title="t"><circle r="1"/></a><g id="svg-g" aria-label="l"><circle r="1"/></g><circle id="svg-circle" r="1"><title>circle label</title></circle></svg>
+<map name="m"><area id="area" shape="rect" coords="0,0,1,1" href="#" alt="x"></map><img usemap="#m" alt="" src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==">
+</body>"##,
+    );
+    for (selector, role) in [
+        ("#invalid", "navigation"),
+        ("#fallback", "link"),
+        ("#unnamed-region", "group"),
+        ("#unnamed-form", "navigation"),
+        ("#named-region", "region"),
+        ("#dpub", "doc-abstract"),
+        ("#main-footer", "sectionfooter"),
+        ("#main-header", "sectionheader"),
+        ("#page-footer", "contentinfo"),
+        ("#dir", "list"),
+        ("#directory", "list"),
+        ("#nested-aside", "generic"),
+        ("#named-aside", "complementary"),
+        ("#conflict", "heading"),
+        ("#plain-none", "none"),
+        ("#inherited", "none"),
+        ("#tbody", "rowgroup"),
+        ("#area", "link"),
+        ("#svg-a", "link"),
+        ("#svg-xlink", "link"),
+        ("#svg-g", "group"),
+        ("#svg-circle", "graphics-symbol"),
+    ] {
+        assert_eq!(own_role(&mut h, selector), role, "{selector}");
+    }
+}
+
+fn own_name(h: &mut Harness, selector: &str) -> String {
+    let id = object(h, selector);
+    let r = h.page("Accessibility.getPartialAXTree", json!({"objectId": id, "fetchRelatives": false}));
+    nodes(&r)[0]["name"]["value"].as_str().unwrap_or_else(|| panic!("{selector}: {r}")).to_owned()
+}
+
+#[test]
+fn names_keep_no_break_spaces_and_follow_chromium_sources() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r##"<!doctype html><body>
+<button id="nbsp">a&nbsp;&nbsp;b  c</button>
+<label for="btn">Label</label><input id="btn" type="button" value="value">
+<button id="actions" aria-actions="act">Save <span id="act">Edit</span></button>
+<h1 id="upper" style="text-transform:uppercase">Call us</h1>
+<button id="nested"> button<span><span> </span></span>label </button>
+<input id="number" type="number" aria-placeholder="ap">
+<img id="empty-alt" alt="" title="tip">
+<figure id="figure" title="figure title">x</figure>
+<svg><a id="svg-xlink" xlink:href="#" xlink:title="t"><circle r="1"/></a><circle id="svg-circle" r="1"><title>circle label</title></circle></svg>
+<div id="host">slotted</div><button id="slotted" aria-labelledby="host"></button>
+</body>"##,
+    );
+    eval_value(&mut h, "document.getElementById('host').attachShadow({mode: 'open'}).innerHTML = 'foo <slot></slot> bar'");
+    for (selector, name) in [
+        ("#nbsp", "a\u{a0}\u{a0}b c"),
+        ("#btn", "Label"),
+        ("#actions", "Save"),
+        ("#upper", "CALL US"),
+        ("#nested", "button label"),
+        ("#number", "ap"),
+        ("#empty-alt", ""),
+        ("#figure", "figure title"),
+        ("#slotted", "foo slotted bar"),
+        ("#svg-xlink", "t"),
+        ("#svg-circle", "circle label"),
+    ] {
+        assert_eq!(own_name(&mut h, selector), name, "{selector}");
+    }
+}

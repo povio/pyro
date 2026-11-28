@@ -99,7 +99,10 @@ pub fn self_origin(page: &PageDom) -> Option<String> {
 
 /// `page`'s CSP list (its document's), `None` when it has no policy.
 pub fn policy_list(page: &PageDom) -> Option<Arc<PolicyList>> {
-    if page.dom.borrow().csp_policies(page.document()).is_empty() {
+    // A document with a `Connection-Allowlist` has a list for it alone: every initiator that
+    // checks CSP checks the allowlist too, and one without it pays for one empty-slot test.
+    let allowlist = page.connection_allowlist();
+    if page.dom.borrow().csp_policies(page.document()).is_empty() && allowlist.is_none() {
         return None;
     }
     let origin = self_origin(page);
@@ -109,7 +112,23 @@ pub fn policy_list(page: &PageDom) -> Option<Arc<PolicyList>> {
         let source = if policy.meta { PolicySource::Meta } else { PolicySource::Header };
         list.add(&policy.text, source, disposition);
     }
-    (!list.is_empty()).then(|| Arc::new(list))
+    list.allowlist = allowlist;
+    (!list.is_empty() || list.has_allowlist()).then(|| Arc::new(list))
+}
+
+/// Whether an enforced (not report-only) policy of `page`'s document has the
+/// `upgrade-insecure-requests` directive (Upgrade Insecure Requests §3.1), by header, `<meta>` or inheritance.
+pub(crate) fn upgrades_insecure_requests(page: &PageDom) -> bool {
+    let dom = page.dom.borrow();
+    dom.csp_policies(page.document()).iter().any(|policy| {
+        !policy.report_only
+            && policy.text.split([',', ';']).any(|d| {
+                d.trim_matches(|c: char| c.is_ascii_whitespace())
+                    .split(|c: char| c.is_ascii_whitespace())
+                    .next()
+                    .is_some_and(|name| name.eq_ignore_ascii_case("upgrade-insecure-requests"))
+            })
+    })
 }
 
 /// The policies of `page`'s document as delivered (each with its delivery, header or `<meta>`,
@@ -126,18 +145,38 @@ pub fn inherited_policies(page: &PageDom) -> Vec<pyro_dom::CspPolicy> {
 pub struct InheritedCsp {
     pub policies: Vec<pyro_dom::CspPolicy>,
     pub self_origin: Option<String>,
+    /// The cross-origin embedder policy of the same policy container (HTML § 7.1.4 "embedder policy"
+    /// is inherited with the CSP list by local-scheme documents).
+    pub embedder_policy: pyro_net::EmbedderPolicy,
+    /// Its reporting parts (`report-to`, the report-only policy), inherited the same way.
+    pub embedder_reporting: pyro_net::EmbedderReporting,
+    /// The creator's `Connection-Allowlist` (its policy container's, so an `about:blank`, `srcdoc`
+    /// or `blob:` document, or a popup's first document, cannot connect where its creator
+    /// could not).
+    pub connection_allowlist: Option<Arc<pyro_net::connection_allowlist::ConnectionPolicy>>,
 }
 
 impl InheritedCsp {
     /// `page`'s, now.
     pub fn of(page: &PageDom) -> InheritedCsp {
-        InheritedCsp { policies: inherited_policies(page), self_origin: self_origin(page) }
+        InheritedCsp {
+            policies: inherited_policies(page),
+            self_origin: self_origin(page),
+            embedder_policy: page.embedder_policy(),
+            embedder_reporting: page.embedder_reporting(),
+            connection_allowlist: page.connection_allowlist(),
+        }
     }
 
     /// Gives `page`'s document, new and its parser not started, these policies. When its own
     /// origin is opaque (`data:`, a sandboxed frame) and nothing set its precursor origin yet,
     /// `'self'` keeps meaning the creator's origin (as Chrome).
     pub fn apply(&self, page: &PageDom) {
+        page.set_embedder_policy(self.embedder_policy);
+        page.set_embedder_reporting(self.embedder_reporting.clone());
+        if self.connection_allowlist.is_some() {
+            page.set_connection_allowlist(self.connection_allowlist.clone());
+        }
         if !self.policies.is_empty() {
             let _ = page.dom.borrow_mut().inherit_csp_policies(page.document(), &self.policies);
         }
@@ -185,6 +224,19 @@ pub fn guard_request(page: &Rc<PageDom>, request: CspRequest, target: Option<Nod
     let list = policy_list(page)?;
     let outcome = list.pre_request(&request);
     report(page, outcome.violations, target);
+    Some(if outcome.blocked { RequestCsp::blocked(list, request) } else { RequestCsp::new(list, request) })
+}
+
+/// The guard of a connection to `url` that `page`'s document makes and no CSP directive governs (a
+/// navigation a script, a link or a form started, a service worker's script), when the document has a
+/// `Connection-Allowlist`; `None` without one, so any other document's is not looked at. The pre-request check ran
+/// (violations reported); a guard that blocks the request when the allowlist refused it, which
+/// the client then fails unsent and which checks each redirect hop.
+pub fn allowlist_guard(page: &Rc<PageDom>, url: &url::Url) -> Option<Arc<RequestCsp>> {
+    let list = policy_list(page).filter(|list| list.has_allowlist())?;
+    let request = CspRequest::new(url.clone(), RequestDest::Other);
+    let outcome = list.pre_request(&request);
+    report(page, outcome.violations, None);
     Some(if outcome.blocked { RequestCsp::blocked(list, request) } else { RequestCsp::new(list, request) })
 }
 
@@ -301,7 +353,8 @@ pub fn style_element_allowed(page: &Rc<PageDom>, el: NodeId) -> bool {
         text
     };
     let nonce = element_nonce(page, el);
-    let allowed = inline_allowed(page, InlineKind::Style, &nonce, &text, Some(el));
+    let location = parser_location(page, el);
+    let allowed = inline_allowed_in_at(page, policy_list(page).as_deref(), InlineKind::Style, &nonce, &text, Some(el), location.as_ref());
     page.dom.borrow_mut().set_style_element_blocked(el, !allowed);
     allowed
 }
@@ -315,12 +368,15 @@ pub struct NavigationInitiator {
     /// Where the script that navigated was when it did ([`NavigationInitiator::at`]); `None`
     /// without one: a blocked URL's violation is then unlocated.
     pub location: Option<SourceLocation>,
+    /// The element a violation is reported at (an `<iframe>` navigating to its own `src`:
+    /// Chrome fires `securitypolicyviolation` at the container); `None`: the document.
+    pub target: Option<NodeId>,
 }
 
 impl NavigationInitiator {
     /// `page`'s policies, now.
     pub fn of(page: &Rc<PageDom>) -> NavigationInitiator {
-        NavigationInitiator { page: page.clone(), list: policy_list(page), location: None }
+        NavigationInitiator { page: page.clone(), list: policy_list(page), location: None, target: None }
     }
 
     /// This initiator, its violations located at the page script running in `s` now (read only
@@ -332,12 +388,18 @@ impl NavigationInitiator {
         self
     }
 
+    /// This initiator, its violations reported at the element `target`.
+    pub fn on(mut self, target: NodeId) -> NavigationInitiator {
+        self.target = Some(target);
+        self
+    }
+
     /// CSP3 for a `javascript:` navigation (`url`, the whole URL, is what a hash-source with
     /// 'unsafe-hashes' matches): `script-src-elem` of the initiator's policies. Whether its
     /// script may run.
     pub fn allows_javascript_url(&self, url: &str) -> bool {
         let (list, location) = (self.list.as_deref(), self.location.as_ref());
-        inline_allowed_in_at(&self.page, list, InlineKind::Navigation, "", url, None, location)
+        inline_allowed_in_at(&self.page, list, InlineKind::Navigation, "", url, self.target, location)
     }
 }
 
@@ -424,6 +486,14 @@ impl SourceLocation {
         violation.line = self.line;
         violation.column = self.column;
     }
+}
+
+/// Where the inline text of the parser-created `<script>` or `<style>` `node` of `page`'s document
+/// is: where its start tag ends (Chrome locates an inline violation there). `None` for an element
+/// no parser made (its violation is located by the script that made it, when one runs).
+pub fn parser_location(page: &Rc<PageDom>, node: NodeId) -> Option<SourceLocation> {
+    let (line, column) = page.dom.borrow().parser_start_position(node)?;
+    Some(SourceLocation { source_file: strip_source_file(&page.document_url()), line, column })
 }
 
 /// Sets the location of each of `violations` (fresh from a check, without one).
@@ -550,6 +620,11 @@ pub fn report(page: &Rc<PageDom>, violations: Vec<Violation>, target: Option<Nod
         let weak = Rc::downgrade(page);
         page.post_task(Box::new(move || {
             let Some(page) = weak.upgrade().filter(|p| !p.is_disposed()) else { return };
+            // A `Connection-Allowlist` violation fires no event: it is a Reporting API report only.
+            if violation.effective_directive == pyro_net::connection_allowlist::DIRECTIVE {
+                report_connection_allowlist(&page, &violation);
+                return;
+            }
             let Some(realm) = page.main_world_realm() else { return };
             let Ok(s) = realm.scope() else { return };
             if let Err(e) = dispatch(&s, &page, &violation, target) {
@@ -564,6 +639,37 @@ pub fn report(page: &Rc<PageDom>, violations: Vec<Violation>, target: Option<Nod
             }
             crate::reporting::queue_csp_violation(&s, &page, &report);
         }));
+    }
+}
+
+/// The `connection-allowlist` report of `violation` (`{connection, disposition}`): to the
+/// document's `ReportingObserver`s and, when the header named a `report-to` group, to its
+/// endpoint. A worker's own violations are not reported (as CSP's).
+fn report_connection_allowlist(page: &Rc<PageDom>, violation: &Violation) {
+    let mut body = serde_json::Map::new();
+    body.insert("connection".into(), violation.blocked_url.clone().into());
+    body.insert("disposition".into(), violation.disposition.as_str().into());
+    crate::reporting_store::queue_report_for_document(
+        page,
+        crate::reporting_store::ReportInput {
+            report_type: "connection-allowlist",
+            url: crate::csp_report::strip_url_for_report(&page.document_url()),
+            body,
+            destination: violation.report_to.clone(),
+        },
+    );
+}
+
+/// Sends the reports of `violations` found in the navigation response `response_url` (status
+/// `status`) that never became a document: no event is fired anywhere (`frame-ancestors`). `page`
+/// is the document that was in the frame, whose network sends them from the response's origin.
+pub fn report_response_violations(page: &Rc<PageDom>, violations: &[Violation], response_url: &str, status: u16) {
+    let origin = url::Url::parse(response_url).ok().map(|u| u.origin().ascii_serialization());
+    for violation in violations {
+        let (mut report, targets) = report_parts(violation);
+        report.url = response_url.to_owned();
+        report.status_code = status;
+        crate::csp_report::report_violation_from(page, &report, &targets, origin.as_deref());
     }
 }
 

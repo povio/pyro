@@ -116,6 +116,89 @@ fn original_input<'s>(s: &Scope<'s>, value: &Input) -> JsResult<Value<'s>> {
     }
 }
 
+/// One entry of an `href_matches` predicate (speculation rules): a pattern string, or a
+/// `URLPatternInit` dictionary (JSON object).
+#[derive(Clone, Debug)]
+pub enum PatternInput {
+    String(String),
+    Init(serde_json::Map<String, serde_json::Value>),
+}
+
+/// Speculation rules' `href_matches`: for each of `urls`, whether it matches any of `patterns`
+/// (HTML "build a URL pattern from an Infra value": a string is a constructor string, a
+/// dictionary without `baseURL` takes `base`; both resolve against it). `None` when a pattern is
+/// invalid (the predicate, and with it the rule, is then unusable). Runs the same engine as
+/// `URLPattern.prototype.test` without the page's globals: the compiled expressions come from the
+/// agent's own helpers.
+pub fn href_matches<'s>(s: &Scope<'s>, patterns: &[PatternInput], base: &str, urls: &[String]) -> Option<Vec<bool>> {
+    let helpers = helpers(s).ok()?;
+    let compile = helpers.get_atom("compile").ok()?.as_object()?;
+    let execute = helpers.get_atom("match").ok()?.as_object()?;
+    let parsed: Vec<Option<quirks::MatchInput>> = urls
+        .iter()
+        .map(|u| {
+            let (normalized, _) = quirks::process_match_input(Input::String(Cow::Owned(u.clone())), None).ok()??;
+            quirks::parse_match_input(normalized)
+        })
+        .collect();
+    let mut out = vec![false; urls.len()];
+    for pattern in patterns {
+        let built = match pattern {
+            PatternInput::String(text) => init(Input::String(Cow::Owned(text.clone())), Some(base)).ok()?,
+            PatternInput::Init(map) => {
+                let member = |name: &str| match map.get(name) {
+                    None => Some(None),
+                    Some(serde_json::Value::String(v)) => Some(Some(v.clone())),
+                    Some(_) => None,
+                };
+                let dictionary = quirks::UrlPatternInit {
+                    base_url: member("baseURL")?.or_else(|| Some(base.to_owned())),
+                    hash: member("hash")?,
+                    hostname: member("hostname")?,
+                    password: member("password")?,
+                    pathname: member("pathname")?,
+                    port: member("port")?,
+                    protocol: member("protocol")?,
+                    search: member("search")?,
+                    username: member("username")?,
+                };
+                quirks::process_construct_pattern_input(Input::Init(dictionary), None).ok()?
+            }
+        };
+        let pattern = quirks::parse_pattern::<Expression>(
+            built,
+            UrlPatternOptions { regex_syntax: RegexSyntax::EcmaScript, ignore_case: false },
+        )
+        .ok()?;
+        let mut expressions = RootedVec::new();
+        for component in components(&pattern) {
+            let compiled = compile.call(None, &[s.string(&component.regexp_string), s.boolean(false)]).ok()?;
+            expressions.push(s, compiled);
+        }
+        for (i, input) in parsed.iter().enumerate() {
+            let Some(parts) = input else { continue };
+            if out[i] {
+                continue;
+            }
+            let values = [
+                &parts.protocol,
+                &parts.username,
+                &parts.password,
+                &parts.hostname,
+                &parts.port,
+                &parts.pathname,
+                &parts.search,
+                &parts.hash,
+            ];
+            out[i] = values.iter().enumerate().all(|(k, value)| {
+                let expression = expressions.get(s, k).expect("a compiled component");
+                execute.call(None, &[expression, s.string(value)]).ok().is_some_and(|hit| hit.as_object().is_some())
+            });
+        }
+    }
+    Some(out)
+}
+
 pub(crate) struct URLPattern;
 impl JsClass for URLPattern {
     const NAME: &'static str = "URLPattern";

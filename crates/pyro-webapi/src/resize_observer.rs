@@ -433,6 +433,20 @@ pub(crate) fn request_update(page: &PageDom) {
     after_task(page);
 }
 
+/// pyro: the ResizeObserver step of a rendering update that goes on to HTML-in-Canvas `paint` events
+/// (HTML "update the rendering": the observers' gather and broadcast come before them): what changed
+/// since the last gather is gathered now, without the pacing a task checkpoint keeps, and delivered
+/// at once (the callbacks run before the caller's next step) instead of from a task of its own.
+pub(crate) fn rendering_step(page: &Rc<PageDom>) {
+    if page.is_disposed() || !page.resizes.has_observers() {
+        return;
+    }
+    request_update(page);
+    if page.resizes.queued.get() {
+        notify(page);
+    }
+}
+
 /// Checkpoint from `PageDom::after_task`.
 pub(crate) fn after_task(page: &PageDom) {
     if page.is_disposed() {
@@ -518,6 +532,9 @@ fn notify(page: &Rc<PageDom>) {
         }
         let Some(realm) = observer.realm.upgrade() else { continue };
         let Ok(s) = realm.scope() else { continue };
+        // Web IDL "invoke a callback function": an exception is reported to the global of the
+        // callback's own realm, which differs from the observer's for a function of another window.
+        let mut callback_realm = None;
         let result = (|| {
             let wrapper = s.lookup_identity(observer.identity).ok_or(JsError::ContextDestroyed)?;
             let _root = Persistent::new(&s, wrapper.value());
@@ -525,11 +542,15 @@ fn notify(page: &Rc<PageDom>) {
             let callback =
                 s.get_hidden(wrapper, CALLBACK)?.and_then(|v| v.as_object()).ok_or(JsError::ContextDestroyed)?;
             let list = entries(&s, page, records)?;
+            callback_realm = s.object_realm(callback).filter(|r| r.id() != s.realm_id());
             callback.call(Some(wrapper), &[list, wrapper.value()])?;
             Ok(())
         })();
         if let Err(error) = result {
-            s.report_exception(&error);
+            match callback_realm.as_ref().and_then(|r| r.scope().ok()) {
+                Some(owner) => owner.report_exception(&error),
+                None => s.report_exception(&error),
+            }
         }
     }
 }

@@ -17,6 +17,11 @@
 //!   read only for a page without a time origin of its own (a detached
 //!   document): it stays, and tells a page nothing but that the thread is
 //!   older than the page;
+//! - `popup::COOP_REPORTING_DOCUMENTS`, the number of documents naming a COOP reporting endpoint:
+//!   the embedder keeps it balanced as documents come and go, so the crate does not reset it;
+//! - `custom::REACTION_STACK_BASE`, `perf::NESTED_MS` and `element::LAST`: scratch values of a call
+//!   or a cache keyed by the process-unique page id, rewritten before they are read (the latter two
+//!   are cleared anyway);
 //! - `worker::ENDED`, a note that a worker's end left something to collect:
 //!   forgotten, since the engine it was about is dropped or recycled;
 //! - `paint_worklet::FORCE_GRAPH_FALLBACK`, a test hook compiled only with the
@@ -30,10 +35,15 @@ pub const STATICS: &[&str] = &[
     "association::OWNERS",
     "canvas::HANDED",
     "canvas::PLACEHOLDER_HANDED",
+    "coep_report::PAGES",
     "csp::HANDLER_LOCATION",
     "custom::CONSTRUCTIONS",
+    "custom::FRAMES",
+    "custom::REACTION_STACK_BASE",
     "custom::RUNNING",
     "editing::SCRIPT_COMMANDS",
+    "element::LAST",
+    "eme::STORES",
     "event::TIME_ORIGIN",
     "event_source::SOURCES",
     "fetch::PAGES",
@@ -41,6 +51,9 @@ pub const STATICS: &[&str] = &[
     "formdata::SELECTED_COORDINATE",
     "indexeddb::REALMS",
     "input::FOCUS_VISIBLE_OPTION",
+    "input::LAST_PRESS",
+    "input::TRUSTED_ACTIVATION",
+    "lcp::STATES",
     "lib::DOM_PAGES",
     "message_channel::CHANNELS",
     "message_channel::EXPORT_DEPTH",
@@ -49,25 +62,33 @@ pub const STATICS: &[&str] = &[
     "node::FOUND",
     "page::PENDING_FRAME_RESIZES",
     "paint_worklet::FORCE_GRAPH_FALLBACK",
+    "perf::NESTED_MS",
+    "pointer_capture::TOUCH_CAPTURE",
     "popover::CANCELING",
+    "popup::COOP_REPORTING_DOCUMENTS",
     "port_link::RELEASE_ACTIVE",
     "port_link::RELEASING",
     "public_key::PENDING",
     "public_key::QUEUE",
     "resource_timing::PAGES",
+    "sensors::PUMPS",
+    "sensors::WATCHERS",
     "service_worker::FINISHERS",
     "service_worker::VERSIONS",
     "service_worker_scope::GLUE",
     "service_worker_scope::NEXT_KEY",
     "service_worker_scope::PENDING",
+    "service_worker_scope::PRELOADS",
     "service_worker_scope::QUERIES",
     "shared_worker::BY_ID",
     "shared_worker::WORKERS",
+    "shift::STATES",
     "smooth_scroll::RUNNING",
     "structured_clone::CLONE_SOURCE",
     "structured_clone::WIRE_BLOBS",
     "structured_clone::WIRE_CANVASES",
     "structured_clone::WIRE_CODECS",
+    "structured_clone::WIRE_HANDLES",
     "target::WATCHED",
     "web_locks::CLIENTS",
     "webaudio::NEXT",
@@ -87,9 +108,14 @@ pub const STATICS: &[&str] = &[
 /// first static that still holds something of them; the thread must then not
 /// serve another client.
 pub fn reset_thread() -> Result<(), &'static str> {
-    let checks: [fn() -> Option<&'static str>; 29] = [
+    let checks: [fn() -> Option<&'static str>; 34] = [
         crate::dom_pages_leftover,
         crate::abort::thread_leftover,
+        crate::coep_report::thread_leftover,
+        crate::eme::thread_leftover,
+        crate::perf::thread_leftover,
+        crate::pointer_capture::thread_leftover,
+        crate::sensors::thread_leftover,
         crate::canvas::thread_leftover,
         crate::csp::thread_leftover,
         crate::custom::thread_leftover,

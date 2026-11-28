@@ -119,6 +119,24 @@ fn set_smooth_scrolling(page: &PageDom, target: Option<NodeId>, running: bool) {
     }
 }
 
+/// Where the smooth scroll running on `target` (`None`: the viewport) of `page` ends, if one runs.
+pub(crate) fn running_to(page: &Rc<PageDom>, target: Option<NodeId>) -> Option<(i32, i32)> {
+    RUNNING.with(|r| r.borrow().iter().find(|a| a.is(page, target)).map(|a| a.to))
+}
+
+/// A smooth scroll to where the one running on `target` already goes (CSSOM View: a smooth scroll
+/// to the position it is heading to is a no-op that does not interrupt it; WPT cssom-view
+/// `smooth-scroll-nonstop`): `waiter` waits for the running one to end instead. Whether one runs.
+pub(crate) fn join(page: &Rc<PageDom>, target: Option<NodeId>, waiter: &Rc<Waiter>) -> bool {
+    RUNNING.with(|r| {
+        let mut r = r.borrow_mut();
+        let Some(animation) = r.iter_mut().find(|a| a.is(page, target)) else { return false };
+        waiter.remaining.set(waiter.remaining.get() + 1);
+        animation.waiters.push(waiter.clone());
+        true
+    })
+}
+
 /// Another scroll of `target` (`None`: the viewport) of `page`: a smooth scroll running on it
 /// stops where it is, interrupted.
 pub(crate) fn cancel(page: &Rc<PageDom>, target: Option<NodeId>) {

@@ -40,6 +40,37 @@ pub enum Scrollable {
     Inline,
 }
 
+/// pyro: the value of the `snapped` scroll-state container feature.
+/// https://drafts.csswg.org/css-conditional-5/#snapped
+#[derive(Clone, Copy, Debug, FromPrimitive, Parse, ToCss)]
+#[repr(u8)]
+#[allow(missing_docs)]
+pub enum Snapped {
+    None,
+    X,
+    Y,
+    Block,
+    Inline,
+    Both,
+}
+
+/// pyro: the value of the `stuck` scroll-state container feature.
+/// https://drafts.csswg.org/css-conditional-5/#stuck
+#[derive(Clone, Copy, Debug, FromPrimitive, Parse, ToCss)]
+#[repr(u8)]
+#[allow(missing_docs)]
+pub enum Stuck {
+    None,
+    Top,
+    Right,
+    Bottom,
+    Left,
+    BlockStart,
+    InlineStart,
+    BlockEnd,
+    InlineEnd,
+}
+
 impl Orientation {
     /// A helper to evaluate a orientation query given a generic size getter.
     pub fn eval(size: Size2D<Au>, value: Option<Self>) -> bool {

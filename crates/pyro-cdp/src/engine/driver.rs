@@ -1987,6 +1987,12 @@ pub(super) fn attr<'d>(dom: &'d Dom, id: NodeId, name: &str) -> Option<&'d str> 
     dom.element(id).ok()?.attr(name)
 }
 
+/// An ARIA content attribute (`role`, `aria-*`), else the default semantics the element's
+/// `ElementInternals` set for it.
+pub(super) fn aria_attr<'d>(dom: &'d Dom, id: NodeId, name: &str) -> Option<&'d str> {
+    attr(dom, id, name).or_else(|| dom.default_aria(id, name))
+}
+
 /// A JavaScript value as JSON (`null` when it has no JSON form).
 fn json_of(v: pyro_js::Value<'_>) -> Value {
     v.to_json(0).ok().flatten().and_then(|j| serde_json::from_str(&j).ok()).unwrap_or(Value::Null)
@@ -2002,7 +2008,7 @@ fn elements(dom: &Dom, root: NodeId) -> impl Iterator<Item = NodeId> + '_ {
 
 /// `aria-*` boolean attribute: `true` case-insensitively.
 pub(super) fn aria_true(dom: &Dom, id: NodeId, name: &str) -> bool {
-    attr(dom, id, name).is_some_and(|v| v.trim().eq_ignore_ascii_case("true"))
+    aria_attr(dom, id, name).is_some_and(|v| v.trim().eq_ignore_ascii_case("true"))
 }
 
 /// `id` and then its ancestor elements, nearest first (the `closest` order).
@@ -2013,7 +2019,7 @@ fn self_and_ancestors(dom: &Dom, id: NodeId) -> impl Iterator<Item = NodeId> + '
 /// Playwright's `hasExplicitAccessibleName`: `<section>`/`<form>` are
 /// landmarks only with an aria name.
 fn has_explicit_name(dom: &Dom, id: NodeId) -> bool {
-    attr(dom, id, "aria-label").is_some() || attr(dom, id, "aria-labelledby").is_some()
+    aria_attr(dom, id, "aria-label").is_some() || aria_attr(dom, id, "aria-labelledby").is_some()
 }
 
 /// The elements an IDREF list names, in order, each once (Playwright's
@@ -2159,10 +2165,10 @@ fn has_global_aria(dom: &Dom, id: NodeId, role: &str) -> bool {
         "aria-owns",
         "aria-relevant",
     ];
-    ANY.iter().any(|a| attr(dom, id, a).is_some())
+    ANY.iter().any(|a| aria_attr(dom, id, a).is_some())
         || (!LABEL_PROHIBITED.contains(&role)
-            && (attr(dom, id, "aria-label").is_some() || attr(dom, id, "aria-labelledby").is_some()))
-        || (role != "generic" && attr(dom, id, "aria-roledescription").is_some())
+            && (aria_attr(dom, id, "aria-label").is_some() || aria_attr(dom, id, "aria-labelledby").is_some()))
+        || (role != "generic" && aria_attr(dom, id, "aria-roledescription").is_some())
 }
 
 /// JavaScript's `Number(s)` for an attribute value: whitespace trimmed, ""
@@ -2245,7 +2251,7 @@ fn pw_focusable(dom: &Dom, id: NodeId) -> bool {
 /// way to the implicit role on a focusable element or one with a global
 /// `aria-*` attribute (`hasPresentationConflictResolution`).
 pub(super) fn role_of(dom: &Dom, id: NodeId) -> Option<String> {
-    let explicit = attr(dom, id, "role").and_then(|r| r.split(' ').map(str::trim).find(|t| VALID_ROLES.contains(t)));
+    let explicit = aria_attr(dom, id, "role").and_then(|r| r.split(' ').map(str::trim).find(|t| VALID_ROLES.contains(t)));
     match explicit {
         Some(r @ ("none" | "presentation")) => {
             let implicit = implicit_role(dom, id);
@@ -2257,12 +2263,13 @@ pub(super) fn role_of(dom: &Dom, id: NodeId) -> Option<String> {
             }
         }
         Some(r) => Some(r.into()),
-        None => implicit_role(dom, id),
+        // HTML-AAM: an element with the `popover` attribute and no other role is a `group`.
+        None => implicit_role(dom, id).or_else(|| attr(dom, id, "popover").map(|_| "group".to_owned())),
     }
 }
 
 /// Implicit ARIA role, by Playwright's `kImplicitRoleByTagName`.
-fn implicit_role(dom: &Dom, id: NodeId) -> Option<String> {
+pub(super) fn implicit_role(dom: &Dom, id: NodeId) -> Option<String> {
     let ty = || attr(dom, id, "type").unwrap_or("").to_ascii_lowercase();
     // `<header>`/`<footer>` are landmarks only outside sectioning content.
     let in_sectioning = || {
@@ -2619,9 +2626,22 @@ struct Names<'a> {
     /// (asked on first use, once per [`PseudoContent`] scope: `false` skips
     /// the per-element lookups).
     pseudo_content: &'a PseudoContent,
+    /// The name as Chromium's accessibility tree computes it (`ax_name_in`), not as Playwright does: only
+    /// ASCII whitespace is white space (a no-break space belongs to the name), whitespace-only text between
+    /// inline elements is kept, and the native sources Chromium has beyond Playwright's apply.
+    chrome: bool,
 }
 
 impl Names<'_> {
+    /// Whether `s` is empty for naming: no characters but white space (HTML's ASCII white space for Chromium).
+    fn blank(&self, s: &str) -> bool {
+        if self.chrome {
+            s.trim_matches(|c: char| c.is_ascii_whitespace()).is_empty()
+        } else {
+            s.trim().is_empty()
+        }
+    }
+
     /// Playwright's `getPseudoContent` of `id`'s `pseudo`; "" without a
     /// generated one.
     fn pseudo_content(&self, id: NodeId, pseudo: &pyro_dom::stylo::PseudoElement) -> String {
@@ -2665,7 +2685,7 @@ impl Names<'_> {
                     })
                     .collect();
                 let name = parts.join(" ");
-                if !name.trim().is_empty() {
+                if !self.blank(&name) {
                     return name;
                 }
             }
@@ -2715,6 +2735,10 @@ impl Names<'_> {
                         if selected.is_empty() && tag == "input" {
                             return dom.value(id).unwrap_or_default();
                         }
+                        // An ARIA combobox that is not an input shows its text as the value (Chromium).
+                        if selected.is_empty() && self.chrome && tag != "select" {
+                            return text_of(dom, id);
+                        }
                         let parts: Vec<String> =
                             selected.into_iter().map(|o| self.alternative(o, child_opts)).collect();
                         return parts.join(" ");
@@ -2736,7 +2760,8 @@ impl Names<'_> {
             }
         }
         // 2D: aria-label.
-        if let Some(label) = attr(dom, id, "aria-label").filter(|l| !l.trim().is_empty()) {
+        // (A `<slot>` shows its content: Chromium takes no name from an `aria-label` on it.)
+        if let Some(label) = aria_attr(dom, id, "aria-label").filter(|l| !self.blank(l) && !(self.chrome && tag == "slot")) {
             self.visited.borrow_mut().insert(id);
             return label.to_owned();
         }
@@ -2756,15 +2781,24 @@ impl Names<'_> {
         let summary = tag == "summary" && !matches!(role.as_str(), "presentation" | "none");
         if allows_name_from_content(&role, opts.target == Target::Descendant) || summary || opts.embedded() {
             self.visited.borrow_mut().insert(id);
+            // The targets of the host's `aria-actions` are its actions, not part of its name.
+            if self.chrome {
+                let doc = self.doc;
+                for target in id_refs(dom, doc, id, "aria-actions").unwrap_or_default() {
+                    self.visited.borrow_mut().insert(target);
+                }
+            }
             let name = self.inner_text(id, child_opts);
-            if !name.trim().is_empty() {
+            // Chromium keeps the white space a descendant contributes (`button<span> </span>label`).
+            let empty = if self.chrome && opts.target == Target::Descendant { name.is_empty() } else { self.blank(&name) };
+            if !empty {
                 return name;
             }
         }
         // 2I: title.
         self.visited.borrow_mut().insert(id);
         if !matches!(role.as_str(), "presentation" | "none") || tag == "iframe" {
-            if let Some(title) = attr(dom, id, "title").filter(|t| !t.trim().is_empty()) {
+            if let Some(title) = attr(dom, id, "title").filter(|t| !self.blank(t)) {
                 return title.to_owned();
             }
         }
@@ -2782,7 +2816,7 @@ impl Names<'_> {
         child_opts: NameOpts,
     ) -> Option<String> {
         let dom = self.dom;
-        let attr_text = |name: &str| attr(dom, id, name).filter(|v| !v.trim().is_empty()).map(str::to_owned);
+        let attr_text = |name: &str| attr(dom, id, name).filter(|v| !self.blank(v)).map(str::to_owned);
         let from_labels = || {
             let parts: Vec<String> = labels(dom, self.doc, id)
                 .into_iter()
@@ -2802,13 +2836,19 @@ impl Names<'_> {
             let c = dom.children(id).into_iter().flatten().find(|c| local(dom, *c) == Some(child))?;
             let o = NameOpts { native: true, allow_hidden: hidden_for_aria(dom, self.layout, c, true), ..child_opts };
             let name = self.alternative(c, o);
-            (!name.trim().is_empty()).then_some(name)
+            (!self.blank(&name)).then_some(name)
         };
         match tag {
             "input" => {
                 let ty = attr(dom, id, "type").unwrap_or("").to_ascii_lowercase();
                 match ty.as_str() {
                     "button" | "submit" | "reset" => {
+                        // Chromium names a button input from its labels before its value.
+                        if self.chrome && opts.labelledby.is_none() {
+                            if let Some(name) = from_labels() {
+                                return Some(name);
+                            }
+                        }
                         return Some(attr_text("value").unwrap_or_else(|| match ty.as_str() {
                             "submit" => "Submit".into(),
                             "reset" => "Reset".into(),
@@ -2842,17 +2882,24 @@ impl Names<'_> {
                 if let Some(name) = from_labels() {
                     return Some(name);
                 }
-                let placeholder = matches!(ty.as_str(), "text" | "password" | "search" | "tel" | "email" | "url" | "");
+                // Chromium also names a number input from its placeholder, and falls back to `aria-placeholder`.
+                let placeholder = matches!(ty.as_str(), "text" | "password" | "search" | "tel" | "email" | "url" | "")
+                    || self.chrome && ty == "number";
                 Some(
                     attr_text("title")
                         .or_else(|| placeholder.then(|| attr_text("placeholder")).flatten())
+                        .or_else(|| (self.chrome && placeholder).then(|| attr_text("aria-placeholder")).flatten())
                         .unwrap_or_default(),
                 )
             }
             "button" if !has_labelledby => from_labels(),
             "output" if !has_labelledby => Some(from_labels().or_else(|| attr_text("title")).unwrap_or_default()),
             "textarea" if !has_labelledby => Some(
-                from_labels().or_else(|| attr_text("title")).or_else(|| attr_text("placeholder")).unwrap_or_default(),
+                from_labels()
+                    .or_else(|| attr_text("title"))
+                    .or_else(|| attr_text("placeholder"))
+                    .or_else(|| self.chrome.then(|| attr_text("aria-placeholder")).flatten())
+                    .unwrap_or_default(),
             ),
             // Playwright has no branch for <meter> / <progress>: their labels
             // never name them; they fall through to content and title.
@@ -2863,7 +2910,8 @@ impl Names<'_> {
             "figure" if !has_labelledby => {
                 Some(child_named("figcaption").or_else(|| attr_text("title")).unwrap_or_default())
             }
-            "img" => attr_text("alt"),
+            // `alt=""` is an explicit empty name that a `title` does not replace (Chromium).
+            "img" => attr_text("alt").or_else(|| (self.chrome && attr(dom, id, "alt") == Some("")).then(String::new)),
             "table" => child_named("caption").or_else(|| attr_text("summary")),
             "area" => Some(attr_text("alt").or_else(|| attr_text("title")).unwrap_or_default()),
             _ => {
@@ -2873,8 +2921,20 @@ impl Names<'_> {
                         .children(id)
                         .into_iter()
                         .flatten()
-                        .find(|c| dom.element(*c).ok().is_some_and(|e| &*e.name.local == "title"))?;
-                    return Some(text_of(dom, title));
+                        .find(|c| dom.element(*c).ok().is_some_and(|e| &*e.name.local == "title"));
+                    if let Some(title) = title {
+                        return Some(text_of(dom, title));
+                    }
+                    // Chromium: an `xlink:title` (a `title` attribute in the XLink namespace) on a link names it.
+                    if self.chrome {
+                        let xlink_title = dom.element(id).ok().and_then(|e| {
+                            e.attrs.iter().find(|a| &*a.name.local == "title" && !a.value.trim().is_empty()).map(|a| (*a.value).to_owned())
+                        });
+                        if xlink_title.is_some() {
+                            return xlink_title;
+                        }
+                    }
+                    return None;
                 }
                 None
             }
@@ -2892,6 +2952,23 @@ impl Names<'_> {
         out
     }
 
+    /// The children of `id` in the flat tree (Chromium names shadow content as it renders): an open shadow root
+    /// replaces its host's children, a `<slot>` shows the nodes assigned to it, or its own children as the
+    /// fallback.
+    fn flat_children(&self, id: NodeId) -> Vec<NodeId> {
+        let dom = self.dom;
+        if let Some(sr) = open_shadow_root(dom, id) {
+            return dom.children(sr).into_iter().flatten().collect();
+        }
+        if local(dom, id) == Some("slot") {
+            let assigned = dom.assigned_nodes(id, false).unwrap_or_default();
+            if !assigned.is_empty() {
+                return assigned;
+            }
+        }
+        dom.children(id).into_iter().flatten().collect()
+    }
+
     /// Playwright's `innerAccumulatedElementText`: child text with a space
     /// around every child that is not `display:inline` (and `<br>`).
     fn inner_text(&self, id: NodeId, opts: NameOpts) -> String {
@@ -2905,9 +2982,11 @@ impl Names<'_> {
             out.push_str(&self.pseudo_content(id, &pyro_dom::stylo::PseudoElement::After));
             return out;
         }
-        for c in dom.children(id).into_iter().flatten() {
+        let transform = if self.chrome { self.layout.computed_style_value(dom, id, "text-transform") } else { String::new() };
+        let kids: Vec<NodeId> = if self.chrome { self.flat_children(id) } else { dom.children(id).into_iter().flatten().collect() };
+        for c in kids {
             match dom.node(c).map(|n| &n.kind) {
-                Ok(NodeKind::Text(t)) => out.push_str(t),
+                Ok(NodeKind::Text(t)) => out.push_str(&apply_text_transform(t, &transform)),
                 Ok(NodeKind::Element(_)) => {
                     let display = self.layout.computed_style_value(dom, c, "display");
                     let token = self.alternative(c, opts);
@@ -2924,6 +3003,29 @@ impl Names<'_> {
         }
         out.push_str(&self.pseudo_content(id, &pyro_dom::stylo::PseudoElement::After));
         out
+    }
+}
+
+/// CSS `text-transform` of the computed value `transform` applied to rendered text (Chromium names an element
+/// from the text as displayed): `uppercase`, `lowercase` or `capitalize` (the first letter of each word).
+fn apply_text_transform(text: &str, transform: &str) -> String {
+    match transform {
+        "uppercase" => text.to_uppercase(),
+        "lowercase" => text.to_lowercase(),
+        "capitalize" => {
+            let mut out = String::with_capacity(text.len());
+            let mut word_start = true;
+            for ch in text.chars() {
+                if word_start && ch.is_alphanumeric() {
+                    out.extend(ch.to_uppercase());
+                } else {
+                    out.push(ch);
+                }
+                word_start = !ch.is_alphanumeric() && ch != '\'';
+            }
+            out
+        }
+        _ => text.to_owned(),
     }
 }
 
@@ -2945,6 +3047,31 @@ pub(super) fn accessible_name_in(
     doc: NodeId,
     id: NodeId,
     pseudo_content: &PseudoContent,
+) -> String {
+    name_in(dom, layout, doc, id, pseudo_content, false)
+}
+
+/// [`accessible_name_in`] as Chromium's accessibility tree names the element (`Accessibility.getPartialAXTree`,
+/// WebDriver's computed label): the name keeps no-break spaces (only ASCII white space collapses) and the
+/// native sources Chromium has beyond Playwright's apply. Playwright's own locators and `aria_snapshot` keep
+/// [`accessible_name_in`].
+pub(super) fn ax_name_in(
+    dom: &Dom,
+    layout: &Layout,
+    doc: NodeId,
+    id: NodeId,
+    pseudo_content: &PseudoContent,
+) -> String {
+    name_in(dom, layout, doc, id, pseudo_content, true)
+}
+
+fn name_in(
+    dom: &Dom,
+    layout: &Layout,
+    doc: NodeId,
+    id: NodeId,
+    pseudo_content: &PseudoContent,
+    chrome: bool,
 ) -> String {
     // Playwright's `getElementAccessibleName`: these roles prohibit naming.
     let prohibits = matches!(
@@ -2971,8 +3098,13 @@ pub(super) fn accessible_name_in(
     if prohibits {
         return String::new();
     }
-    let names = Names { dom, layout, doc, visited: RefCell::new(HashSet::new()), pseudo_content };
-    normalize(&names.alternative(id, NameOpts { target: Target::Own, ..NameOpts::default() }))
+    let names = Names { dom, layout, doc, visited: RefCell::new(HashSet::new()), pseudo_content, chrome };
+    let name = names.alternative(id, NameOpts { target: Target::Own, ..NameOpts::default() });
+    if chrome {
+        name.split_ascii_whitespace().collect::<Vec<_>>().join(" ")
+    } else {
+        normalize(&name)
+    }
 }
 
 /// Playwright's `shouldSkipForTextMatching`: script, noscript and style
@@ -3897,7 +4029,7 @@ fn drop_files(page: &Rc<PageDom>, id: NodeId, files: &[UploadFile]) -> Attempt {
             last_modified: file.last_modified.unwrap_or(now),
         })
         .collect();
-    let data = input::DragData { items: Vec::new(), drag_operations_mask: 1 };
+    let data = input::DragData { items: Vec::new(), drag_operations_mask: 1, from_source: false };
     for kind in [input::DragKind::Enter, input::DragKind::Over, input::DragKind::Drop] {
         if let Err(error) = input::dispatch_drag_files(page, kind, x, y, &data, &entries, input::Modifiers::default()) {
             return Attempt::Retry(error);

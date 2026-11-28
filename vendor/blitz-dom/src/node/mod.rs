@@ -22,12 +22,12 @@ pub use custom_widget::{
 pub(crate) use element::parse_classes;
 pub use element::{
     CanvasData, DocumentData, ElementData, ImageData, ImageResourceData, LayoutData,
-    ListItemLayout, ListItemLayoutPosition, Marker, RasterImageData, SpecialElementData,
+    ListItemLayout, ListItemLayoutPosition, Marker, MathRadical, MathRadicalSign, MathStretch, MathStretchGlyph, RasterImageData, SpecialElementData,
     SpecialElementType, Status,
 };
 pub use node::*;
 pub use scrollbar::{ClassicScrollbars, ScrollbarColor, ScrollbarRef, ScrollbarWidth};
-pub use stylo_data::ComputedStyleRef;
+pub use stylo_data::{ComputedStyleRef, UnvisitedPaint};
 pub(crate) use stylo_data::LayoutStyles;
 #[cfg(feature = "svg")]
 pub use svg::{SvgImageData, SvgIntrinsicDimensions, SvgTree, svg_source_element};

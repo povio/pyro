@@ -67,7 +67,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # The newest main build's browser (wpt.yml uploads it as `wpt-browser` when its build job runs).
+  # The newest main build's browser (wpt.yml uploads it as `wpt-browser` when its build job runs); a pull request's own
+  # WPT run's, when it has one.
   prepare:
     # Of main's WPT runs, only a push's (not a manual rerun's).
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.event == 'push' }}
@@ -82,6 +83,8 @@ jobs:
       - id: find
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           RUNNER: ${{ inputs.runner || 'lp-m1' }}
           KINDS: ${{ inputs.kinds || 'all' }}
           PARALLEL: ${{ inputs.parallel || vars.WPT_FULL_PARALLEL || '4' }}
@@ -93,9 +96,22 @@ jobs:
           matrix=$(jq -cn --arg k "$KINDS" '[range(5) | {kind: "testharness", shard: ., of: 5}] + [range(2) | {kind: "reftest", shard: ., of: 2}]
             + [{kind: "crashtest", shard: 0, of: 1}] | map(select($k == "all" or .kind == $k))')
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
-          run=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=wpt-browser&per_page=100" \
-            -q '[.artifacts[] | select(.expired | not) | select(.workflow_run.head_branch == "main")][0].workflow_run.id')
-          if [ -z "$run" ] || [ "$run" = null ]; then echo "no wpt-browser artifact from main" >&2; exit 1; fi
+          artifacts=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=wpt-browser&per_page=100" \
+            -q '[.artifacts[] | select(.expired | not)]')
+          if [ "$EVENT" = pull_request ]; then
+            # A pull request tests its own browser: the artifact its WPT run (wpt.yml) uploaded for this head commit
+            # (only when that run built the browser; a cache hit uploads none), else the newest unexpired one of any
+            # branch (main's has usually expired by the time a pull request runs this).
+            run=$(jq -r --arg sha "$HEAD_SHA" '[.[] | select(.workflow_run.head_sha == $sha)][0].workflow_run.id // empty' <<< "$artifacts")
+            [ -n "$run" ] || run=$(jq -r '.[0].workflow_run.id // empty' <<< "$artifacts")
+            if [ -z "$run" ]; then
+              echo "no unexpired wpt-browser artifact: this pull request's WPT run has not uploaded its browser yet (its build job is still running, or it restored the browser from the cache and uploaded none). Rerun this job once the WPT run's build job has finished." >&2
+              exit 1
+            fi
+          else
+            run=$(jq -r '[.[] | select(.workflow_run.head_branch == "main")][0].workflow_run.id // empty' <<< "$artifacts")
+            if [ -z "$run" ]; then echo "no wpt-browser artifact from main" >&2; exit 1; fi
+          fi
           echo "browser from run $run"
           echo "run=$run" >> "$GITHUB_OUTPUT"
           echo "runner=$RUNNER" >> "$GITHUB_OUTPUT"

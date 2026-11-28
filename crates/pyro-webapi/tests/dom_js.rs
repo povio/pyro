@@ -2511,8 +2511,11 @@ fn intersection_observer_options_conversion_and_explicit_limits() {
         failure(()=>new IntersectionObserver(()=>{},{rootMargin:'10em'}));
         failure(()=>new IntersectionObserver(()=>{},{rootMargin:'0'}));
         failure(()=>new IntersectionObserver(()=>{},{trackVisibility:true}));
-        failure(()=>new IntersectionObserver(()=>{},{delay:1}));
-        failure(()=>new IntersectionObserver(()=>{},{scrollMargin:'1px'}));
+        failure(()=>new IntersectionObserver(()=>{},{trackVisibility:true,delay:99}));
+        failure(()=>new IntersectionObserver(()=>{},{trackVisibility:true,delay:-5}));
+        new IntersectionObserver(()=>{},{delay:1});
+        new IntersectionObserver(()=>{},{scrollMargin:'1px'});
+        new IntersectionObserver(()=>{},{trackVisibility:true,delay:100});
         var io=new IntersectionObserver(()=>{}, {threshold:[],rootMargin:'10% -2px 3pt'});
         failure(()=>io.observe(document));failure(()=>io.unobserve());
         errors.join(',')+'|'+io.thresholds.join()+'|'+io.rootMargin
@@ -8012,10 +8015,12 @@ fn window_scroll_by_snaps_by_direction_and_snap_stop() {
 #[test]
 fn logical_snap_axes_use_the_scroll_containers_writing_mode() {
     let e = env("<style>#s{position:relative;overflow:hidden;width:200px;height:150px;writing-mode:vertical-lr;scroll-snap-type:inline mandatory}\
-        #space{width:800px;height:800px}#t{position:absolute;left:300px;top:280px;width:70px;height:50px;writing-mode:horizontal-tb;scroll-snap-align:start end}\
+        #space{width:800px;height:800px}#t{position:absolute;left:100px;top:150px;width:70px;height:50px;writing-mode:horizontal-tb;scroll-snap-align:start end}\
         </style><div id=s><div id=space></div><div id=t></div></div>");
-    assert_eq!(eval(&e.main, "s.scrollTo(40,20);[s.scrollLeft,s.scrollTop].join(',')"), "40,180");
-    assert_eq!(eval(&e.main, "s.style.scrollSnapType='block mandatory';s.scrollTo(20,40);[s.scrollLeft,s.scrollTop].join(',')"), "300,40");
+    // (The area is in view across the other axis at the offset it snaps from, which a scroller
+    // snapping one axis requires, `c1e18fe8d`; values measured in Chrome.)
+    assert_eq!(eval(&e.main, "s.scrollTo(40,20);[s.scrollLeft,s.scrollTop].join(',')"), "40,50");
+    assert_eq!(eval(&e.main, "s.scrollTo(0,0);s.style.scrollSnapType='block mandatory';s.scrollTo(20,40);[s.scrollLeft,s.scrollTop].join(',')"), "100,40");
     e.page.dispose();
 }
 

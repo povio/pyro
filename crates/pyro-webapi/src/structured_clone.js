@@ -5,7 +5,8 @@
 // prepares the transfer of a transferable one (a MessagePort: its new port
 // here, undefined if the value is not transferable, DataCloneError if it is
 // detached); mode 2 completes the transfer prepared for `value` as `extra`;
-// mode 3 copies a platform object made in JS (CryptoKey) or returns undefined;
+// mode 3 copies a platform object made in JS (CryptoKey, which is cluster-bound:
+// a receiver that is not a secure context refuses it) or returns undefined;
 // mode 4 is unused here; mode 5 prepares the transfer of a stream ([its new
 // stream here, the new ports it reads or writes], undefined if the value is
 // not a stream, DataCloneError if it is locked) and mode 6 completes it (the
@@ -322,10 +323,22 @@
                     // through the interface's own getters (the realm's ImageData).
                     const IDC = globalThis.ImageData, P = IDC && IDC.prototype;
                     let width, height, data, colorSpace, pixelFormat;
-                    try {
-                        const get = (k) => call(descriptor(P, k).get, source);
+                    const read = (proto) => {
+                        const get = (k) => call(descriptor(proto, k).get, source);
                         width = get('width'); height = get('height'); data = get('data'); colorSpace = get('colorSpace'); pixelFormat = get('pixelFormat');
-                    } catch (_) { fail('Object type is not supported'); }
+                    };
+                    try { read(P); }
+                    catch (_) {
+                        // An ImageData of another realm (a parent's, cloned into an iframe by its
+                        // history.pushState): this realm's getters reject it (illegal invocation),
+                        // so use the ImageData prototype the object itself inherits.
+                        try {
+                            let proto = prototype(source);
+                            while (proto !== null && !descriptor(proto, 'width')?.get) proto = prototype(proto);
+                            if (proto === null) throw 0;
+                            read(proto);
+                        } catch (_) { fail('Object type is not supported'); }
+                    }
                     bytes += data.length;
                     if (bytes > 64 * 1024 * 1024) fail('Clone buffer limit exceeded', true);
                     return remember(source, new IDC(copy(data, depth + 1), width, height, {colorSpace, pixelFormat}));
@@ -333,7 +346,7 @@
                 const name = call(stringSlice, kind, [8, -1]);
                 if (descriptor(boxed, name)) return remember(source, O(call(boxed[name], source)));
                 if (kind !== '[object Object]') {
-                    const platformCopy = host(source, 3);
+                    const platformCopy = host(source, 3, forStorage, clusterBound);
                     if (platformCopy !== undefined) return remember(source, platformCopy);
                     fail('Object type is not supported');
                 }

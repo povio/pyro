@@ -204,7 +204,7 @@ fn body_stream<'s>(s: &Scope<'s>, d: &ResponseData) -> JsResult<Value<'s>> {
     }
     let page = crate::target::page_of(s)?;
     let source = s.wrap::<BodySource>(
-        StreamData { body: d.body.clone(), used: d.used.clone(), opened: Cell::new(false) },
+        StreamData::new(d.body.clone(), d.used.clone()),
         None,
     )?;
     d.source_made.set(true);
@@ -298,6 +298,7 @@ fn construct<'s>(
         charset: None,
         redirected: false,
         from_cache: false,
+        from_prefetch_cache: false,
         kind: ResponseKind::Basic,
         remote_addr: None,
         protocol: pyro_net::http::Version::HTTP_11,
@@ -336,6 +337,23 @@ fn wrap_script<'s>(
     let headers = s.wrap::<Headers>(headers, None)?;
     s.set_hidden(wrapper, HEADERS, headers.value())?;
     Ok(wrapper.value())
+}
+
+/// The status and headers of an opaque-redirect Response as the network gave them (script sees
+/// status 0 and no headers): a `respondWith` of one answers a navigation, which follows the
+/// redirect it names. `None` for any other Response.
+pub(crate) fn internal_head(s: &Scope<'_>, response: Value<'_>) -> Option<(u16, Vec<(String, String)>)> {
+    let data = s.unwrap::<Response>(response)?;
+    if data.origin != Origin::Network || data.head.kind != ResponseKind::OpaqueRedirect {
+        return None;
+    }
+    let headers = data
+        .head
+        .headers
+        .iter()
+        .map(|(name, value)| (name.as_str().to_owned(), String::from_utf8_lossy(value.as_bytes()).into_owned()))
+        .collect();
+    Some((data.head.status.as_u16(), headers))
 }
 
 fn opaque(kind: ResponseKind) -> bool {
@@ -393,7 +411,7 @@ fn consume<'s>(s: &Scope<'s>, data: &ResponseData, kind: ReadKind) -> JsResult<V
             ReadKind::Text => "text",
             ReadKind::Json => "json",
             // A script's stream has no pieces to share: its bytes, in a buffer.
-            ReadKind::ArrayBuffer | ReadKind::Chunks => "arrayBuffer",
+            ReadKind::ArrayBuffer | ReadKind::Chunks | ReadKind::Internal => "arrayBuffer",
             ReadKind::Bytes => "bytes",
         };
         data.used.set(true);
@@ -410,7 +428,8 @@ fn consume<'s>(s: &Scope<'s>, data: &ResponseData, kind: ReadKind) -> JsResult<V
         let args = [hidden(s, data, STREAM)?, s.string(name), package];
         return crate::streams::helper(s, &page, "consume", &args);
     }
-    let used = if data.body.is_null() { false } else { data.used.replace(true) };
+    let null = if matches!(kind, ReadKind::Chunks) { data.body.no_bytes() } else { data.body.is_null() };
+    let used = if null { false } else { data.used.replace(true) };
     data.body.read(s, kind, used, headers)
 }
 pub(crate) fn wrap<'s>(
@@ -448,10 +467,24 @@ pub(crate) fn wrap<'s>(
 /// `arrayBuffer()` does.
 pub(crate) fn read_for_cache<'s>(s: &Scope<'s>, response: Value<'_>) -> JsResult<Value<'s>> {
     let data = s.unwrap::<Response>(response).ok_or_else(|| JsError::Type("Illegal invocation".into()))?;
-    if !data.script_stream.get() && data.body.is_null() {
+    // An opaque response's bytes are kept (a service worker's fetch): the cache stores them too.
+    if !data.script_stream.get() && data.body.no_bytes() {
         return Ok(s.null());
     }
     consume(s, &data, ReadKind::Chunks)
+}
+
+/// The bytes of an opaque response a service worker's fetch made, for `respondWith` to hand on to
+/// the page (script sees a null body): a promise of an ArrayBuffer once the body has arrived;
+/// `undefined` for any other Response.
+pub(crate) fn read_internal<'s>(s: &Scope<'s>, response: Value<'_>) -> JsResult<Value<'s>> {
+    let Some(data) = s.unwrap::<Response>(response) else { return Ok(s.undefined()) };
+    if data.origin != Origin::Network || data.head.kind != ResponseKind::Opaque {
+        return Ok(s.undefined());
+    }
+    // `read` ends with the release of a consumer; this read is not the Response's own.
+    data.body.add_consumer();
+    data.body.read(s, ReadKind::Internal, false, None)
 }
 
 /// The checks WebAssembly's "compile a potential WebAssembly response" makes of `response`
@@ -489,6 +522,7 @@ pub(crate) fn read_for_wasm<'s>(s: &Scope<'s>, response: Value<'_>, method: Valu
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn stored<'s>(
     s: &Scope<'s>,
+    corp: Option<&str>,
     kind: &str,
     url: &str,
     status: u16,
@@ -506,7 +540,7 @@ pub(crate) fn stored<'s>(
         _ => (Origin::Network, ResponseKind::Basic),
     };
     let mime = headers.iter().find(|(n, _)| n.eq_ignore_ascii_case("content-type")).map(|(_, v)| v.clone());
-    let head = ResponseHead {
+    let mut head = ResponseHead {
         url: pyro_net::Url::parse(url).unwrap_or_else(|_| pyro_net::Url::parse("about:blank").expect("static URL")),
         // Opaque and error responses read 0 through their kind and origin.
         status: pyro_net::http::StatusCode::from_u16(status).unwrap_or(pyro_net::http::StatusCode::OK),
@@ -516,14 +550,43 @@ pub(crate) fn stored<'s>(
         charset: None,
         redirected,
         from_cache: false,
+        from_prefetch_cache: false,
         kind,
         remote_addr: None,
         protocol: pyro_net::http::Version::HTTP_11,
         timing: Default::default(),
     };
+    // A filtered response hides its `Cross-Origin-Resource-Policy` from script, but the cache keeps it
+    // for the embedder policy check of a later `match` (and of a `put` of the response again).
+    if let Some(corp) = corp.and_then(|c| pyro_net::http::HeaderValue::from_str(c).ok()) {
+        head.headers.insert(pyro_net::http::HeaderName::from_static("cross-origin-resource-policy"), corp);
+    }
     let body = crate::fetch::Body::constructed_chunks(s, body, mime.unwrap_or_default());
+    if origin == Origin::Network && kind == ResponseKind::Opaque {
+        body.mark_opaque();
+    }
     let headers = HeadersData::from_pairs(headers, origin != Origin::Script);
     wrap_script(s, None, origin, head, body, headers)
+}
+
+/// The `Cross-Origin-Resource-Policy` header `response` arrived with, which a filtered (opaque)
+/// response hides from script: its value when it came once, else none (a repeated header is no
+/// valid policy). For `cache.put`, which keeps it.
+pub(crate) fn corp_header(response: Value<'_>, s: &Scope<'_>) -> Option<String> {
+    let data = s.unwrap::<Response>(response)?;
+    let mut values = data.head.headers.get_all("cross-origin-resource-policy").iter();
+    match (values.next(), values.next()) {
+        (Some(value), None) => value.to_str().ok().map(str::to_owned),
+        _ => None,
+    }
+}
+
+/// Where a response that came from the network really came from, and the
+/// `Cross-Origin-Resource-Policy` it carried (see [`corp_header`]): an opaque response hides both
+/// from script. `None` for a response a script made.
+pub(crate) fn network_source(response: Value<'_>, s: &Scope<'_>) -> Option<(Option<String>, String)> {
+    let data = s.unwrap::<Response>(response)?;
+    (data.origin == Origin::Network).then(|| (corp_header(response, s), data.head.url.to_string()))
 }
 
 pub(crate) fn filtered_headers(head: &ResponseHead, credentials: Credentials) -> HeadersData {
@@ -570,10 +633,12 @@ pub struct StreamData {
     used: Rc<Cell<bool>>,
     /// The stream owns the body consumer from the first read on.
     opened: Cell<bool>,
+    /// This stream's position in the body (a clone's stream has its own).
+    state: Rc<crate::fetch::StreamState>,
 }
 impl StreamData {
     pub(crate) fn new(body: Rc<Body>, used: Rc<Cell<bool>>) -> StreamData {
-        StreamData { body, used, opened: Cell::new(false) }
+        StreamData { body, used, opened: Cell::new(false), state: Rc::default() }
     }
     /// False when `text()` and the like already took the body.
     fn open(&self) -> bool {
@@ -585,7 +650,7 @@ impl StreamData {
         }
         self.opened.set(true);
         self.used.set(true);
-        self.body.open_stream();
+        self.body.open_stream(&self.state);
         true
     }
 }
@@ -606,11 +671,11 @@ impl JsClass for BodySource {
         def.not_exposed();
         def.method("read", 0, |s, d, _a| {
             d.open();
-            d.body.stream_read(s)
+            d.body.stream_read(s, &d.state)
         });
         def.method("cancel", 0, |s, d, _a| {
             if d.open() {
-                d.body.cancel_consumer_stream();
+                d.body.cancel_consumer_stream(&d.state);
             }
             let deferred = s.deferred()?;
             deferred.resolve(s, s.undefined())?;

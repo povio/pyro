@@ -142,6 +142,16 @@ impl StreamingFragmentParser {
         let scripting = opts.tree_builder.scripting_enabled;
         let mut tree = TreeBuilder::new_for_fragment(sink, context.idx, form, opts.tree_builder);
         install_formatting_filter(&mut tree);
+        // `<template for>` patches the markers already in the target (or an earlier chunk's) with
+        // the template's content, as the other fragment parsers do (WPT template-for-*).
+        if tree.sink.filter.is_none() && !tree.sink.dom.with(|d| d.is_xml_document(doc)) {
+            super::enable_inline_patches(&mut tree, false);
+            if let Some(patches) = &tree.sink.patches {
+                let mut patches = patches.borrow_mut();
+                patches.live = true;
+                patches.stream_target = Some(target.idx);
+            }
+        }
         let initial_state = tree.tokenizer_state_for_context_elem(scripting);
         let tokenizer =
             Tokenizer::new(AbortableTree(tree), TokenizerOpts { initial_state: Some(initial_state), ..opts.tokenizer });
@@ -251,6 +261,13 @@ impl StreamingFragmentParser {
             live.extend([template, root]);
         }
         live.extend(sink.pending_custom.borrow().iter().map(|(id, _)| *id));
+        {
+            // A replaced element that left the parser's stacks stands for nothing any more: its
+            // id may be reused. The places of the others stay alive.
+            let mut forwards = sink.forwards.borrow_mut();
+            forwards.retain(|id, _| live.contains(id));
+            live.extend(forwards.values().flat_map(|&(parent, before)| [parent, before]));
+        }
         let mut release = Vec::new();
         sink.pins.borrow_mut().retain(|id| {
             if live.contains(&id.idx) {
@@ -478,6 +495,72 @@ mod tests {
             parser.close().unwrap();
             assert_eq!(dom.borrow().inner_html(target).unwrap(), dom.borrow().inner_html(control).unwrap());
         }
+    }
+
+    /// Parses `markup` into a fresh `div` with `filter` by `setHTMLUnsafe`'s path and by the
+    /// streaming parser (split at every position of `markup` into two writes), and returns the
+    /// markup of both after checking they agree.
+    fn filtered(markup: &str, filter: FragmentFilter) -> String {
+        let (dom, body, _) = fixture();
+        let doc = dom.borrow().node_document(body).unwrap();
+        let filter = Rc::new(filter);
+        let control = dom.borrow_mut().create_element(doc, "div").unwrap();
+        set_html_unsafe_with(&mut dom.borrow_mut(), control, markup, false, Some(filter.clone())).unwrap();
+        let expected = dom.borrow().inner_html(control).unwrap();
+        for split in (0..=markup.len()).filter(|&i| markup.is_char_boundary(i)) {
+            let target = dom.borrow_mut().create_element(doc, "div").unwrap();
+            let mut parser =
+                StreamingFragmentParser::with_filter(dom.clone(), target, target, None, false, Some(filter.clone())).unwrap();
+            parser.write(&markup[..split]).unwrap();
+            parser.write(&markup[split..]).unwrap();
+            parser.close().unwrap();
+            assert_eq!(dom.borrow().inner_html(target).unwrap(), expected, "split at {split} of {markup:?}");
+        }
+        expected
+    }
+
+    #[test]
+    fn replace_with_children_hoists_children_and_follows_the_adoption_agency() {
+        let replacing = |names: &[&str]| {
+            let mut filter = FragmentFilter::default();
+            for name in names {
+                filter.replace_with_children.insert((ns!(html), (*name).into()));
+            }
+            filter
+        };
+        assert_eq!(filtered("<div><p>Hello <b>World!</b></p></div>", replacing(&["p"])), "<div>Hello <b>World!</b></div>");
+        assert_eq!(filtered("<p>a<span>b</span>c</p>", replacing(&["span"])), "<p>abc</p>");
+        // A replaced block inside a formatting element the adoption agency splits (WPT sanitizer-in-adoption-agency).
+        assert_eq!(filtered("<b><div>Text</b>", replacing(&["div"])), "<b>Text</b><b></b>");
+        assert_eq!(filtered("<b>1<p>foo</b>bar", replacing(&["b"])), "1<p>foobar</p>");
+        // Table foster parenting around a replaced table goes to the table's place.
+        assert_eq!(filtered("<table>f<tr><td>x</td></tr></table>", replacing(&["table"])), "f<tbody><tr><td>x</td></tr></tbody>");
+    }
+
+    #[test]
+    fn element_allow_list_attribute_rules_and_javascript_urls() {
+        let mut filter = crate::sanitizer_defaults::safe_default();
+        crate::sanitizer_defaults::remove_unsafe(&mut filter, &["onclick"]);
+        let markup = "<div onclick=x id=i><script>1</script><a href=\"jav&#9;ascript:1\" title=t>l</a><a href=\"/x\">m</a><!--c--><img src=x>z</div>";
+        assert_eq!(filtered(markup, filter), "<div><a title=\"t\">l</a><a href=\"/x\">m</a>z</div>");
+    }
+
+    #[test]
+    fn data_attributes_and_per_element_rules() {
+        let mut filter = FragmentFilter::default();
+        filter.attributes = Some([(ns!(), "class".into())].into_iter().collect());
+        filter.data_attributes = true;
+        let mut elements: FxHashMap<(crate::Namespace, crate::LocalName), crate::fragment_filter::ElementRule> = FxHashMap::default();
+        elements.insert((ns!(html), "div".into()), crate::fragment_filter::ElementRule {
+            attributes: Some([(ns!(), "title".into())].into_iter().collect()),
+            remove_attributes: [(ns!(), "class".into())].into_iter().collect(),
+        });
+        elements.insert((ns!(html), "p".into()), crate::fragment_filter::ElementRule::default());
+        filter.elements = Some(elements);
+        assert_eq!(
+            filtered("<div class=c title=t id=i data-x=1><p class=c id=i data-y=2>q</p><span>s</span></div>", filter),
+            "<div title=\"t\" data-x=\"1\"><p class=\"c\" data-y=\"2\">q</p></div>"
+        );
     }
 
     #[test]

@@ -3154,8 +3154,15 @@ fn collect_columns(
                 collect_columns(doc, child_id, wm, columns, column_sizes);
             }
             doc.nodes[node_id].children = children;
-            for column in &mut columns[first_column..] {
+            // pyro: a column group's `width` is the width of its columns that have none of their own (a `<col>`
+            // wins over its group; css-tables-3 § 3.3 and the group's own width used when it has no columns;
+            // Chromium; WPT css-tables `width-distribution/computing-column-measure-0`, `tentative/colgroup-col`).
+            let group_track = (columns.len() > first_column).then(|| column_track(&doc.nodes[node_id], wm));
+            for (column, size) in columns[first_column..].iter_mut().zip(&mut column_sizes[first_column..]) {
                 column.group.get_or_insert(node_id);
+                if let Some(track) = group_track.filter(|_| size.min.is_auto() && size.max.is_auto()) {
+                    *size = track;
+                }
             }
             // pyro: a column group without columns stands for its `span` columns (HTML's `colgroup`;
             // Chromium: one), with its own width, background and borders as theirs.
@@ -3194,15 +3201,9 @@ fn collapsed_rows(doc: &BaseDocument, rows: &[TableRow]) -> Vec<u16> {
     }).collect()
 }
 
-fn push_columns(
-    node: &crate::Node,
-    wm: WritingMode,
-    columns: &mut Vec<TableColumn>,
-    column_sizes: &mut Vec<TrackSizingFunction>,
-) {
+/// The track a `<col>` or `<colgroup>` (`node`) asks for with its `width`, `max-width` and `min-width`.
+fn column_track(node: &crate::Node, wm: WritingMode) -> TrackSizingFunction {
     let style = table_taffy_style(node, wm);
-    let span: u16 =
-        node.attr(local_name!("span")).and_then(|val| val.parse::<u16>().ok()).map(|v| v.max(1)).unwrap_or(1);
     let column: TrackSizingFunction = match style.size.width.tag() {
         taffy::CompactLength::LENGTH_TAG => {
             // A definite `max-width` clamps the column width; a zero width is treated as auto
@@ -3227,6 +3228,28 @@ fn push_columns(
         }
         _ => column,
     };
+    column
+}
+
+fn push_columns(
+    node: &crate::Node,
+    wm: WritingMode,
+    columns: &mut Vec<TableColumn>,
+    column_sizes: &mut Vec<TrackSizingFunction>,
+) {
+    let column = column_track(node, wm);
+    // pyro: HTML § 4.9.4 / § 4.9.5: `span` is a non-negative integer clamped to 1 to 1000 (0, a
+    // negative number and junk are 1; a value too large for any integer is 1000: WPT tabular-data
+    // `col-span-limits`).
+    let span: u16 = node
+        .attr(local_name!("span"))
+        .map(|val| {
+            let val = val.trim_start_matches(|c: char| c.is_ascii_whitespace());
+            let digits = val.strip_prefix('+').unwrap_or(val);
+            let digits = &digits[..digits.find(|c: char| !c.is_ascii_digit()).unwrap_or(digits.len())];
+            if digits.is_empty() { 1 } else { digits.parse::<u64>().unwrap_or(u64::MAX).clamp(1, 1000) as u16 }
+        })
+        .unwrap_or(1);
     for _ in 0..span {
         columns.push(TableColumn { node_id: node.id, group: None });
         column_sizes.push(column);
@@ -3466,6 +3489,7 @@ fn collect_table_cells(
         | DisplayInside::Contents => {
             drop_part_box(doc, node_id);
             let first_row = rows.len();
+            let first_cell = cells.len();
             if display.inside() != DisplayInside::Contents {
                 cursor.end_group();
             }
@@ -3509,6 +3533,36 @@ fn collect_table_cells(
                 cursor.end_group();
                 for row in &mut rows[first_row..] {
                     row.group.get_or_insert(node_id);
+                }
+                // pyro: a row group's `height` is a minimum of the rows it holds (css-tables-3 § 3.9 "computing row
+                // measures"): when they add up to less, they grow in proportion to what they ask for (a lone row
+                // takes it all). Their asking is their `height`, else their tallest single-row cell's. Known only for
+                // rows that ask something (the content of the others is laid out later), and without collapsed
+                // borders (a row's `height` covers half of them). WPT css-tables
+                // `height-distribution/computing-row-measure-0`, `-1`.
+                let group_height = (!wm.is_vertical() && border_collapse == BorderCollapse::Separate)
+                    .then(|| physical_size(&doc.nodes[node_id]))
+                    .flatten()
+                    .and_then(|size| (size.height.tag() == taffy::CompactLength::LENGTH_TAG).then(|| size.height.value()));
+                if let Some(group_height) = group_height.filter(|&height| height > 0.0 && rows.len() > first_row) {
+                    let asks: Vec<f32> = (first_row..rows.len())
+                        .map(|index| {
+                            let cell_height = cells[first_cell..]
+                                .iter()
+                                .filter(|cell| cell.row as usize == index && cell.rowspan == 1)
+                                .filter_map(|cell| cell.min_height)
+                                .fold(0.0, f32::max);
+                            rows[index].height.unwrap_or(0.0).max(cell_height)
+                        })
+                        .collect();
+                    let total: f32 = asks.iter().sum();
+                    let known = asks.len() == 1 || asks.iter().all(|&ask| ask > 0.0);
+                    if known && group_height > total + 0.01 {
+                        for (row, ask) in rows[first_row..].iter_mut().zip(asks) {
+                            row.height = Some(if total > 0.0 { ask * group_height / total } else { group_height });
+                            row.is_constrained = true;
+                        }
+                    }
                 }
             }
         }

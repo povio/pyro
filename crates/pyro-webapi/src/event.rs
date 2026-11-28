@@ -74,6 +74,8 @@ pub struct TouchPoint {
     pub client_y: f64,
     pub screen_x: f64,
     pub screen_y: f64,
+    pub page_x: f64,
+    pub page_y: f64,
     pub radius_x: f64,
     pub radius_y: f64,
     pub rotation_angle: f64,
@@ -149,6 +151,12 @@ pub struct EventFields {
     /// `coalescedEvents` / `predictedEvents` of the init dictionary.
     pub coalesced_events: Vec<Persistent>,
     pub predicted_events: Vec<Persistent>,
+    /// A trusted `pointermove`/`pointerrawupdate`'s coalesced list was made (it holds the event
+    /// the input layer delivered), or this event is such a list's entry: no list of its own.
+    pub(crate) coalesced_made: bool,
+    /// `MouseEvent.movementX/Y`: set for trusted moves, or by the init dictionary.
+    pub movement_x: f64,
+    pub movement_y: f64,
     pub delta_x: f64,
     pub delta_y: f64,
     pub delta_z: f64,
@@ -207,6 +215,8 @@ pub struct EventFields {
     /// `AnimationEvent.animationName`.
     pub animation_name: String,
     pub css_animation: Option<Persistent>,
+    /// A UA-fired animation or transition event's run (`animation` is looked up lazily).
+    pub css_run: Option<u64>,
     /// `TransitionEvent.propertyName`.
     pub property_name: String,
     /// `elapsedTime` (seconds) and `pseudoElement` of both.
@@ -227,6 +237,25 @@ pub struct EventFields {
     /// exposes it.
     pub snap_targets: [Option<NodeId>; 2],
     pub snap_holds: Vec<crate::collections::NodeHold>,
+    /// `DeviceOrientationEvent` `alpha`, `beta`, `gamma` (null: `None`) and `absolute`.
+    pub(crate) device_orientation: [Option<f64>; 3],
+    pub(crate) device_absolute: bool,
+    /// `DeviceMotionEvent`'s members.
+    pub(crate) device_motion: MotionFields,
+}
+
+/// `DeviceMotionEvent`'s `acceleration`, `accelerationIncludingGravity` and `rotationRate` (`None`: null; the
+/// triplets are x, y, z and alpha, beta, gamma, each null when absent) and `interval`.
+#[derive(Default, Clone)]
+pub(crate) struct MotionFields {
+    pub acceleration: Option<[Option<f64>; 3]>,
+    pub gravity: Option<[Option<f64>; 3]>,
+    pub rotation: Option<[Option<f64>; 3]>,
+    pub interval: f64,
+    /// The objects the three members returned: each is [SameObject] ([`motion_triplet`]).
+    pub acceleration_object: Option<Persistent>,
+    pub gravity_object: Option<Persistent>,
+    pub rotation_object: Option<Persistent>,
 }
 
 /// Resolves a `MessageEvent.source` window in the realm reading it.
@@ -722,6 +751,8 @@ fn fill_mouse<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) 
     f.client_y = get_num(init, "clientY", 0.0)?;
     f.button = get_num(init, "button", 0.0)? as i16;
     f.buttons = get_num(init, "buttons", 0.0)? as u16;
+    f.movement_x = get_num(init, "movementX", 0.0)?;
+    f.movement_y = get_num(init, "movementY", 0.0)?;
     f.related_target = related(s, init)?;
     Ok(())
 }
@@ -810,7 +841,7 @@ fn spherical_to_tilt(altitude: f64, azimuth: f64) -> (f64, f64) {
 }
 
 /// Tilt (degrees) to (altitudeAngle, azimuthAngle) in radians.
-fn tilt_to_spherical(tilt_x: f64, tilt_y: f64) -> (f64, f64) {
+pub(crate) fn tilt_to_spherical(tilt_x: f64, tilt_y: f64) -> (f64, f64) {
     use std::f64::consts::{FRAC_PI_2, PI};
     let (x, y) = (tilt_x.to_radians(), tilt_y.to_radians());
     let flat = tilt_x.abs() == 90.0 || tilt_y.abs() == 90.0;
@@ -1021,6 +1052,20 @@ fn css_event_animation<'s>(s: &Scope<'s>, init: Option<Object<'s>>, transition: 
     if value.is_undefined() || value.is_null() { return Ok(None); }
     crate::animations::validate_event_animation(s, value, transition)?;
     Ok(Some(Persistent::new(s, value)))
+}
+
+/// `AnimationEvent.animation` / `TransitionEvent.animation`: the dictionary's object, or for an
+/// event the UA fired the script object of the run it belongs to (null once the run is gone).
+fn css_event_animation_of<'s>(s: &Scope<'s>, e: &EventData) -> JsResult<Value<'s>> {
+    let (given, run) = {
+        let fields = e.fields.borrow();
+        (fields.css_animation.as_ref().map(|value| value.get(s)), fields.css_run)
+    };
+    match (given, run) {
+        (Some(value), _) => Ok(value),
+        (None, Some(run)) => crate::animations::run_object(s, run),
+        (None, None) => Ok(s.null()),
+    }
 }
 
 fn css_event_elapsed_time(init: Option<Object<'_>>) -> JsResult<f64> {
@@ -1361,6 +1406,121 @@ impl JsClass for BeforeUnloadEvent {
     }
 }
 
+/// `double?` of a dictionary member: undefined and null are null; anything else is converted to a number,
+/// which must be finite (WebIDL `double`).
+fn nullable_double(v: pyro_js::Value<'_>) -> JsResult<Option<f64>> {
+    if v.is_nullish() {
+        return Ok(None);
+    }
+    let n = v.to_number()?;
+    if !n.is_finite() {
+        return Err(JsError::Type("The provided double value is non-finite.".into()));
+    }
+    Ok(Some(n))
+}
+
+/// `DeviceMotionEventAccelerationInit` / `DeviceMotionEventRotationRateInit` member `member` of `init`: absent
+/// (undefined) is no object; null or an object is a dictionary whose `names` members are `double?`.
+fn init_triplet<'s>(init: Object<'s>, member: &'static str, names: [&'static str; 3]) -> JsResult<Option<[Option<f64>; 3]>> {
+    let value = init.get_atom(member)?;
+    if value.is_undefined() {
+        return Ok(None);
+    }
+    let mut out = [None; 3];
+    if let Some(dictionary) = value.as_object() {
+        for (i, name) in names.iter().enumerate() {
+            out[i] = nullable_double(dictionary.get_atom(name)?)?;
+        }
+    } else if !value.is_null() {
+        return Err(JsError::Type(format!("The provided value for '{member}' is not an object.").into()));
+    }
+    Ok(Some(out))
+}
+
+fn fill_device_motion<'s>(_: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    let Some(init) = init else { return Ok(()) };
+    // Dictionary members in lexicographic order.
+    f.device_motion.acceleration = init_triplet(init, "acceleration", ["x", "y", "z"])?;
+    f.device_motion.gravity = init_triplet(init, "accelerationIncludingGravity", ["x", "y", "z"])?;
+    let interval = init.get_atom("interval")?;
+    f.device_motion.interval = if interval.is_undefined() {
+        0.0
+    } else {
+        let n = interval.to_number()?;
+        if !n.is_finite() {
+            return Err(JsError::Type("The provided double value is non-finite.".into()));
+        }
+        n
+    };
+    f.device_motion.rotation = init_triplet(init, "rotationRate", ["alpha", "beta", "gamma"])?;
+    Ok(())
+}
+
+fn fill_device_orientation<'s>(_: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    let Some(init) = init else { return Ok(()) };
+    f.device_absolute = init.get_atom("absolute")?.to_bool();
+    f.device_orientation = [
+        nullable_double(init.get_atom("alpha")?)?,
+        nullable_double(init.get_atom("beta")?)?,
+        nullable_double(init.get_atom("gamma")?)?,
+    ];
+    Ok(())
+}
+
+fn nullable_number<'s>(s: &Scope<'s>, v: Option<f64>) -> pyro_js::Value<'s> {
+    v.map_or(s.null(), |v| s.number(v))
+}
+
+/// The values of one of the three object members of a `DeviceMotionEvent` and the object made for it.
+type MotionMember<'a> = (&'a mut Option<[Option<f64>; 3]>, &'a mut Option<Persistent>);
+
+/// `DeviceMotionEventAcceleration` and `DeviceMotionEventRotationRate` objects of an event: made on the first read
+/// of the member that has them and returned by every later one (`[SameObject]`, as in Chrome).
+fn motion_triplet<'s, C: JsClass<Data = [Option<f64>; 3]>>(
+    s: &Scope<'s>,
+    e: &EventCore,
+    member: for<'a> fn(&'a mut MotionFields) -> MotionMember<'a>,
+) -> JsResult<pyro_js::Value<'s>> {
+    let (values, cached) = {
+        let mut fields = e.fields.borrow_mut();
+        let (values, cached) = member(&mut fields.device_motion);
+        (*values, cached.as_ref().map(|p| s.rehome(p.get(s))))
+    };
+    if let Some(cached) = cached {
+        return Ok(cached);
+    }
+    let Some(values) = values else { return Ok(s.null()) };
+    let object = s.wrap::<C>(values, None)?.value();
+    let held = Persistent::new(s, object);
+    let mut fields = e.fields.borrow_mut();
+    *member(&mut fields.device_motion).1 = Some(held);
+    Ok(object)
+}
+
+pub struct DeviceMotionEventAcceleration;
+impl JsClass for DeviceMotionEventAcceleration {
+    const NAME: &'static str = "DeviceMotionEventAcceleration";
+    type Data = [Option<f64>; 3];
+    type Parent = pyro_js::NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("x", |s, d| Ok(nullable_number(s, d[0])));
+        def.getter("y", |s, d| Ok(nullable_number(s, d[1])));
+        def.getter("z", |s, d| Ok(nullable_number(s, d[2])));
+    }
+}
+
+pub struct DeviceMotionEventRotationRate;
+impl JsClass for DeviceMotionEventRotationRate {
+    const NAME: &'static str = "DeviceMotionEventRotationRate";
+    type Data = [Option<f64>; 3];
+    type Parent = pyro_js::NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("alpha", |s, d| Ok(nullable_number(s, d[0])));
+        def.getter("beta", |s, d| Ok(nullable_number(s, d[1])));
+        def.getter("gamma", |s, d| Ok(nullable_number(s, d[2])));
+    }
+}
+
 pub struct DeviceMotionEvent;
 impl JsClass for DeviceMotionEvent {
     const NAME: &'static str = "DeviceMotionEvent";
@@ -1368,12 +1528,22 @@ impl JsClass for DeviceMotionEvent {
     type Parent = Event;
     fn define(def: &mut ClassDef<Self>) {
         def.constructor(1, |s, nt, a| {
-            construct::<DeviceMotionEvent>(s, nt, a, EventInterface::DeviceMotionEvent, fill_none)
+            construct::<DeviceMotionEvent>(s, nt, a, EventInterface::DeviceMotionEvent, fill_device_motion)
         });
-        def.getter("acceleration", |s, _e| Ok(s.null()));
-        def.getter("accelerationIncludingGravity", |s, _e| Ok(s.null()));
-        def.getter("rotationRate", |s, _e| Ok(s.null()));
-        def.getter("interval", |s, _e| Ok(s.number(0.0)));
+        def.getter("acceleration", |s, e| {
+            motion_triplet::<DeviceMotionEventAcceleration>(s, e, |m| (&mut m.acceleration, &mut m.acceleration_object))
+        });
+        def.getter("accelerationIncludingGravity", |s, e| {
+            motion_triplet::<DeviceMotionEventAcceleration>(s, e, |m| (&mut m.gravity, &mut m.gravity_object))
+        });
+        def.getter("rotationRate", |s, e| {
+            motion_triplet::<DeviceMotionEventRotationRate>(s, e, |m| (&mut m.rotation, &mut m.rotation_object))
+        });
+        def.getter("interval", |s, e| Ok(s.number(e.fields.borrow().device_motion.interval)));
+        // Device Orientation "request permission to use motion and orientation events": accelerometer and gyroscope.
+        def.static_method("requestPermission", 0, |s, _a| {
+            crate::sensors::request_permission(s, &["accelerometer", "gyroscope"])
+        });
     }
 }
 
@@ -1384,12 +1554,17 @@ impl JsClass for DeviceOrientationEvent {
     type Parent = Event;
     fn define(def: &mut ClassDef<Self>) {
         def.constructor(1, |s, nt, a| {
-            construct::<DeviceOrientationEvent>(s, nt, a, EventInterface::DeviceOrientationEvent, fill_none)
+            construct::<DeviceOrientationEvent>(s, nt, a, EventInterface::DeviceOrientationEvent, fill_device_orientation)
         });
-        def.getter("alpha", |s, _e| Ok(s.null()));
-        def.getter("beta", |s, _e| Ok(s.null()));
-        def.getter("gamma", |s, _e| Ok(s.null()));
-        def.getter("absolute", |s, _e| Ok(s.boolean(false)));
+        def.getter("alpha", |s, e| Ok(nullable_number(s, e.fields.borrow().device_orientation[0])));
+        def.getter("beta", |s, e| Ok(nullable_number(s, e.fields.borrow().device_orientation[1])));
+        def.getter("gamma", |s, e| Ok(nullable_number(s, e.fields.borrow().device_orientation[2])));
+        def.getter("absolute", |s, e| Ok(s.boolean(e.fields.borrow().device_absolute)));
+        // `requestPermission(absolute)`: the absolute orientation also needs the magnetometer.
+        def.static_method("requestPermission", 0, |s, a| {
+            let names: &[&str] = if a.get(0).to_bool() { &["accelerometer", "gyroscope", "magnetometer"] } else { &["accelerometer", "gyroscope"] };
+            crate::sensors::request_permission(s, names)
+        });
     }
 }
 
@@ -1456,8 +1631,8 @@ impl JsClass for MouseEvent {
         def.getter("pageY", |s, e| Ok(s.number(e.fields.borrow().client_y)));
         def.getter("offsetX", |s, e| Ok(s.number(mouse_offset(e).0)));
         def.getter("offsetY", |s, e| Ok(s.number(mouse_offset(e).1)));
-        def.getter("movementX", |s, _e| Ok(s.number(0.0)));
-        def.getter("movementY", |s, _e| Ok(s.number(0.0)));
+        def.getter("movementX", |s, e| Ok(s.number(e.fields.borrow().movement_x)));
+        def.getter("movementY", |s, e| Ok(s.number(e.fields.borrow().movement_y)));
         def.getter("ctrlKey", |s, e| Ok(s.boolean(e.fields.borrow().ctrl_key)));
         def.getter("shiftKey", |s, e| Ok(s.boolean(e.fields.borrow().shift_key)));
         def.getter("altKey", |s, e| Ok(s.boolean(e.fields.borrow().alt_key)));
@@ -1520,7 +1695,24 @@ impl JsClass for PointerEvent {
         def.getter("persistentDeviceId", |s, e| Ok(s.number(e.fields.borrow().persistent_device_id)));
         def.getter("pointerType", |s, e| Ok(s.string(&e.fields.borrow().pointer_type)));
         def.getter("isPrimary", |s, e| Ok(s.boolean(e.fields.borrow().is_primary)));
-        def.pure_method("getCoalescedEvents", 0, |s, e, _a| {
+        // Pointer Events "coalesced events": a trusted pointermove/pointerrawupdate carries the
+        // input events that make it up. The input layer delivers one event per move here, so the
+        // list is that one event (as it was dispatched: not bubbling, not cancelable, the same
+        // target), made when first asked for so a later redispatch keeps it.
+        def.method("getCoalescedEvents", 0, |s, e, _a| {
+            if matches!(&*e.state.borrow().ty, "pointermove" | "pointerrawupdate") {
+                let own = {
+                    let (st, f) = (e.state.borrow(), e.fields.borrow());
+                    st.is_trusted && !f.coalesced_made && f.coalesced_events.is_empty()
+                };
+                if own {
+                    let entry = coalesced_entry(e);
+                    let wrapped = wrap_event(s, &entry)?;
+                    let mut f = e.fields.borrow_mut();
+                    f.coalesced_made = true;
+                    f.coalesced_events.push(Persistent::new(s, wrapped.value()));
+                }
+            }
             let events: Vec<Value<'_>> = e.fields.borrow().coalesced_events.iter().map(|p| p.get(s)).collect();
             Ok(s.array(&events)?.value())
         });
@@ -1529,6 +1721,52 @@ impl JsClass for PointerEvent {
             Ok(s.array(&events)?.value())
         });
     }
+}
+
+/// The entry of a trusted pointer event's coalesced list: a copy of the event as the input layer
+/// delivered it, with no list of its own.
+fn coalesced_entry(e: &EventData) -> EventData {
+    let (ty, time_stamp, target) = {
+        let st = e.state.borrow();
+        (st.ty.to_string(), st.time_stamp, st.target)
+    };
+    let entry = EventCore::trusted(&e.page, EventInterface::PointerEvent, &ty, false, false);
+    {
+        let mut st = entry.state.borrow_mut();
+        st.time_stamp = time_stamp;
+        st.target = target;
+        st.composed = e.state.borrow().composed;
+    }
+    {
+        let (mut f, o) = (entry.fields.borrow_mut(), e.fields.borrow());
+        f.detail = o.detail;
+        f.screen_x = o.screen_x;
+        f.screen_y = o.screen_y;
+        f.client_x = o.client_x;
+        f.client_y = o.client_y;
+        (f.ctrl_key, f.shift_key, f.alt_key, f.meta_key) = (o.ctrl_key, o.shift_key, o.alt_key, o.meta_key);
+        f.extra_modifiers = o.extra_modifiers;
+        f.button = o.button;
+        f.buttons = o.buttons;
+        f.related_target = o.related_target;
+        f.pointer_id = o.pointer_id;
+        f.pointer_type = o.pointer_type.clone();
+        f.is_primary = o.is_primary;
+        f.width = o.width;
+        f.height = o.height;
+        f.pressure = o.pressure;
+        f.tangential_pressure = o.tangential_pressure;
+        f.tilt_x = o.tilt_x;
+        f.tilt_y = o.tilt_y;
+        f.twist = o.twist;
+        f.altitude_angle = o.altitude_angle;
+        f.azimuth_angle = o.azimuth_angle;
+        f.persistent_device_id = o.persistent_device_id;
+        f.movement_x = o.movement_x;
+        f.movement_y = o.movement_y;
+        f.coalesced_made = true;
+    }
+    entry
 }
 
 pub struct WheelEvent;
@@ -2285,7 +2523,7 @@ impl JsClass for AnimationEvent {
             construct::<AnimationEvent>(s, nt, a, EventInterface::AnimationEvent, fill_animation)
         });
         def.getter("animationName", |s, e| Ok(s.string(&e.fields.borrow().animation_name)));
-        def.getter("animation", |s, e| Ok(e.fields.borrow().css_animation.as_ref().map_or(s.null(), |value| value.get(s))));
+        def.getter("animation", |s, e| css_event_animation_of(s, e));
         def.getter("elapsedTime", |s, e| Ok(s.number(e.fields.borrow().elapsed_time)));
         def.getter("pseudoElement", |s, e| Ok(s.string(&e.fields.borrow().pseudo_element)));
     }
@@ -2303,7 +2541,7 @@ impl JsClass for TransitionEvent {
             construct::<TransitionEvent>(s, nt, a, EventInterface::TransitionEvent, fill_transition)
         });
         def.getter("propertyName", |s, e| Ok(s.string(&e.fields.borrow().property_name)));
-        def.getter("animation", |s, e| Ok(e.fields.borrow().css_animation.as_ref().map_or(s.null(), |value| value.get(s))));
+        def.getter("animation", |s, e| css_event_animation_of(s, e));
         def.getter("elapsedTime", |s, e| Ok(s.number(e.fields.borrow().elapsed_time)));
         def.getter("pseudoElement", |s, e| Ok(s.string(&e.fields.borrow().pseudo_element)));
     }
@@ -2348,9 +2586,24 @@ impl JsClass for MessageEvent {
         def.getter("userActivation", |s, e| {
             Ok(e.fields.borrow().message_user_activation.as_ref().map_or(s.null(), |p| s.rehome(p.get(s))))
         });
-        def.getter("ports", |s, e| match e.fields.borrow().message_ports.as_ref() {
-            Some(ports) => Ok(s.rehome(ports.get(s))),
-            None => Ok(s.array(&[])?.value()),
+        // [SameObject], a FrozenArray<MessagePort>: `evt.ports.push(...)` throws a TypeError, and the
+        // empty list of an event without ports is one array too.
+        def.getter("ports", |s, e| {
+            let current = e.fields.borrow().message_ports.as_ref().map(|p| s.rehome(p.get(s)));
+            let ports = match current {
+                Some(ports) => ports,
+                None => {
+                    let ports = s.array(&[])?.value();
+                    let held = Persistent::new(s, ports);
+                    e.fields.borrow_mut().message_ports = Some(held);
+                    ports
+                }
+            };
+            if let Some(list) = ports.as_object() {
+                let freeze = s.global().get_atom("Object")?.as_object().expect("Object").get_atom("freeze")?;
+                freeze.as_object().expect("Object.freeze").call(None, &[list.value()])?;
+            }
+            Ok(ports)
         });
         // `initMessageEvent(type, bubbles, cancelable, data, origin, lastEventId, source, ports)`
         // (legacy): like the constructor's dictionary, ignored while the event is dispatched.
@@ -2411,6 +2664,8 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<TextEvent>();
     engine.register::<BeforeUnloadEvent>();
     engine.register::<DeviceMotionEvent>();
+    engine.register::<DeviceMotionEventAcceleration>();
+    engine.register::<DeviceMotionEventRotationRate>();
     engine.register::<DeviceOrientationEvent>();
     engine.register::<ProgressEvent>();
     engine.register::<ErrorEvent>();
@@ -2427,6 +2682,7 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<StorageEvent>();
     engine.register::<MediaQueryListEvent>();
     engine.register::<Touch>();
+    engine.register::<TouchList>();
     engine.register::<TouchEvent>();
     engine.register::<AnimationEvent>();
     engine.register::<TransitionEvent>();
@@ -2479,6 +2735,8 @@ impl JsClass for Touch {
                 client_y: num("clientY", 0.0)?,
                 screen_x: num("screenX", 0.0)?,
                 screen_y: num("screenY", 0.0)?,
+                page_x: num("pageX", 0.0)?,
+                page_y: num("pageY", 0.0)?,
                 radius_x: num("radiusX", 0.0)?,
                 radius_y: num("radiusY", 0.0)?,
                 rotation_angle: num("rotationAngle", 0.0)?,
@@ -2492,8 +2750,8 @@ impl JsClass for Touch {
         def.getter("clientY", |s, t| Ok(s.number(t.point.client_y)));
         def.getter("screenX", |s, t| Ok(s.number(t.point.screen_x)));
         def.getter("screenY", |s, t| Ok(s.number(t.point.screen_y)));
-        def.getter("pageX", |s, t| Ok(s.number(t.point.client_x)));
-        def.getter("pageY", |s, t| Ok(s.number(t.point.client_y)));
+        def.getter("pageX", |s, t| Ok(s.number(t.point.page_x)));
+        def.getter("pageY", |s, t| Ok(s.number(t.point.page_y)));
         def.getter("radiusX", |s, t| Ok(s.number(t.point.radius_x)));
         def.getter("radiusY", |s, t| Ok(s.number(t.point.radius_y)));
         def.getter("rotationAngle", |s, t| Ok(s.number(t.point.rotation_angle)));
@@ -2511,17 +2769,41 @@ fn event_target_key(s: &Scope<'_>, v: pyro_js::Value<'_>) -> Option<TargetKey> {
     s.unwrap::<crate::target::EventTarget>(v).map(|t| t.key)
 }
 
-/// A `TouchList`: an array of `Touch` wrappers with `item()`.
-fn touch_list<'s>(s: &Scope<'s>, page: &Rc<PageDom>, points: &[TouchPoint]) -> JsResult<pyro_js::Value<'s>> {
-    let mut items = pyro_js::RootedVec::new();
-    for point in points {
-        let touch = s.wrap::<Touch>(Rc::new(TouchData { page: page.clone(), point: point.clone() }), None)?;
-        items.push(s, touch.value());
+/// A `TouchList`'s state: the touches, wrapped on access.
+pub struct TouchListData {
+    page: Rc<PageDom>,
+    points: Vec<TouchPoint>,
+}
+
+impl TouchListData {
+    fn touch<'s>(&self, s: &Scope<'s>, i: usize) -> JsResult<Option<pyro_js::Value<'s>>> {
+        let Some(point) = self.points.get(i) else { return Ok(None) };
+        Ok(Some(s.wrap::<Touch>(Rc::new(TouchData { page: self.page.clone(), point: point.clone() }), None)?.value()))
     }
-    let list = s.array(&items.iter(s).collect::<Vec<_>>())?;
-    let item = s.eval("(function item(i) { return this[i >>> 0] ?? null; })", None, 1)?;
-    list.set_with(&pyro_js::JsString::new("item"), item, pyro_js::sys::kJSPropertyAttributeDontEnum)?;
-    Ok(list.value())
+}
+
+pub struct TouchList;
+impl JsClass for TouchList {
+    const NAME: &'static str = "TouchList";
+    type Data = Rc<TouchListData>;
+    type Parent = pyro_js::NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("length", |s, l| Ok(s.number(l.points.len() as f64)));
+        def.method("item", 1, |s, l, a| {
+            a.require(1, "TouchList.item")?;
+            let i = a.get(0).to_number()?;
+            let i = if i.is_finite() { i.trunc().rem_euclid(4294967296.0) as usize } else { 0 };
+            Ok(l.touch(s, i)?.unwrap_or_else(|| s.null()))
+        });
+        def.legacy_platform_object();
+        def.indexed(|s, l, i| l.touch(s, i as usize));
+        def.indexed_iterator();
+    }
+}
+
+/// A `TouchList` over `points`.
+fn touch_list<'s>(s: &Scope<'s>, page: &Rc<PageDom>, points: &[TouchPoint]) -> JsResult<pyro_js::Value<'s>> {
+    Ok(s.wrap::<TouchList>(Rc::new(TouchListData { page: page.clone(), points: points.to_vec() }), None)?.value())
 }
 
 fn touch_points<'s>(s: &Scope<'s>, init: Option<Object<'s>>, name: &'static str) -> JsResult<Vec<TouchPoint>> {

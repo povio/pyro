@@ -44,29 +44,34 @@ index bbcd0d2..19a83d2 100644
              | Component::AttributeInNoNamespaceExists { .. }
              | Component::AttributeOther(..)
 diff --git a/context.rs b/context.rs
-index 4dffd8f..a3ae4f8 100644
+index 4dffd8f..660ea6d 100644
 --- a/context.rs
 +++ b/context.rs
-@@ -171,6 +171,9 @@ where
+@@ -171,6 +171,13 @@ where
      #[allow(clippy::type_complexity)]
      pub pseudo_element_matching_fn: Option<&'a dyn Fn(&Impl::PseudoElement) -> bool>,
  
 +    /// The state of the pseudo-element itself, not its originating element.
 +    pub pseudo_element_state: Option<Impl::NonTSPseudoClass>,
 +
++    /// pyro: whether the pseudo-element is its parent pseudo-element's only child (`:only-child` after a
++    /// pseudo-element of a pseudo-element tree, e.g. `::view-transition-group(x):only-child`).
++    pub pseudo_element_only_child: bool,
++
      /// Extra implementation-dependent matching data.
      pub extra_data: Impl::ExtraMatchingData<'a>,
  
-@@ -287,6 +290,7 @@ where
+@@ -287,6 +294,8 @@ where
              nesting_level: 0,
              in_negation: false,
              pseudo_element_matching_fn: None,
 +            pseudo_element_state: None,
++            pseudo_element_only_child: false,
              extra_data: Default::default(),
              current_relative_selector_anchor: None,
              selector_caches,
 diff --git a/matching.rs b/matching.rs
-index 475e776..f1226ad 100644
+index 475e776..b2de3e3 100644
 --- a/matching.rs
 +++ b/matching.rs
 @@ -475,7 +475,7 @@ where
@@ -74,7 +79,7 @@ index 475e776..f1226ad 100644
          }
  
 -        if !iter.matches_for_stateless_pseudo_element() {
-+        if !iter.matches_for_stateless_pseudo_element(context.pseudo_element_state.as_ref()) {
++        if !iter.matches_for_stateless_pseudo_element(context.pseudo_element_state.as_ref(), context.pseudo_element_only_child) {
              return KleeneValue::False;
          }
  
@@ -277,7 +282,7 @@ index 475e776..f1226ad 100644
              anchor.is_none_or(|a| a == element.opaque())
          },
 diff --git a/parser.rs b/parser.rs
-index cac3c1d..e9e927d 100644
+index cac3c1d..08f9560 100644
 --- a/parser.rs
 +++ b/parser.rs
 @@ -1255,6 +1255,7 @@ impl<Impl: SelectorImpl> Selector<Impl> {
@@ -307,7 +312,7 @@ index cac3c1d..e9e927d 100644
  
      #[inline]
 -    pub(crate) fn matches_for_stateless_pseudo_element(&mut self) -> bool {
-+    pub(crate) fn matches_for_stateless_pseudo_element(&mut self, state: Option<&Impl::NonTSPseudoClass>) -> bool {
++    pub(crate) fn matches_for_stateless_pseudo_element(&mut self, state: Option<&Impl::NonTSPseudoClass>, only_child: bool) -> bool {
          let first = match self.next() {
              Some(c) => c,
              // Note that this is the common path that we keep inline: the
@@ -315,14 +320,14 @@ index cac3c1d..e9e927d 100644
              None => return true,
          };
 -        self.matches_for_stateless_pseudo_element_internal(first)
-+        self.matches_for_stateless_pseudo_element_internal(first, state)
++        self.matches_for_stateless_pseudo_element_internal(first, state, only_child)
      }
  
      #[inline(never)]
 -    fn matches_for_stateless_pseudo_element_internal(&mut self, first: &Component<Impl>) -> bool {
 -        if !first.matches_for_stateless_pseudo_element() {
-+    fn matches_for_stateless_pseudo_element_internal(&mut self, first: &Component<Impl>, state: Option<&Impl::NonTSPseudoClass>) -> bool {
-+        if !first.matches_for_stateless_pseudo_element(state) {
++    fn matches_for_stateless_pseudo_element_internal(&mut self, first: &Component<Impl>, state: Option<&Impl::NonTSPseudoClass>, only_child: bool) -> bool {
++        if !first.matches_for_stateless_pseudo_element(state, only_child) {
              return false;
          }
          for component in self {
@@ -330,7 +335,7 @@ index cac3c1d..e9e927d 100644
              // state pseudo-classes, or one of the other things that can contain
              // them.
 -            if !component.matches_for_stateless_pseudo_element() {
-+            if !component.matches_for_stateless_pseudo_element(state) {
++            if !component.matches_for_stateless_pseudo_element(state, only_child) {
                  return false;
              }
          }
@@ -361,31 +366,34 @@ index cac3c1d..e9e927d 100644
      }
  
      /// Returns the value as a combinator if applicable, None otherwise.
-@@ -2201,18 +2213,19 @@ impl<Impl: SelectorImpl> Component<Impl> {
+@@ -2201,18 +2213,22 @@ impl<Impl: SelectorImpl> Component<Impl> {
      /// Whether a given selector (to the right of a pseudo-element) should match for stateless
      /// pseudo-elements. Note that generally nothing matches for those, but since we have :not(),
      /// we still need to traverse nested selector lists.
 -    fn matches_for_stateless_pseudo_element(&self) -> bool {
-+    fn matches_for_stateless_pseudo_element(&self, state: Option<&Impl::NonTSPseudoClass>) -> bool {
++    fn matches_for_stateless_pseudo_element(&self, state: Option<&Impl::NonTSPseudoClass>, only_child: bool) -> bool {
          match *self {
 -            Component::Negation(ref selectors) => !selectors.slice().iter().all(|selector| {
 +            Component::NonTSPseudoClass(ref class) => state == Some(class),
++            // pyro: `:only-child` after a pseudo-element of a pseudo-element tree (the parser admits
++            // no other structural pseudo-class there): whether it is its parent's only child.
++            Component::Nth(ref data) => only_child && matches!(data.ty, NthType::OnlyChild),
 +            Component::Negation(ref selectors) => !selectors.slice().iter().any(|selector| {
                  selector
                      .iter_raw_match_order()
 -                    .all(|c| c.matches_for_stateless_pseudo_element())
-+                    .all(|c| c.matches_for_stateless_pseudo_element(state))
++                    .all(|c| c.matches_for_stateless_pseudo_element(state, only_child))
              }),
              Component::Is(ref selectors) | Component::Where(ref selectors) => {
                  selectors.slice().iter().any(|selector| {
                      selector
                          .iter_raw_match_order()
 -                        .all(|c| c.matches_for_stateless_pseudo_element())
-+                        .all(|c| c.matches_for_stateless_pseudo_element(state))
++                        .all(|c| c.matches_for_stateless_pseudo_element(state, only_child))
                  })
              },
              _ => false,
-@@ -2234,7 +2247,7 @@ impl<Impl: SelectorImpl> Component<Impl> {
+@@ -2234,7 +2250,7 @@ impl<Impl: SelectorImpl> Component<Impl> {
                      return false;
                  }
              },
@@ -394,7 +402,7 @@ index cac3c1d..e9e927d 100644
                  if !selector.visit(visitor) {
                      return false;
                  }
-@@ -2251,6 +2264,12 @@ impl<Impl: SelectorImpl> Component<Impl> {
+@@ -2251,6 +2267,12 @@ impl<Impl: SelectorImpl> Component<Impl> {
                      return false;
                  }
              },
@@ -407,7 +415,7 @@ index cac3c1d..e9e927d 100644
              AttributeInNoNamespace { ref local_name, .. } => {
                  if !visitor.visit_attribute_selector(
                      &NamespaceConstraint::Specific(&namespace_empty_string::<Impl>()),
-@@ -2612,6 +2631,11 @@ impl<Impl: SelectorImpl> ToCss for Component<Impl> {
+@@ -2612,6 +2634,11 @@ impl<Impl: SelectorImpl> ToCss for Component<Impl> {
                  dest.write_char('.')?;
                  s.to_css(dest)
              },
@@ -419,7 +427,7 @@ index cac3c1d..e9e927d 100644
              LocalName(ref s) => s.to_css(dest),
              ExplicitUniversalType => dest.write_char('*'),
  
-@@ -2664,6 +2688,11 @@ impl<Impl: SelectorImpl> ToCss for Component<Impl> {
+@@ -2664,6 +2691,11 @@ impl<Impl: SelectorImpl> ToCss for Component<Impl> {
                  }
                  Ok(())
              },
@@ -431,7 +439,7 @@ index cac3c1d..e9e927d 100644
              Nth(ref nth_data) => {
                  nth_data.write_start(dest)?;
                  if nth_data.is_function {
-@@ -2806,8 +2835,27 @@ where
+@@ -2806,8 +2838,27 @@ where
          }
      }
      loop {
@@ -459,7 +467,7 @@ index cac3c1d..e9e927d 100644
          if empty {
              return Err(ParseError::custom(if builder.has_combinators() {
                  SelectorParseErrorKind::DanglingCombinator
-@@ -3375,7 +3423,7 @@ where
+@@ -3375,7 +3426,7 @@ where
              let ignore_default_ns = state.intersects(SelectorParsingState::SKIP_DEFAULT_NAMESPACE)
                  || matches!(
                      result,
@@ -468,7 +476,7 @@ index cac3c1d..e9e927d 100644
                  );
              if !ignore_default_ns {
                  builder.push_simple_selector(Component::DefaultNamespace(url));
-@@ -3505,6 +3553,12 @@ where
+@@ -3505,6 +3556,12 @@ where
              }
              return Ok(Component::Host(Some(parse_inner_compound_selector(parser, input, state)?)));
          },
@@ -481,7 +489,7 @@ index cac3c1d..e9e927d 100644
          "not" => {
              return parse_negation(parser, input, state)
          },
-@@ -3628,7 +3682,15 @@ where
+@@ -3628,7 +3685,15 @@ where
                          return Err(ParseError::custom(e));
                      },
                  };

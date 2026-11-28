@@ -36,7 +36,7 @@
     return out;
   };
   const options = (o) => {
-    if (o === undefined || o === null) return { ignoreSearch: false, ignoreMethod: false, ignoreVary: false, cacheName: undefined };
+    if (o === undefined || o === null) return { ignoreSearch: false, ignoreMethod: false, ignoreVary: false };
     if (typeof o !== 'object' && typeof o !== 'function') {
       throw new TypeErrorC("The provided value is not of type 'CacheQueryOptions'.");
     }
@@ -44,9 +44,14 @@
       ignoreSearch: !!o.ignoreSearch,
       ignoreMethod: !!o.ignoreMethod,
       ignoreVary: !!o.ignoreVary,
-      cacheName: o.cacheName === undefined ? undefined : String(o.cacheName),
     };
   };
+  // Cache names are DOMStrings: the native side keeps Rust strings, so a lone
+  // surrogate crosses as U+10FFFF + its four hex digits, and a literal U+10FFFF
+  // as U+10FFFF + 'x'; `unname` undoes it.
+  const MARK = '\u{10FFFF}';
+  const name = (v) => String(v).replace(/[\uD800-\uDFFF]|\u{10FFFF}/gu, (c) => (c === MARK ? MARK + 'x' : MARK + c.charCodeAt(0).toString(16)));
+  const unname = (v) => v.replace(/\u{10FFFF}(x|[0-9a-f]{4})/gu, (_, e) => (e === 'x' ? MARK : String.fromCharCode(parseInt(e, 16))));
   // RequestInfo: a Request as it is, anything else through `new Request`.
   const toRequest = (r) => (r instanceof RequestC ? r : new RequestC(r));
   const httpScheme = (url) => {
@@ -68,7 +73,7 @@
 
   const putOp = (r, response, body) => [
     'put', r.url, r.method, flat(r.headers), response.type, response.url, response.status, response.statusText,
-    flat(response.headers), response.redirected, body,
+    flat(response.headers), response.redirected, body, native.corp(response),
   ];
   // The body as the cache keeps it: the bytes the network delivered, shared.
   const readBody = (response) => PromiseC.resolve(native.read(response));
@@ -81,7 +86,8 @@
   };
 
   class Cache {
-    constructor(t, h) {
+    constructor() {
+      const [t, h] = arguments; // WebIDL: the interface object's length is 0
       if (t !== token) throw illegal('Cache');
       handles.set(this, h);
     }
@@ -177,6 +183,13 @@
     }
   }
   tag(Cache, 'Cache');
+  // WebIDL: regular operations are enumerable.
+  const enumerable = (C) => {
+    for (const key of Reflect.ownKeys(C.prototype)) {
+      if (key !== 'constructor' && key !== Symbol.toStringTag) O.defineProperty(C.prototype, key, { enumerable: true });
+    }
+  };
+  enumerable(Cache);
 
   const stores = new WeakMap();
   const storeOf = (storage) => {
@@ -185,7 +198,8 @@
     return backend;
   };
   class CacheStorage {
-    constructor(t, ...backend) {
+    constructor() {
+      const [t, ...backend] = arguments;
       if (t !== token) throw illegal('CacheStorage');
       stores.set(this, backend[0]);
     }
@@ -194,36 +208,39 @@
         const backend = storeOf(this);
         need(arguments.length, 1, 'CacheStorage', 'match');
         const o = options(opts);
-        if (o.cacheName !== undefined) {
-          const h = backend.storage('get', o.cacheName);
+        // MultiCacheQueryOptions: only here is `cacheName` read (Cache.match takes CacheQueryOptions).
+        const cacheName = opts === undefined || opts === null ? undefined : opts.cacheName;
+        if (cacheName !== undefined) {
+          const h = backend.storage('get', name(cacheName));
           return h === null ? undefined : lookup(h, request, o, true, backend)[0];
         }
         return lookup(null, request, o, true, backend)[0];
       });
     }
-    has(name) {
+    has(n) {
       return run(() => {
         need(arguments.length, 1, 'CacheStorage', 'has');
-        return storeOf(this).storage('has', String(name));
+        return storeOf(this).storage('has', name(n));
       });
     }
-    open(name) {
+    open(n) {
       return run(() => {
         need(arguments.length, 1, 'CacheStorage', 'open');
-        return new Cache(token, storeOf(this).storage('open', String(name)));
+        return new Cache(token, storeOf(this).storage('open', name(n)));
       });
     }
-    delete(name) {
+    delete(n) {
       return run(() => {
         need(arguments.length, 1, 'CacheStorage', 'delete');
-        return storeOf(this).storage('delete', String(name));
+        return storeOf(this).storage('delete', name(n));
       });
     }
     keys() {
-      return run(() => storeOf(this).storage('keys', ''));
+      return run(() => storeOf(this).storage('keys', '').map(unname));
     }
   }
   tag(CacheStorage, 'CacheStorage');
+  enumerable(CacheStorage);
 
   return { Cache, CacheStorage, caches: new CacheStorage(token, native), bucketCaches: backend => new CacheStorage(token, backend) };
 })

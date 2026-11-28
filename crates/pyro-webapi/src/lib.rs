@@ -20,12 +20,15 @@ pub mod abort;
 mod animation_events;
 mod animation_frame;
 mod animations;
+pub mod bounce_tracking;
 mod cache_storage;
+pub mod coep_report;
 mod cookie_store;
 mod opfs;
 pub mod canvas;
 mod canvas_path;
 mod clipboard;
+mod close_watcher;
 pub mod collections;
 mod compression;
 mod computed_properties;
@@ -59,11 +62,23 @@ pub mod typed_om;
 pub mod trusted_types;
 pub mod csp_report;
 pub mod reporting;
+pub mod reporting_store;
 pub mod form_data;
 pub mod formdata;
 pub mod fullscreen;
+pub(crate) mod pointer_lock;
+pub mod permissions_policy;
 mod web_locks;
 mod media_devices;
+mod media_stream;
+mod media_session;
+mod media_capabilities;
+mod eme;
+pub mod pressure;
+mod credentials;
+pub mod credentialless;
+mod webauthn;
+mod sensors;
 mod paint_worklet;
 mod audio_worklet;
 /// Hooks only tests use (feature `test-hooks`, enabled by test builds through dev-dependencies).
@@ -100,13 +115,16 @@ pub mod navigator_extras;
 pub mod node;
 mod positional_html;
 mod scheduler;
+mod sanitizer;
 mod sanitizer_options;
 mod streaming_html;
 pub mod observable;
 pub mod page;
+pub mod perf;
 pub mod performance;
 pub mod server_timing;
 mod pointer_capture;
+mod scrollbar_drag;
 mod popover;
 mod popup;
 mod port_link;
@@ -122,9 +140,12 @@ mod service_worker;
 mod show_picker;
 mod service_worker_scope;
 mod smil;
+mod svg_animation_element;
 pub mod smooth_scroll;
+pub mod signature_sri;
 pub mod sri;
 pub mod storage;
+mod storage_access;
 mod storage_manager;
 mod storage_buckets;
 mod streams;
@@ -137,11 +158,13 @@ mod origin_globals;
 mod origin_urls;
 pub mod url;
 mod url_pattern;
+pub use url_pattern::{href_matches, PatternInput};
 pub mod url_search_params;
 mod user_activation;
 pub mod util;
 pub mod validity;
 pub(crate) mod webaudio;
+pub(crate) mod webnn;
 pub mod websocket;
 pub mod window;
 pub mod window_features;
@@ -149,6 +172,7 @@ pub mod window_message;
 pub mod worker;
 pub(crate) mod shared_worker;
 pub mod svg_use;
+mod svg_text;
 mod worker_scope;
 pub mod xhr;
 pub mod xpath;
@@ -158,21 +182,33 @@ use std::rc::Rc;
 use pyro_js::{JsResult, Object, Scope, Value};
 
 pub use event::{EventCore, EventData, EventInterface};
+
+/// Delivers `event` at `receiver` (an EventTarget or the global) as a trusted event
+/// (`isTrusted`), bypassing `dispatchEvent`'s untrusting: the Navigation API's own events.
+pub fn dispatch_trusted_event(s: &Scope<'_>, receiver: Value<'_>, event: Value<'_>) -> JsResult<()> {
+    cookie_store::events::dispatch_trusted(s, receiver, event)
+}
+pub use media_devices::set_fake_devices as set_fake_media_devices;
 pub use fetch::{FetchLimits, RequestContext};
 pub use file_reader::FileReaderLimits;
 pub use scheduler::with_idle_scheduling_state;
 pub use identity::UserAgentOverride;
 pub use navigator_extras::{ContextServices, GeolocationFix, PermissionSetting, UserAgentMetadata};
+pub use sensors::SensorReading;
 pub use node::{wrap_node, NodeData};
+pub use webauthn::WebAuthnError;
 pub use page::{AgentClusterGroup, AvailableImage, FrameContainer,
     BodyPart, DialogAnswer, DocumentTiming, DownloadRequest, FocusTarget, FocusTransition, FrameViewportSource,
     ResponsiveFramesSource,
     IframeAttribute, MediaFetchHandle, MediaRequest, MediaResponse, NavigationRequest, PageDom, PageHooks, Partial,
     RemotePoster,
 };
-pub use popup::{navigate_named_popup, popup_window_proxy, PopupCommand, PopupState, PopupTicket};
+pub use popup::{
+    coop_reporting_active, coop_reporting_documents, navigate_named_popup, note_window_access, popup_window_proxy, PopupCommand,
+    PopupState, PopupTicket, ACCESS_NOTE,
+};
 pub use render_blocking::RenderBlocker;
-pub use service_worker::{navigation_route, subresource_route, LoadRoute};
+pub use service_worker::{navigation_redirect_stop, navigation_route, prefetch_redirect_stop, subresource_route, LoadRoute};
 pub use storage::{StorageNamespace, StorageSeed};
 pub use structured_clone::{
     decode_message as deserialize_message, encode_for_storage as serialize_for_storage, encode_message as serialize_message,
@@ -193,10 +229,13 @@ pub fn register(engine: &pyro_js::Engine) {
     engine.register::<target::EventTarget>();
     trusted_types::register(engine);
     engine.register::<scheduler::WebScheduler>();
+    storage_access::register(engine);
     event::register(engine);
+    perf::register(engine);
     popup::register(engine);
     node::register(engine);
     html::register(engine);
+    svg_animation_element::register(engine);
     collections::register(engine);
     css::register(engine);
     layout_api::register(engine);
@@ -204,6 +243,7 @@ pub fn register(engine: &pyro_js::Engine) {
     traversal::register(engine);
     range::register(engine);
     abort::register(engine);
+    close_watcher::register(engine);
     message_channel::register(engine);
     media_source::register(engine);
     worker::register(engine);
@@ -223,6 +263,7 @@ pub fn register(engine: &pyro_js::Engine) {
     mutation_observer::register(engine);
     intersection_observer::register(engine);
     crypto::register(engine);
+    highlights::register(engine);
     form_data::register(engine);
     dom_parser::register(engine);
     resize_observer::register(engine);
@@ -415,6 +456,8 @@ fn install_page<'s>(scope: &Scope<'s>, page: Rc<PageDom>) -> JsResult<Object<'s>
     realm.set_unhandled_rejection_handler(event::dispatch_unhandled_rejection);
     realm.set_rejection_hooks(event::REJECTION_HOOKS);
     let helpers = install_helpers(scope)?;
+    // highlights.js's pristine primitives: it is made on first use, after page script ran.
+    scope.keep_value("highlight primitives", helpers.get_atom("highlightPrimitives")?);
     file::install(scope, helpers.get_atom("blobParts")?)?;
     mutation_observer::install(scope, &page, helpers.get_atom("mutationOptions")?)?;
     intersection_observer::install(scope, &page, helpers.get_atom("intersection")?)?;

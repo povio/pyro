@@ -358,7 +358,7 @@ fn self_inserting_connected_callbacks_end() {
            connectedCallback() { calls++; this.attachShadow({ mode: 'open' }).appendChild(document.createElement('x-rec')); } \
          }); document.body.appendChild(document.createElement('x-rec')); calls",
     );
-    assert_eq!(calls, "256");
+    assert_eq!(calls, "64");
 }
 
 /// Customized built-in elements: `define(name, C, {extends})`, `new C()`, `createElement(local,

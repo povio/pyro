@@ -101,10 +101,12 @@ fromModule();
     assert_eq!(text(&source, &unused["ranges"][0]), "function unused() { return 3; }");
 
     let module = &result[1];
-    // The page's text, offsets into it (not the loader's `import.meta` line).
+    // The page's text, offsets into it (not the loader's `import.meta` line). An inline module's
+    // text is placed at its document line (c40b7ef84: the engine numbers a module's lines from 1, so
+    // error lines are the document's): the script starts on line 5, four blank lines come first.
     let source = h.page("Debugger.getScriptSource", json!({"scriptId": module["scriptId"]}));
     let source = source["result"]["scriptSource"].as_str().unwrap().to_owned();
-    assert!(source.starts_with("\nfunction fromModule"), "{source:?}");
+    assert!(source.starts_with("\n\n\n\n\nfunction fromModule"), "{source:?}");
     let functions = module["functions"].as_array().unwrap();
     let not_from = functions.iter().find(|f| f["functionName"] == "notFromModule").unwrap();
     assert_eq!(text(&source, &not_from["ranges"][0]), "function notFromModule() { return 2; }");

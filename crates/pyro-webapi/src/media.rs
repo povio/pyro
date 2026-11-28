@@ -91,9 +91,11 @@ const TIMEUPDATE_MS: f64 = 250.0;
 enum Resource {
     Url(String),
     Bytes(Bytes),
-    /// A `srcObject` that is not a Blob (MediaStream, MediaSource): nothing
-    /// can be read from it.
+    /// A `srcObject` that is not a Blob (MediaSource): nothing can be read from it.
     Unreadable,
+    /// A `srcObject` MediaStream: no fetch, the element is ready with the tracks it has now
+    /// (media_stream.js `streamInfo`; the duration is infinite).
+    Stream(MediaInfo),
 }
 
 struct MediaState {
@@ -110,6 +112,8 @@ struct MediaState {
     clock: Option<(f64, f64)>,
     duration: f64,
     video: (u32, u32),
+    /// The resource has an audio track (`captureStream()` makes a track for it).
+    audio: bool,
     seeking: bool,
     seek_serial: u32,
     volume: f64,
@@ -131,6 +135,8 @@ struct MediaState {
     current_src: String,
     /// `srcObject`: `Some(Some(bytes))` for a Blob, `Some(None)` for another object.
     src_object: Option<Option<Bytes>>,
+    /// The `srcObject` MediaStream's tracks when it is one.
+    stream: Option<MediaInfo>,
     pending_play: Vec<(WeakRealm, Deferred)>,
     /// HTML "can autoplay flag".
     can_autoplay: bool,
@@ -167,6 +173,14 @@ struct MediaState {
     /// HTML "blocked on its media element's pending text tracks": the load
     /// of this generation stopped at HAVE_CURRENT_DATA until they settle.
     blocked_on_tracks: Option<u32>,
+    /// EME: the `MediaKeys` set on this element (`setMediaKeys`), whose sessions' keys decrypt its samples.
+    keys: Option<crate::eme::SharedKeys>,
+    /// A `srcObject` MediaStream's video: the frame its first live video track last delivered
+    /// (media_stream.js pulls one per rendering update while the element plays), and how many came.
+    stream_frame: Option<pyro_media::video::Frame>,
+    stream_frames: usize,
+    /// The load (generation) whose HAVE_CURRENT_DATA waits for the stream's first frame.
+    stream_wait: Option<u32>,
 }
 
 /// A `<video>`'s resource, kept to decode frames from: the bytes until the
@@ -199,6 +213,7 @@ impl Default for MediaState {
             clock: None,
             duration: f64::NAN,
             video: (0, 0),
+            audio: false,
             seeking: false,
             seek_serial: 0,
             volume: 1.0,
@@ -213,6 +228,7 @@ impl Default for MediaState {
             pointer: None,
             current_src: String::new(),
             src_object: None,
+            stream: None,
             pending_play: Vec::new(),
             can_autoplay: true,
             lazy_approved: false,
@@ -232,6 +248,10 @@ impl Default for MediaState {
             presented: None,
             presented_frames: 0,
             blocked_on_tracks: None,
+            keys: None,
+            stream_frame: None,
+            stream_frames: 0,
+            stream_wait: None,
         }
     }
 }
@@ -409,9 +429,88 @@ fn muted(page: &PageDom, node: NodeId) -> bool {
 /// a WPT page with `<video autoplay>` otherwise plays only if a client evaluation (a user
 /// gesture) happens to reach the document before its media has enough data.
 fn may_play(page: &PageDom, node: NodeId) -> bool {
+    !frame_hidden_by_policy(page) && (muted(page, node) || autoplay_allowed(page))
+}
+
+/// Whether the document's permissions policy disables `media-playback-while-not-visible` and
+/// its frame is not rendered now (https://wicg.github.io/iframe-media-pausing/): its media may
+/// not play and its audio contexts do not run. Costs one `RefCell` read for any other document.
+pub(crate) fn frame_hidden_by_policy(page: &PageDom) -> bool {
+    !page.media_while_hidden_allowed() && !frame_rendered(page)
+}
+
+/// Whether the document's frame is rendered: every frame owner up to the top-level document is
+/// connected, not `display: none` (no box), has `visibility: visible` and a content box that is
+/// not empty. A frame merely scrolled out of the viewport is rendered. A top-level (or removed)
+/// document counts as rendered.
+pub(crate) fn frame_rendered(page: &PageDom) -> bool {
+    let options = pyro_dom::style::CheckVisibilityOptions { check_visibility: true, check_opacity: false };
+    let mut container = page.container();
+    loop {
+        let crate::page::FrameContainer::Frame(parent, owner) = container else { return true };
+        let shown = {
+            let pdom = parent.dom.borrow();
+            let layout = parent.layout();
+            let shown = pdom.is_connected(owner).unwrap_or(false)
+                && layout.check_visibility(&pdom, owner, options)
+                && layout.content_size(&pdom, owner).is_some_and(|(w, h)| w > 0.0 && h > 0.0);
+            shown
+        };
+        if !shown {
+            return false;
+        }
+        container = parent.container();
+    }
+}
+
+/// The checkpoint pass for a document whose policy disables `media-playback-while-not-visible`:
+/// when its frame became rendered or not rendered since the last pass, a task pauses its playing
+/// media (not rendered) and tells its audio contexts (`webaudio.js` `frameRendered`).
+pub fn refresh_frame_rendered(page: &Rc<PageDom>) {
+    if page.media_while_hidden_allowed() || page.is_disposed() {
+        return;
+    }
+    let rendered = frame_rendered(page);
+    if page.media_frame_rendered.replace(rendered) == rendered {
+        // A context a lazy check interrupted before any pass saw the frame hidden: resume it now.
+        if rendered && page.media_audio_blocked.replace(false) {
+            let weak = Rc::downgrade(page);
+            page.post_task(Box::new(move || {
+                if let Some(page) = weak.upgrade() {
+                    if !page.is_disposed() && page.media_frame_rendered.get() {
+                        crate::webaudio::frame_rendered_changed(&page, true);
+                    }
+                }
+            }));
+        }
+        return;
+    }
+    page.media_audio_blocked.set(false);
+    let weak = Rc::downgrade(page);
+    page.post_task(Box::new(move || {
+        let Some(page) = weak.upgrade() else { return };
+        // A later pass may have changed it again: its own task follows.
+        if page.is_disposed() || page.media_frame_rendered.get() != rendered {
+            return;
+        }
+        if !rendered {
+            // "Pause" every playing media element of the document (internal pause steps).
+            let playing: Vec<NodeId> =
+                page.media.elements.borrow().iter().filter(|(_, st)| !st.paused).map(|(id, _)| *id).collect();
+            for node in playing {
+                internal_pause(&page, node);
+            }
+        }
+        crate::webaudio::frame_rendered_changed(&page, rendered);
+    }));
+}
+
+/// A document whose sticky activation is set, or any document under
+/// `PYRO_AUTOPLAY_POLICY=no-user-gesture-required` (shared with Web Audio's `AudioContext`
+/// autoplay check, which Chrome gates by the same flag).
+pub(crate) fn autoplay_allowed(page: &PageDom) -> bool {
     static NO_GESTURE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    muted(page, node)
-        || page.has_sticky_activation()
+    page.has_sticky_activation()
         || *NO_GESTURE
             .get_or_init(|| std::env::var("PYRO_AUTOPLAY_POLICY").is_ok_and(|v| v == "no-user-gesture-required"))
 }
@@ -909,6 +1008,8 @@ fn load(page: &Rc<PageDom>, node: NodeId) {
         st.show_poster = true;
         st.frames = None;
         st.presented = None;
+        st.stream_frame = None;
+        st.stream_wait = None;
     });
     update_pin(page, node);
     // The show poster flag is set again: no cue stays active.
@@ -919,6 +1020,7 @@ fn load(page: &Rc<PageDom>, node: NodeId) {
 /// HTML "resource selection algorithm": the synchronous part, then a task
 /// for the rest (after "await a stable state").
 fn resource_selection(page: &Rc<PageDom>, node: NodeId) {
+    let approved = peek(page, node, |st| st.lazy_approved);
     if defer_lazy(page, node) {
         // A deferred element does not delay the load event (a previous load may have set it).
         set_delaying(page, node, false);
@@ -930,7 +1032,18 @@ fn resource_selection(page: &Rc<PageDom>, node: NodeId) {
         st.generation
     });
     set_delaying(page, node, true);
-    queue(page, node, generation, move |page| select(page, node, generation));
+    queue(page, node, generation, move |page| {
+        // After "await a stable state" the element's `loading` is what script left it as: a
+        // `src` set before `loading=lazy` in one task is a lazy element too (WPT
+        // video-loading-lazy-below-viewport-load-event). An element the lazy load check let go
+        // is not deferred again.
+        if !approved && defer_lazy(page, node) {
+            with(page, node, |st| st.network = NETWORK_EMPTY);
+            set_delaying(page, node, false);
+            return;
+        }
+        select(page, node, generation)
+    });
 }
 
 /// HTML "will lazy load element steps" for a media element (`loading=lazy`, scripting
@@ -942,14 +1055,28 @@ fn defer_lazy(page: &Rc<PageDom>, node: NodeId) -> bool {
         return false;
     }
     if with(page, node, |st| std::mem::take(&mut st.lazy_approved)) {
+        set_poster_deferred(page, node, false);
         return false;
     }
-    let mut lazy = page.media.lazy.borrow_mut();
-    if !lazy.contains(&node) {
-        lazy.push(node);
+    {
+        let mut lazy = page.media.lazy.borrow_mut();
+        if !lazy.contains(&node) {
+            lazy.push(node);
+        }
     }
+    // The poster is part of the load that waits: the renderer is not given it meanwhile.
+    set_poster_deferred(page, node, true);
     page.media.lazy_checked.set(None);
     true
+}
+
+/// A lazy `<video>`'s poster is fetched with its load, not before (HTML "lazy loading attributes"):
+/// while the load waits, the render snapshot carries no `poster` ([`pyro_dom::Dom::set_image_deferred`]).
+fn set_poster_deferred(page: &Rc<PageDom>, node: NodeId, deferred: bool) {
+    let video = page.dom.borrow().element(node).is_ok_and(|e| e.is_html() && &*e.name.local == "video");
+    if video {
+        page.dom.borrow_mut().set_image_deferred(node, deferred);
+    }
 }
 
 fn is_lazy_media(dom: &pyro_dom::Dom, node: NodeId) -> bool {
@@ -991,6 +1118,7 @@ pub(crate) fn lazy_after_task(page: &Rc<PageDom>) {
         let go = !lazy || (connected && loaded && crate::intersection_observer::lazy_load_intersects(page, node));
         if go {
             page.media.lazy.borrow_mut().retain(|n| *n != node);
+            set_poster_deferred(page, node, false);
             with(page, node, |st| st.lazy_approved = true);
             resource_selection(page, node);
         }
@@ -1011,7 +1139,10 @@ fn select(page: &Rc<PageDom>, node: NodeId, generation: u32) {
     if let Some(object) = object {
         let resource = match object {
             Some(bytes) => Resource::Bytes(bytes),
-            None => Resource::Unreadable,
+            None => match peek(page, node, |st| st.stream) {
+                Some(info) => Resource::Stream(info),
+                None => Resource::Unreadable,
+            },
         };
         fetch_resource(page, node, generation, resource, None);
         return;
@@ -1116,6 +1247,11 @@ fn fetch_resource(page: &Rc<PageDom>, node: NodeId, generation: u32, resource: R
             }
         }
     }
+    // HTML: the deferred load steps of `preload=none` do not apply to a MediaStream.
+    if matches!(resource, Resource::Stream(_)) {
+        start_fetch(page, node, generation, resource, source, Seek::default());
+        return;
+    }
     let preload_none =
         page.dom.borrow().get_attribute(node, "preload").ok().flatten().is_some_and(|p| p.eq_ignore_ascii_case("none"));
     if preload_none && !attr(page, node, "autoplay") && peek(page, node, |st| st.paused) {
@@ -1166,6 +1302,18 @@ fn start_fetch(
             page.post_task(Box::new(move || done(Ok(response))));
         }
         Resource::Unreadable => page.post_task(Box::new(move || done(Err("unreadable srcObject".into())))),
+        Resource::Stream(info) => {
+            let weak = Rc::downgrade(page);
+            page.post_task(Box::new(move || {
+                let Some(page) = weak.upgrade() else { return };
+                if page.is_disposed() || peek(&page, node, |st| st.generation) != generation {
+                    return;
+                }
+                with(&page, node, |st| st.fetching = false);
+                update_pin(&page, node);
+                media_ready(&page, node, generation, info);
+            }));
+        }
         Resource::Url(url) if url.starts_with("blob:") => {
             let result = page
                 .blob_url(&url)
@@ -1278,6 +1426,7 @@ fn media_ready(page: &Rc<PageDom>, node: NodeId, generation: u32, info: MediaInf
     with(page, node, |st| {
         st.duration = info.duration;
         st.video = size;
+        st.audio = info.audio;
         st.ready = HAVE_METADATA;
         st.position = 0.0;
     });
@@ -1300,13 +1449,75 @@ fn media_ready(page: &Rc<PageDom>, node: NodeId, generation: u32, info: MediaInf
         seek(page, node, start);
     }
     queue(page, node, generation, move |page| {
-        with(page, node, |st| st.ready = HAVE_CURRENT_DATA);
-        set_delaying(page, node, false);
-        want_frame(page, node);
-        if fire(page, node, generation, "loadeddata") {
-            past_current_data(page, node, generation);
+        // A MediaStream with a video track has no data before that track's first frame
+        // arrived ([`set_stream_frame`] goes on from here). The load event is not held for it.
+        if peek(page, node, |st| st.stream.is_some_and(|i| i.video.is_some()) && st.stream_frame.is_none()) {
+            with(page, node, |st| st.stream_wait = Some(generation));
+            set_delaying(page, node, false);
+            return;
         }
+        loaded_data(page, node, generation);
     });
+}
+
+/// HAVE_CURRENT_DATA: `loadeddata`, then the later ready states.
+fn loaded_data(page: &Rc<PageDom>, node: NodeId, generation: u32) {
+    // A MediaStream has no buffering: it has enough data as soon as it has any.
+    with(page, node, |st| st.ready = if st.stream.is_some() { HAVE_ENOUGH_DATA } else { HAVE_CURRENT_DATA });
+    set_delaying(page, node, false);
+    want_frame(page, node);
+    if fire(page, node, generation, "loadeddata") {
+        past_current_data(page, node, generation);
+    }
+}
+
+/// media_stream.js: the frame (straight RGBA, `w` x `h`) the element's `srcObject` MediaStream
+/// shows now. It is the element's current frame (`drawImage`, screenshots, `requestVideoFrameCallback`);
+/// the first one gives the element its data. False when the element no longer plays a stream with video.
+pub(crate) fn set_stream_frame<'s>(
+    s: &Scope<'s>,
+    element: Value<'s>,
+    w: Value<'s>,
+    h: Value<'s>,
+    data: Value<'s>,
+) -> JsResult<Value<'s>> {
+    let n = s.unwrap::<crate::node::Node>(element).ok_or_else(|| JsError::Type("The provided value is not of type 'HTMLMediaElement'.".into()))?;
+    let (w, h) = (w.to_number()? as u32, h.to_number()? as u32);
+    let rgba = crate::encoding::buffer_source_bytes(s, data)?.unwrap_or_default();
+    if w == 0 || h == 0 || rgba.len() != w as usize * h as usize * 4 {
+        return Ok(s.boolean(false));
+    }
+    let page = n.page().clone();
+    let node = n.id;
+    if !is_video(&page, node) {
+        return Ok(s.boolean(false));
+    }
+    let t = now(&page);
+    let stored = with(&page, node, |st| {
+        if !st.stream.is_some_and(|i| i.video.is_some()) {
+            return None;
+        }
+        st.stream_frames += 1;
+        let time = st.position_at(t);
+        st.stream_frame =
+            Some(pyro_media::video::Frame { index: st.stream_frames, time, width: w, height: h, rgba: std::sync::Arc::new(rgba) });
+        // The track's size changed: `videoWidth`/`videoHeight` follow (and `resize`).
+        let resized = st.ready >= HAVE_METADATA && st.video != (w, h);
+        if resized {
+            st.video = (w, h);
+        }
+        Some((resized, st.stream_wait.take(), st.generation))
+    });
+    let Some((resized, waiting, generation)) = stored else { return Ok(s.boolean(false)) };
+    if resized {
+        page.dom.borrow_mut().set_natural_size(node, Some((f64::from(w), f64::from(h))));
+        queue_event(&page, node, generation, "resize");
+    }
+    if waiting == Some(generation) {
+        queue(&page, node, generation, move |page| loaded_data(page, node, generation));
+    }
+    want_frame(&page, node);
+    Ok(s.boolean(true))
 }
 
 /// The start of a Media Fragments URI temporal dimension in `url`'s fragment (`t=[npt:]start[,end]`,
@@ -1343,7 +1554,7 @@ fn past_current_data(page: &Rc<PageDom>, node: NodeId, generation: u32) {
     }
     queue(page, node, generation, move |page| {
         let playing = with(page, node, |st| {
-            st.ready = HAVE_FUTURE_DATA;
+            st.ready = st.ready.max(HAVE_FUTURE_DATA);
             !st.paused
         });
         update_pin(page, node);
@@ -1376,6 +1587,10 @@ fn past_current_data(page: &Rc<PageDom>, node: NodeId, generation: u32) {
         }
     });
     queue(page, node, generation, move |page| {
+        // A MediaStream is never fully fetched: the element keeps loading and does not suspend.
+        if peek(page, node, |st| st.stream.is_some()) {
+            return;
+        }
         with(page, node, |st| st.network = NETWORK_IDLE);
         fire(page, node, generation, "suspend");
     });
@@ -1432,6 +1647,38 @@ fn internal_pause(page: &Rc<PageDom>, node: NodeId) {
     }
 }
 
+/// EME `setMediaKeys` (after eme.js checked the argument): the element decrypts with `keys` from now on and
+/// attempts to resume playback it was blocked on.
+pub(crate) fn set_media_keys(page: &Rc<PageDom>, node: NodeId, keys: Option<crate::eme::SharedKeys>) {
+    let has_mse = with(page, node, |st| {
+        st.keys = keys;
+        let keys = st.keys.clone();
+        if let Some(m) = st.mse.as_mut() {
+            m.presentation.set_keys(keys);
+            m.reset_waiting_key();
+        }
+        st.mse.is_some()
+    });
+    if has_mse {
+        mse_playback::refresh(page, node);
+    }
+}
+
+/// A session of `store` learned or lost keys: elements blocked on a missing key attempt to resume.
+pub(crate) fn keys_changed(page: &Rc<PageDom>, store: &crate::eme::SharedKeys) {
+    let nodes: Vec<NodeId> = page
+        .media
+        .elements
+        .borrow()
+        .iter()
+        .filter(|(_, st)| st.mse.is_some() && st.keys.as_ref().is_some_and(|k| Rc::ptr_eq(k, store)))
+        .map(|(node, _)| *node)
+        .collect();
+    for node in nodes {
+        mse_playback::refresh(page, node);
+    }
+}
+
 fn finite(v: Value<'_>, what: &str) -> JsResult<f64> {
     let n = v.to_number()?;
     if !n.is_finite() {
@@ -1458,6 +1705,10 @@ pub(crate) fn current_frame(page: &PageDom, node: NodeId) -> Option<(pyro_media:
         return None;
     }
     let position = st.position_at(t);
+    // A MediaStream shows the frame its video track delivered last.
+    if st.stream.is_some() {
+        return st.stream_frame.clone().map(|f| (f, true));
+    }
     if let Some(m) = st.mse.as_mut() {
         return m.video_frame(position, st.duration).map(|f| (f, true));
     }
@@ -1472,6 +1723,13 @@ impl PageDom {
     /// (not their poster) and have one decoded. Unchanged frames keep their
     /// `Arc`. Documents that never loaded a video pay one map scan.
     pub fn video_bitmaps(&self) -> Vec<crate::canvas::CanvasBitmap> {
+        self.video_frames().into_iter().map(|(bitmap, _)| bitmap).collect()
+    }
+
+    /// [`PageDom::video_bitmaps`], each with whether its pixels may be read back (`current_frame`'s
+    /// `clean`: false for media of another origin without CORS), which the HTML-in-Canvas privacy
+    /// paint needs to taint the canvas.
+    pub fn video_frames(&self) -> Vec<(crate::canvas::CanvasBitmap, bool)> {
         let candidates: Vec<(NodeId, bool)> = {
             let elements = self.media.elements.borrow();
             if elements.is_empty() {
@@ -1480,7 +1738,8 @@ impl PageDom {
             elements
                 .iter()
                 .filter(|(_, st)| {
-                    (st.frames.is_some() || st.mse.is_some() && st.video.0 > 0) && st.ready >= HAVE_CURRENT_DATA
+                    (st.frames.is_some() || st.mse.is_some() && st.video.0 > 0 || st.stream_frame.is_some())
+                        && st.ready >= HAVE_CURRENT_DATA
                 })
                 .map(|(&node, st)| (node, st.show_poster))
                 .collect()
@@ -1498,8 +1757,8 @@ impl PageDom {
             if show_poster && poster {
                 continue;
             }
-            if let Some((frame, _)) = current_frame(self, node) {
-                out.push((node, frame.width, frame.height, frame.rgba));
+            if let Some((frame, clean)) = current_frame(self, node) {
+                out.push(((node, frame.width, frame.height, frame.rgba), clean));
             }
         }
         out
@@ -1529,6 +1788,10 @@ fn presented_frame(page: &PageDom, node: NodeId, t: f64) -> Option<(f64, f64, (u
     }
     let position = st.position_at(t);
     let size = st.video;
+    // A MediaStream presents a frame each time its track delivered one.
+    if st.stream.is_some() {
+        return st.stream_frame.as_ref().map(|f| (f.index as f64, f.time, (f.width, f.height)));
+    }
     if let Some(m) = st.mse.as_mut() {
         return m.video_frame(position, st.duration).map(|f| (f.time, f.time, (f.width, f.height)));
     }
@@ -1629,6 +1892,20 @@ fn error_value<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
 
 pub(crate) fn mse_time_ranges<'s>(s: &Scope<'s>, flat: Value<'s>) -> JsResult<Value<'s>> {
     MODULE.helper(s, &crate::target::page_of(s)?, "timeRanges", &[flat])
+}
+
+/// What `captureStream()` (media_stream.js) can capture from a media element now: bit 0 an audio
+/// track, bit 1 a video track, bit 2 the metadata is loaded.
+pub(crate) fn capture_kinds<'s>(s: &Scope<'s>, element: Value<'s>) -> JsResult<Value<'s>> {
+    let n = s.unwrap::<crate::node::Node>(element).ok_or_else(|| JsError::Type("The provided value is not of type 'HTMLMediaElement'.".into()))?;
+    let kinds = peek(n.page(), n.id, |st| {
+        if st.ready < HAVE_METADATA {
+            return 0u32;
+        }
+        let video = st.video != (0, 0);
+        4 | u32::from(st.audio) | (u32::from(video) << 1)
+    });
+    Ok(s.number(f64::from(kinds)))
 }
 
 fn time_ranges<'s>(s: &Scope<'s>, n: &NodeData, ranges: &[(f64, f64)]) -> JsResult<Value<'s>> {
@@ -1845,11 +2122,53 @@ pub(crate) fn define(def: &mut ClassDef<HtmlMediaElement>) {
             s.set_hidden(wrapper, "__lpSrcObject", value)?;
             // A Blob is read as it is now (a Blob is immutable).
             let object = (!value.is_null()).then(|| crate::file::blob_parts_of(s, value).map(|(bytes, _, _)| bytes));
-            with(n.page(), n.id, |st| st.src_object = object);
+            // A MediaStream plays the tracks it has now: [audio tracks, video tracks, width, height].
+            let mut stream = None;
+            if matches!(object, Some(None)) {
+                let info = crate::media_stream::stream_helper(s, n.page(), "streamInfo", &[value])?;
+                if let Some(list) = info.as_object() {
+                    let num = |i: u32| -> JsResult<f64> { list.get_index(i)?.to_number() };
+                    let (audio, video, w, h) = (num(0)?, num(1)?, num(2)? as u32, num(3)? as u32);
+                    stream = Some(MediaInfo {
+                        duration: f64::INFINITY,
+                        video: (video > 0.0).then_some((w, h)),
+                        audio: audio > 0.0,
+                    });
+                }
+            }
+            let plays_video = stream.is_some_and(|i| i.video.is_some());
+            with(n.page(), n.id, |st| {
+                st.src_object = object;
+                st.stream = stream;
+            });
             load(&page_rc(n), n.id);
+            // The element pulls its video track's frames, one per rendering update, while it plays.
+            if plays_video {
+                crate::media_stream::stream_helper(s, n.page(), "attachElement", &[wrapper.value(), value])?;
+            }
             Ok(())
         },
     );
+    // Media Capture from DOM Elements: a MediaStream whose tracks follow what the element plays.
+    def.method("captureStream", 0, |s, n, _a| {
+        let wrapper = node_value(s, n.page(), Some(n.id))?;
+        crate::media_stream::stream_helper(s, n.page(), "captureElement", &[wrapper])
+    });
+    def.accessor(
+        "onencrypted",
+        |s, n| crate::target::event_handler(s, &n.target, "encrypted"),
+        |s, n, v| crate::target::set_event_handler(s, &n.target, "encrypted", v),
+    );
+    def.accessor(
+        "onwaitingforkey",
+        |s, n| crate::target::event_handler(s, &n.target, "waitingforkey"),
+        |s, n, v| crate::target::set_event_handler(s, &n.target, "waitingforkey", v),
+    );
+    def.getter("mediaKeys", |s, n| crate::eme::media_keys(s, n.page(), n.id));
+    def.method("setMediaKeys", 1, |s, n, a| {
+        let page = page_rc(n);
+        crate::eme::set_media_keys(s, &page, n.id, a.get(0), a.len())
+    });
     def.method("load", 0, |s, n, _a| {
         let page = page_rc(n);
         flush(&page, &Rc::downgrade(&page));

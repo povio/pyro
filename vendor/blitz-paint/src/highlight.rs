@@ -271,11 +271,15 @@ fn selection_style(doc: &BaseDocument, node_id: NodeId) -> Option<LayerStyle> {
         }
         current = node.parent;
     }
+    // pyro: for a canvas a page can read back (`UnvisitedPaint`) every link is unvisited, and the
+    // eager style is read through its unvisited view (`UnvisitedPaint::view`): a link's visited
+    // `::selection` styling is never painted, the style is as if its `:visited` rules did not apply.
+    let privacy = blitz_dom::node::UnvisitedPaint::active();
     let style_of = |id: NodeId| {
         let node = doc.get_node(id)?;
         // pyro: a visited link's is computed with it taken as visited (`selection_pseudo_style`):
         // its eager style, matched as unvisited, is missing when only `:visited` rules apply.
-        if doc.is_visited_link(id) {
+        if !privacy && doc.is_visited_link(id) {
             return doc.selection_pseudo_style(id);
         }
         let eager = node.try_stylo_element_data().and_then(|data| {
@@ -284,18 +288,13 @@ fn selection_style(doc: &BaseDocument, node_id: NodeId) -> Option<LayerStyle> {
         // pyro: container units (`cqh`, ...) in an eager style resolve before layout gives the
         // containers sizes: computed again now (WPT css-conditional
         // `container-units-selection-pseudo`).
-        // pyro: and a visited link's, whose eager style matched `:link` (`selection_pseudo_style`
-        // takes it as visited).
         use style::computed_value_flags::ComputedValueFlags;
-        if doc.is_visited_link(id) {
-            return doc.selection_pseudo_style(id);
-        }
         if eager.flags.contains(ComputedValueFlags::USES_CONTAINER_UNITS) {
             if let Some(again) = doc.selection_pseudo_style(id) {
                 return Some(again);
             }
         }
-        Some(eager)
+        blitz_dom::node::UnvisitedPaint::probe(Some(eager))
     };
     Some(resolve_layer(doc, node_id, style_of, Some((HIGHLIGHT, HIGHLIGHT_TEXT))))
 }

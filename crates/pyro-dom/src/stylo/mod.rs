@@ -161,6 +161,17 @@ pub fn serialize(style: &ComputedValues, name: &str) -> Option<String> {
             Some(resolved_alignment(shorthand.name(), out))
         }
         Err(declaration) => {
+            // The computed `d` has absolute commands (SVG 2 "The d property": relative ones are
+            // converted, `H`, `V`, `S`, `T`, `A` and `Z` stay what they are), as Chrome serializes it.
+            if name.eq_ignore_ascii_case("d") {
+                use style::values::specified::svg::DProperty;
+                if let DProperty::Path(path) = &style.get_svg().d {
+                    let absolute = DProperty::Path(path.normalize(false));
+                    let mut out = String::new();
+                    style_traits::ToCss::to_css(&absolute, &mut style_traits::CssWriter::new(&mut out)).ok()?;
+                    return Some(out);
+                }
+            }
             // Serialize resolved line-height in CSS pixels at the element's effective zoom.
             if name.eq_ignore_ascii_case("line-height") {
                 use style::values::generics::font::GenericLineHeight;
@@ -178,6 +189,11 @@ pub fn serialize(style: &ComputedValues, name: &str) -> Option<String> {
                     return Some(out);
                 }
             }
+            if name.eq_ignore_ascii_case("shape-outside") {
+                if let Some(value) = shape_outside_with_absolute_path(style) {
+                    return Some(value);
+                }
+            }
             let value = resolved_alignment(name, style.computed_value_to_string(declaration));
             // Gecko's prefixed keywords, as Chrome spells them.
             Some(match value.strip_prefix("-moz-") {
@@ -188,6 +204,19 @@ pub fn serialize(style: &ComputedValues, name: &str) -> Option<String> {
             })
         }
     }
+}
+
+/// pyro: Chrome's computed `shape-outside: path()` has absolute commands (`h 80` computes to `H 90`; `clip-path` and
+/// `offset-path` keep the authored ones), as WPT css-shapes `parsing/shape-outside-computed` has it.
+fn shape_outside_with_absolute_path(style: &ComputedValues) -> Option<String> {
+    use style::values::computed::basic_shape::{BasicShape, ShapeOutside};
+    use style::values::generics::basic_shape::{GenericBasicShape, GenericPathOrShapeFunction};
+    let ShapeOutside::Shape(shape, shape_box) = &style.get_box().shape_outside else { return None };
+    let GenericBasicShape::PathOrShape(GenericPathOrShapeFunction::Path(path)) = &**shape else { return None };
+    let mut path = path.clone();
+    path.path = path.path.normalize(false);
+    let shape = BasicShape::PathOrShape(GenericPathOrShapeFunction::Path(path));
+    Some(style_traits::ToCss::to_css_string(&ShapeOutside::Shape(Box::new(shape), shape_box.clone())))
 }
 
 /// Preserve the DOM double carried by a CSSUnitValue across the text bridge to Typed OM.
@@ -318,6 +347,9 @@ pub fn matrix_from_css_text(text: &str) -> Option<([f64; 16], bool)> {
 /// would be (declarations, `selector()`, `not` / `and` / `or`; unknown
 /// syntax is false).
 pub fn supports_condition(text: &str) -> bool {
+    if let Some(supported) = cue_selector_supported(text) {
+        return supported;
+    }
     use style::stylesheets::supports_rule::SupportsCondition;
     use style::stylesheets::{CssRuleType, Origin};
     ensure_parse_prefs();
@@ -341,6 +373,22 @@ pub fn supports_condition(text: &str) -> bool {
         Some(condition) => condition.eval(&mut context),
         None => parse(&format!("({text})")).is_some_and(|condition| condition.eval(&mut context)),
     }
+}
+
+/// A lone `selector(<selector>)` that names WebVTT's `::cue` or `::cue(...)`: Stylo's selector parser does
+/// not know that pseudo-element, the DOM's own selector parser (the one `querySelector` and style rules
+/// use, `select.rs`) does, so it decides. `None` for any other condition.
+fn cue_selector_supported(text: &str) -> Option<bool> {
+    let text = text.trim();
+    let head = text.get(..9)?;
+    if !head.eq_ignore_ascii_case("selector(") || !text.ends_with(')') {
+        return None;
+    }
+    let arg = &text[9..text.len() - 1];
+    if !arg.to_ascii_lowercase().contains("::cue") {
+        return None;
+    }
+    Some(crate::select::parse_selectors(arg).is_ok())
 }
 
 pub use style::selector_parser::PseudoElement;
@@ -389,6 +437,40 @@ pub fn parse_pseudo_arg(text: &str) -> PseudoArg {
         return style::selector_parser::highlight_selector(&mut cssparser::Parser::new(inner))
             .map(PseudoArg::Pseudo).unwrap_or(PseudoArg::Invalid);
     }
+    // `::scroll-button(<direction> | *)` (CSS Overflow 5 § 3.2); keywords are ASCII case-insensitive.
+    if let Some(inner) = text
+        .get(..16)
+        .filter(|head| head.eq_ignore_ascii_case("::scroll-button("))
+        .and_then(|_| text[16..].strip_suffix(')'))
+    {
+        let mut parser = cssparser::Parser::new(inner);
+        let pseudo = (|| {
+            use PseudoElement::*;
+            if parser.try_parse(|input| input.expect_delim('*')).is_ok() {
+                return parser.is_exhausted().then_some(ScrollButtonAll);
+            }
+            let ident = parser.expect_ident_cloned().ok()?;
+            if !parser.is_exhausted() {
+                return None;
+            }
+            Some(match ident.to_ascii_lowercase().as_str() {
+                "block-start" => ScrollButtonBlockStart,
+                "inline-start" => ScrollButtonInlineStart,
+                "inline-end" => ScrollButtonInlineEnd,
+                "block-end" => ScrollButtonBlockEnd,
+                "up" => ScrollButtonUp,
+                "down" => ScrollButtonDown,
+                "left" => ScrollButtonLeft,
+                "right" => ScrollButtonRight,
+                _ => return None,
+            })
+        })();
+        return pseudo.map(PseudoArg::Pseudo).unwrap_or(PseudoArg::Invalid);
+    }
+    // `::picker(select)` (CSS Forms 1: the popover of a customizable select).
+    if text.eq_ignore_ascii_case("::picker(select)") {
+        return PseudoArg::Pseudo(PseudoElement::PickerSelect);
+    }
     let mut parser = cssparser::Parser::new(text);
     let mut next = || parser.next_including_whitespace_and_comments().ok().cloned();
     let _ = next(); // the leading colon
@@ -414,6 +496,12 @@ pub fn parse_pseudo_arg(text: &str) -> PseudoArg {
         "search-text" if double => PseudoElement::SearchText,
         "checkmark" if double => PseudoElement::Checkmark,
         "marker" if double => PseudoElement::Marker,
+        "scroll-marker" if double => PseudoElement::ScrollMarker,
+        "scroll-marker-group" if double => PseudoElement::ScrollMarkerGroup,
+        "column" if double => PseudoElement::Column,
+        "details-content" if double => PseudoElement::DetailsContent,
+        "picker-icon" if double => PseudoElement::PickerIcon,
+        "color-swatch" if double => PseudoElement::ColorSwatch,
         "placeholder" if double => PseudoElement::Placeholder,
         "backdrop" if double => PseudoElement::Backdrop,
         "file-selector-button" if double => PseudoElement::FileSelectorButton,

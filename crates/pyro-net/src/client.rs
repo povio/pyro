@@ -321,6 +321,10 @@ struct Inner {
     /// Requests paused at the request stage off the I/O thread
     /// ([`LocalPause`]), until their decision arrives.
     local: Mutex<HashMap<RequestId, Arc<LocalPause>>>,
+    /// Hooks of requests something other than the network answers (a service worker streaming a
+    /// response): [`NetClient::cancel`] runs the request's, so the answerer learns that the
+    /// consumer is gone.
+    cancel_hooks: Mutex<HashMap<RequestId, Box<dyn FnOnce() + Send>>>,
 }
 
 /// Request activity of one loader (document) on this client: requests started
@@ -408,6 +412,15 @@ struct Shared {
     cache: Mutex<crate::cache::HttpCache>,
     /// Compression dictionaries (RFC 9842) responses registered.
     dictionaries: Mutex<crate::dictionary::Dictionaries>,
+    /// The session's HTTP Basic credentials (`Authorization` values the servers' realms accepted).
+    basic_auth: Mutex<crate::auth::BasicSessions>,
+    /// Set once any Basic credentials were stored: until then requests skip the lock.
+    basic_auth_stored: std::sync::atomic::AtomicBool,
+    /// `Accept-CH`: the client hints each origin asked for, for the session.
+    client_hints: Mutex<crate::client_hints::Store>,
+    /// `Clear-Site-Data` that named the prefetch cache (`"prefetchCache"`, `"cache"`, `"*"`): the
+    /// serialized origin of the response and when it arrived (the newest 64).
+    prefetch_clears: Mutex<Vec<(String, Instant)>>,
     epoch: Instant,
     /// `Security.setIgnoreCertificateErrors`: HTTPS requests skip certificate
     /// verification (handshake signatures are still checked).
@@ -417,6 +430,8 @@ struct Shared {
     /// built once (a request without overrides sends them as they are).
     default_user_agent: Option<HeaderValue>,
     default_accept_language: Option<HeaderValue>,
+    /// Network Error Logging policies and where `Report-To` headers and reports go (`crate::nel`).
+    nel: crate::nel::Nel,
 }
 
 impl Shared {
@@ -497,6 +512,13 @@ impl Shared {
         // request would otherwise copy to read them once.
         let settings = self.settings.lock().unwrap();
         let mut h = req.headers.clone();
+        // `Sec-Speculation-Tags` of a speculation-rules prefetch goes to same-site hops only (per
+        // hop: a redirect to the initiator's site has it again, one to another site has not).
+        if h.contains_key(SEC_SPECULATION_TAGS)
+            && req.referrer.as_ref().map(crate::cookies::partition_key) != Some(crate::cookies::partition_key(&req.url))
+        {
+            h.remove(SEC_SPECULATION_TAGS);
+        }
         let ua = match &settings.user_agent {
             Some(ua) => HeaderValue::from_str(ua).ok(),
             None => self.default_user_agent.clone(),
@@ -517,6 +539,21 @@ impl Shared {
                 for (name, value) in hints.iter() {
                     h.entry(name.clone()).or_insert_with(|| value.clone());
                 }
+            }
+        }
+        // UA Client Hints: the low-entropy ones go to every potentially trustworthy request of an agent
+        // that is not overridden (an override without metadata sends none, as Chrome); `Accept-CH`
+        // adds what the origin asked for to its own requests (a navigation's, or a same-origin context's).
+        if crate::cookies::is_trustworthy(&req.url) {
+            let default_agent = req.defaults.user_agent.is_none() && settings.user_agent.is_none() && req.defaults.client_hints.is_none();
+            if default_agent {
+                for (name, value) in crate::client_hints::low_entropy() {
+                    h.entry(name).or_insert(value);
+                }
+            }
+            if (same_origin || req.destination == Destination::Document) && !req.cross_site_prefetch && !req.defaults.no_accept_ch {
+                let denied = req.defaults.ch_denied.as_deref().map_or(&[][..], |v| v.as_slice());
+                self.client_hints.lock().unwrap().add_to_unless(&req.url, default_agent, denied, &mut h);
             }
         }
         // Fetch: a ranged request asks for the bytes as stored.
@@ -572,14 +609,15 @@ impl Shared {
             h.insert(SEC_FETCH_SITE, HeaderValue::from_static(site.as_str()));
             h.insert(SEC_FETCH_MODE, HeaderValue::from_static(crate::referrer::fetch_mode(req.mode, req.destination)));
             h.insert(SEC_FETCH_DEST, HeaderValue::from_static(crate::referrer::fetch_dest(req.destination)));
-            if site == FetchSite::None && req.destination == Destination::Document {
+            // (A prefetch is not a user's navigation: no `Sec-Fetch-User`.)
+            if site == FetchSite::None && req.destination == Destination::Document && !h.contains_key(SEC_PURPOSE) {
                 h.insert(SEC_FETCH_USER, HeaderValue::from_static("?1"));
             }
         }
         // Cookies.
         // (`same_origin` is the hop's response tainting being "basic": `includes_credentials`.)
-        let send_cookies = includes_credentials(req.credentials, same_origin);
-        if send_cookies && !h.contains_key(header::COOKIE) {
+        let send_cookies = includes_credentials(req.hop_credentials(same_origin), same_origin);
+        if send_cookies && !req.cross_site_prefetch && !h.contains_key(header::COOKIE) && !cookies_blocked(req, &req.url) {
             let top = matches!(req.destination, Destination::Document);
             let safe = matches!(req.method, Method::GET | Method::HEAD);
             let ancestor = cookie_partition_cross_site(req, &req.url);
@@ -597,7 +635,7 @@ impl Shared {
                 site_context(origin_url, &req.url, top, safe)
             };
             let cookie = {
-                let mut jar = cookies.lock().unwrap();
+                let mut jar = jar_of(req, cookies).lock().unwrap();
                 if jar.is_empty() {
                     None
                 } else {
@@ -652,6 +690,19 @@ fn request_cookie_partition<'a>(request: &'a Request, url: &Url) -> Option<Cow<'
     } else {
         request.top_level_site.as_deref().map(Cow::Borrowed)
     }
+}
+
+/// The jar a request reads its cookies from and stores them in: the ephemeral one of a credentialless
+/// context (`RequestDefaults::ephemeral_cookies`), else the client's.
+fn jar_of<'a>(req: &'a Request, client: &'a Mutex<CookieJar>) -> &'a Mutex<CookieJar> {
+    req.defaults.ephemeral_cookies.as_ref().map_or(client, |ephemeral| &*ephemeral.0)
+}
+
+/// The requesting document's storage access rules refuse `url` its unpartitioned cookies (a third
+/// party the document has no access to). Free for a request without a `CookieBlocking`, which is
+/// every request of a context that set no rule.
+fn cookies_blocked(request: &Request, url: &Url) -> bool {
+    request.defaults.cookie_blocking.as_ref().is_some_and(|b| b.blocks(url))
 }
 
 fn cookie_partition_cross_site(request: &Request, url: &Url) -> bool {
@@ -724,6 +775,7 @@ fn response_head(
         charset,
         redirected,
         from_cache: false,
+        from_prefetch_cache: false,
         kind,
         remote_addr: None,
         protocol: Version::HTTP_11,
@@ -790,9 +842,14 @@ impl NetClient {
             interceptor: Mutex::new(None),
             cache: Mutex::new(cache),
             dictionaries: Mutex::default(),
+            basic_auth: Mutex::default(),
+            basic_auth_stored: std::sync::atomic::AtomicBool::new(false),
+            client_hints: Mutex::default(),
+            prefetch_clears: Mutex::default(),
             epoch: Instant::now(),
             ignore_certificate_errors: std::sync::atomic::AtomicBool::new(false),
             proxy,
+            nel: Default::default(),
         });
         let cookies = Arc::new(Mutex::new(CookieJar::new()));
         let (s2, c2) = (shared.clone(), cookies.clone());
@@ -805,6 +862,7 @@ impl NetClient {
             thread: Mutex::new(Some(thread)),
             activity: Arc::default(),
             local: Mutex::default(),
+            cancel_hooks: Mutex::default(),
         });
         let mut clients = CLIENTS.lock().unwrap_or_else(|e| e.into_inner());
         clients.retain(|c| c.strong_count() > 0);
@@ -814,6 +872,49 @@ impl NetClient {
 
     pub fn cookies(&self) -> &Arc<Mutex<CookieJar>> {
         &self.inner.cookies
+    }
+
+    /// Whether a response of `origin` (serialized) named the prefetch cache in `Clear-Site-Data`
+    /// (`"prefetchCache"`, `"cache"` or `"*"`) after `since`: the speculation-rules prefetches of
+    /// that origin started before then are gone.
+    pub fn prefetch_cache_cleared_since(&self, origin: &str, since: Instant) -> bool {
+        self.inner.shared.prefetch_clears.lock().unwrap().iter().any(|(o, at)| o == origin && *at >= since)
+    }
+    /// Whether the jar holds a cookie that a navigation to `url` could send, whatever its
+    /// `SameSite` (an inclusive check: Chrome refuses a cross-site speculation-rules prefetch of a
+    /// URL the user has any cookie for, as its credential-less response would stand in for the
+    /// logged-in page).
+    pub fn has_cookies_for(&self, url: &Url) -> bool {
+        let mut jar = self.inner.cookies.lock().unwrap();
+        if jar.is_empty() {
+            return false;
+        }
+        let partition = crate::cookies::partition_key(url);
+        jar.header_for_context(url, SiteContext::SameSite, crate::cookies::now_secs(), partition.as_deref(), false).is_some()
+    }
+    /// Stores the cookies a cross-site prefetch's responses carried (`Request::deferred_cookies`),
+    /// as the responses' own hops would have: a navigation uses the prefetch.
+    pub fn apply_deferred_cookies(&self, cookies: &[crate::DeferredCookie]) {
+        if cookies.is_empty() {
+            return;
+        }
+        let now = crate::cookies::now_secs();
+        let mut jar = self.inner.cookies.lock().unwrap();
+        for c in cookies {
+            jar.set_from_header_in(&c.url, &c.header, crate::cookies::Access::Http, now, c.partition.as_deref(), c.site);
+        }
+    }
+    /// Whether something changes the requests this client sends or answers them itself: an
+    /// interceptor (CDP `Fetch`, mocks), offline, a context-wide cache bypass, a user agent,
+    /// language or extra headers override. A stored response (a speculation-rules prefetch's)
+    /// must not stand in for a request while it is so: the interceptor, the cache setting and
+    /// the overrides would not apply to it.
+    pub fn alters_requests(&self) -> bool {
+        if self.inner.shared.interceptor.lock().unwrap().is_some() {
+            return true;
+        }
+        let s = self.inner.shared.settings.lock().unwrap();
+        s.offline || s.cache_disabled || s.user_agent.is_some() || s.accept_language.is_some() || !s.extra_headers.is_empty()
     }
     pub fn config(&self) -> &NetConfig {
         &self.inner.shared.config
@@ -846,12 +947,35 @@ impl NetClient {
     pub fn subscribe_with(&self, limits: SubscriptionLimits, wake: Option<NetWake>) -> NetSubscription {
         self.inner.shared.observers.subscribe(limits, wake)
     }
+    /// The `Accept-CH` hints (and the default UA ones with them) a navigation request to its URL would
+    /// carry, for a service worker's `FetchEvent.request.headers` (Client Hints: the worker sees the hints
+    /// the browser added to the request it intercepted).
+    pub fn navigation_client_hints(&self, req: &Request) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        if !crate::cookies::is_trustworthy(&req.url) || req.cross_site_prefetch {
+            return h;
+        }
+        let settings = self.inner.shared.settings.lock().unwrap();
+        let default_agent = req.defaults.user_agent.is_none() && settings.user_agent.is_none() && req.defaults.client_hints.is_none();
+        drop(settings);
+        self.inner.shared.client_hints.lock().unwrap().add_to_unless(&req.url, default_agent, &[], &mut h);
+        h
+    }
     pub fn set_interceptor(&self, i: Option<Arc<dyn Interceptor>>) {
         *self.inner.shared.interceptor.lock().unwrap() = i;
+    }
+    /// Where `Report-To` headers and Network Error Logging reports of this client go
+    /// ([`crate::nel::ReportingSink`]); `None`: neither is looked at.
+    pub fn set_reporting_sink(&self, sink: Option<Arc<dyn crate::nel::ReportingSink>>) {
+        self.inner.shared.nel.set_sink(sink);
     }
     /// Network.clearBrowserCache: drops every HTTP cache entry of this context.
     pub fn clear_http_cache(&self) {
         self.inner.shared.cache.lock().unwrap().clear();
+    }
+    /// Drops the HTTP cache entries of every URL at `site` (Bounce Tracking Mitigations).
+    pub fn clear_http_cache_site(&self, site: &str) {
+        self.inner.shared.cache.lock().unwrap().clear_site(site);
     }
     /// HTTP cache (entries, logical bytes).
     pub fn http_cache_usage(&self) -> (usize, usize) {
@@ -994,11 +1118,27 @@ impl NetClient {
     /// Aborts a request; its sink receives `Failed(Aborted)` unless it
     /// already finished.
     pub fn cancel(&self, id: RequestId) {
+        let hook = self.inner.cancel_hooks.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+        if let Some(hook) = hook {
+            hook();
+        }
         let local = self.inner.local.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
         if local.is_some_and(|pause| pause.abort(&self.inner.shared)) {
             return;
         }
         let _ = self.inner.tx.lock().unwrap_or_else(|e| e.into_inner()).send(Cmd::Cancel(id));
+    }
+
+    /// Runs `hook` (once, on the cancelling thread) if `id` is cancelled before [`NetClient::forget_cancel`]:
+    /// for a request another party answers, which the network's cancellation does not reach.
+    pub fn on_cancel(&self, id: RequestId, hook: Box<dyn FnOnce() + Send>) {
+        self.inner.cancel_hooks.lock().unwrap_or_else(|e| e.into_inner()).insert(id, hook);
+    }
+
+    /// The answer of `id` ended: its [`NetClient::on_cancel`] hook, if any, goes.
+    pub fn forget_cancel(&self, id: RequestId) {
+        let hook = self.inner.cancel_hooks.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+        drop(hook);
     }
 
     /// [`NetClient::cancel`] for a request's own sink (see [`RequestCanceller`]).
@@ -1337,7 +1477,10 @@ fn http_client(
         .enable_http2()
         .wrap_connector(connector);
     let connector = ProbeConnector::new(connector, sessions);
-    Client::builder(TokioExecutor::new()).pool_idle_timeout(Duration::from_secs(30)).build(connector)
+    // HTTP/1 header names go out Title-Case (`Origin`, `Referer`, `X-Empty`), as Chrome writes them and as WPT's echo
+    // handlers compare them (fetch/api/basic/request-headers-case, xhr/setrequestheader-*, xhr/open-referer). `http`
+    // lowercases every `HeaderName`, so without this hyper writes `origin:`; HTTP/2 lowercases on the wire anyway.
+    Client::builder(TokioExecutor::new()).pool_idle_timeout(Duration::from_secs(30)).http1_title_case_headers(true).build(connector)
 }
 
 /// Every client of the process, for [`suspend_for_fork`].
@@ -1678,7 +1821,9 @@ fn wall_time() -> f64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
 }
 
-fn default_accept(d: Destination) -> &'static str {
+/// The `Accept` value Fetch gives a request of destination `d` that sets none (a service
+/// worker's `FetchEvent.request` has it, as the network sees it).
+pub fn default_accept(d: Destination) -> &'static str {
     match d {
         Destination::Document | Destination::Iframe => {
             "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
@@ -1688,6 +1833,7 @@ fn default_accept(d: Destination) -> &'static str {
         Destination::Text => "text/plain,*/*;q=0.5",
         Destination::Image => "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
         Destination::EventSource => "text/event-stream",
+        Destination::SpeculationRules => "application/speculationrules+json",
         _ => "*/*",
     }
 }
@@ -1938,6 +2084,8 @@ const SEC_FETCH_SITE: header::HeaderName = header::HeaderName::from_static("sec-
 const SEC_FETCH_MODE: header::HeaderName = header::HeaderName::from_static("sec-fetch-mode");
 const SEC_FETCH_DEST: header::HeaderName = header::HeaderName::from_static("sec-fetch-dest");
 const SEC_FETCH_USER: header::HeaderName = header::HeaderName::from_static("sec-fetch-user");
+const SEC_PURPOSE: header::HeaderName = header::HeaderName::from_static("sec-purpose");
+const SEC_SPECULATION_TAGS: header::HeaderName = header::HeaderName::from_static("sec-speculation-tags");
 
 /// The `Sec-Fetch-Site` relation of one hop: to the requesting document's
 /// origin, else (a navigation a document started) its referrer, else none
@@ -1980,6 +2128,17 @@ impl From<SendError> for NetError {
 }
 
 const TUNNEL_FAILED: &str = "net::ERR_TUNNEL_CONNECTION_FAILED";
+
+/// NEL's phase and type for a failure to get a response (`None`: not a failure it names).
+fn nel_failure(e: &SendError) -> Option<(&'static str, &'static str)> {
+    match e {
+        SendError::Net(NetError::NameNotResolved) => Some(("dns", "dns.name_not_resolved")),
+        SendError::Net(NetError::ConnectionRefused) => Some(("connection", "tcp.refused")),
+        SendError::Net(NetError::Timeout) => Some(("connection", "tcp.timed_out")),
+        SendError::Net(NetError::Certificate(_)) => Some(("connection", "tls.cert.invalid")),
+        _ => None,
+    }
+}
 
 fn classify(e: &hyper_util::client::legacy::Error) -> SendError {
     let mut src: Option<&(dyn std::error::Error + 'static)> = std::error::Error::source(e);
@@ -2039,13 +2198,25 @@ impl Io {
     }
 
     fn store_cookies(&self, request: &Request, url: &Url, headers: &HeaderMap, allowed: bool) {
-        if !allowed || !headers.contains_key(header::SET_COOKIE) {
+        if !allowed || !headers.contains_key(header::SET_COOKIE) || cookies_blocked(request, url) {
+            return;
+        }
+        let partition = request_cookie_partition(request, url);
+        let site = response_cookie_site(request, url);
+        // A cross-site speculation prefetch runs in an isolated context in Chrome: its cookies
+        // are kept with the prefetch and applied when a navigation uses it, never stored here.
+        if request.cross_site_prefetch {
+            if let Some(sink) = &request.deferred_cookies {
+                for v in headers.get_all(header::SET_COOKIE) {
+                    if let Ok(s) = std::str::from_utf8(v.as_bytes()) {
+                        sink.push(crate::DeferredCookie { url: url.clone(), header: s.to_owned(), partition: partition.as_deref().map(str::to_owned), site });
+                    }
+                }
+            }
             return;
         }
         let now = crate::cookies::now_secs();
-        let mut jar = self.cookies.lock().unwrap();
-        let partition = request_cookie_partition(request, url);
-        let site = response_cookie_site(request, url);
+        let mut jar = jar_of(request, &self.cookies).lock().unwrap();
         for v in headers.get_all(header::SET_COOKIE) {
             // HeaderValue::to_str only accepts visible ASCII. Cookie Store
             // names/values can contain UTF-8, including a leading BOM.
@@ -2073,6 +2244,16 @@ impl Io {
                 headers.insert(header::PROXY_AUTHORIZATION, value);
             }
         }
+        // User information is never part of the request target.
+        let stripped;
+        let url = if url.username().is_empty() && url.password().is_none() {
+            url
+        } else {
+            let mut plain = url.clone();
+            crate::auth::take_userinfo(&mut plain);
+            stripped = plain;
+            &stripped
+        };
         let mut b = http::Request::builder().method(method).uri(url.as_str());
         if let Some(h) = b.headers_mut() {
             *h = headers;
@@ -2108,6 +2289,9 @@ impl Io {
     ) -> Result<(), NetError> {
         let origin_url = req.origin.as_deref().and_then(|o| Url::parse(o).ok());
         let max_body = req.max_body.unwrap_or(self.shared.config.max_body);
+        if let Some(report) = req.defaults.corp_report.as_mut() {
+            report.first_url.get_or_insert_with(|| req.url.clone());
+        }
         let mut redirects = 0u32;
         // The referrer of the hop being made. `req.referrer` stays the
         // request's initiator (Fetch Metadata, the `file:` check).
@@ -2146,6 +2330,14 @@ impl Io {
             });
             if tainted {
                 req.origin = Some("null".into());
+            }
+            // Upgrade Insecure Requests / Mixed Content autoupgrade, on the first hop and on every
+            // redirect target: before anything below derives from the URL (origin, site, cookies, cache).
+            if crate::secure_context::insecure_step(req.defaults.insecure, req.destination, &req.url)
+                == crate::secure_context::InsecureStep::Upgrade
+                && req.url.set_scheme("https").is_err()
+            {
+                return Err(NetError::InvalidUrl);
             }
             // Same-origin to the requester (`cors::is_same_origin_request`),
             // once per hop: a request without an initiator is browser-owned;
@@ -2215,6 +2407,12 @@ impl Io {
                 "http" | "https" => {}
                 s => return Err(NetError::UnsupportedScheme(s.to_owned())),
             }
+            // Mixed Content §4.4: an `http:` hop of a request from a secure context that was not upgraded above.
+            if crate::secure_context::insecure_step(req.defaults.insecure, req.destination, &req.url)
+                == crate::secure_context::InsecureStep::Block
+            {
+                return Err(NetError::Blocked("net::ERR_BLOCKED_BY_MIXED_CONTENT".into()));
+            }
             if self.shared.settings.lock().unwrap().offline {
                 return Err(NetError::Blocked("net::ERR_INTERNET_DISCONNECTED".into()));
             }
@@ -2270,6 +2468,34 @@ impl Io {
                 Some(None) => return Err(NetError::Other("interception dropped".into())),
             }
 
+            // HTTP Basic authentication (Fetch "HTTP-network-or-cache fetch" steps for credentials).
+            // User information in the URL (a link's, XHR `open(method, url, async, user, pass)`'s)
+            // is never sent as part of it; it answers a challenge, replacing what the session had
+            // stored. Without any, the session's credentials for this origin and path go out
+            // before one. A hop without credentials, a request with an `Authorization` of its
+            // own, and one whose body came from a stream take part in neither.
+            // Only a same-origin request answers a challenge with them: a cross-origin one (a CORS XHR to
+            // another origin whose `open()` gave user and password) goes without, as in Chrome (WPT xhr/
+            // access-control-preflight-credential-*: the 401 reaches the page).
+            let url_credentials = crate::auth::take_userinfo(&mut url).filter(|_| basic_tainting);
+            let basic_hop = includes_credentials(req.hop_credentials(basic_tainting), basic_tainting)
+                && !headers.contains_key(header::AUTHORIZATION)
+                && !req.body_from_stream
+                && !req.cross_site_prefetch;
+            // pyro: a credentialless context (an ephemeral cookie jar) has its own, empty authentication
+            // session: it neither reads nor writes the client's stored Basic credentials, which the
+            // normal partition cached (including from URL userinfo).
+            let ephemeral_session = req.defaults.ephemeral_cookies.is_some();
+            let mut preemptive = None;
+            if basic_hop && url_credentials.is_none() && !ephemeral_session {
+                if self.shared.basic_auth_stored.load(std::sync::atomic::Ordering::Relaxed) {
+                    preemptive = self.shared.basic_auth.lock().unwrap().preemptive(&url);
+                }
+                if let Some(value) = &preemptive {
+                    headers.insert(header::AUTHORIZATION, value.clone());
+                }
+            }
+
             // Static files for an origin served from disk: after interception
             // (routes can still override) and before the cache and network.
             if (method == Method::GET || method == Method::HEAD) && !self.shared.config.static_files.is_empty() {
@@ -2304,10 +2530,16 @@ impl Io {
             // HTTP cache (RFC 9111), after request-stage interception and CORS
             // preflight so that both still apply to cached responses.
             // A response to be paused is neither served from nor stored in it.
+            // A cross-site speculation prefetch (made without the user's credentials) neither
+            // reads nor writes it: its response must not answer another request.
             let cacheable = method == Method::GET
+                && !req.cross_site_prefetch
                 && body.is_none()
                 && !headers.contains_key(header::RANGE)
-                && pause_response.is_none();
+                && pause_response.is_none()
+                // pyro: a credentialless context's responses (made with its own, empty cookie jar and
+                // authentication) neither come from nor go into the caches the normal partition shares.
+                && req.defaults.ephemeral_cookies.is_none();
             let request_time = wall_time();
             let sent = if cacheable { Some(headers.clone()) } else { None };
             // The dictionary this hop offered, which `dcb` and `dcz` decode with.
@@ -2316,8 +2548,8 @@ impl Io {
                 .and_then(|v| self.shared.dictionaries.lock().unwrap().by_header(v));
             // pyro: whether this hop carries credentials (as the cookie decision above): the cache
             // serves a response only to a request of the same kind (`HttpCache::lookup`).
-            let credentialed =
-                includes_credentials(req.credentials, basic_tainting) || headers.contains_key(header::AUTHORIZATION);
+            let credentialed = !req.cross_site_prefetch
+                && (includes_credentials(req.hop_credentials(basic_tainting), basic_tainting) || headers.contains_key(header::AUTHORIZATION));
             let mut revalidating = None;
             // A stored redirect: followed below as a network one would be.
             let mut cached_redirect = None;
@@ -2336,7 +2568,7 @@ impl Io {
                     }
                     crate::cache::Lookup::StaleWhileRevalidate(cached) => {
                         // RFC 5861: served stale, revalidated in the background.
-                        let cookies = includes_credentials(req.credentials, basic_tainting);
+                        let cookies = includes_credentials(req.hop_credentials(basic_tainting), basic_tainting);
                         self.revalidate_in_background(&req, &url, &headers, &cached, credentialed, cookies);
                         crate::timing::note_timing_allow(&url, &cached.headers, timing_origin.as_deref());
                         let hop = Hop { cors_cross, same_origin: basic_tainting, redirected: redirects > 0 };
@@ -2353,9 +2585,7 @@ impl Io {
             }
             if let Some(cached) = cached_redirect {
                 let (status, resp_headers) = (cached.status, cached.headers);
-                if cors::corp_blocks(&req, &url, &resp_headers) {
-                    return Err(corp_blocked());
-                }
+                corp_check(&req, &url, &resp_headers)?;
                 if cors_cross {
                     cors::cors_check(&resp_headers, req.origin.as_deref().unwrap_or("null"), req.credentials)
                         .map_err(NetError::Cors)?;
@@ -2390,6 +2620,10 @@ impl Io {
                     && (cors_cross || tainted || origin_url.as_ref().is_some_and(|o| !cors::same_origin(o, &target)))
                 {
                     return Err(NetError::Cors("Redirect to a URL with credentials".into()));
+                }
+                // A cached redirect of a prefetch is held to the same site bound as a network one.
+                if req.prefetch_redirect_stop.as_ref().is_some_and(|stop| stop.crosses_site(&url, &target)) {
+                    return Err(NetError::Blocked("net::ERR_UNSAFE_REDIRECT".into()));
                 }
                 crate::timing::note_timing_allow(&url, &resp_headers, timing_origin.as_deref());
                 redirects += 1;
@@ -2448,9 +2682,19 @@ impl Io {
             let request_start = Instant::now();
             let mut auth_attempts = 0;
             let auth_interceptor = interceptor.as_ref().filter(|i| i.handles_auth());
+            // A 401 this hop can answer itself: with the URL's credentials, or the session's for
+            // the challenge's realm (a stored one for this origin).
+            let basic_retry = basic_hop
+                && auth_interceptor.is_none()
+                && (url_credentials.is_some()
+                    || (!ephemeral_session
+                        && self.shared.basic_auth_stored.load(std::sync::atomic::Ordering::Relaxed)
+                        && self.shared.basic_auth.lock().unwrap().knows(&url)));
+            // The credentials a retry sent: stored once the server accepts them.
+            let mut basic_sent: Option<(String, HeaderValue)> = None;
             let resp = loop {
                 // Ordinary traffic does not need retry copies of the header map.
-                let sent = if auth_interceptor.is_some() {
+                let sent = if auth_interceptor.is_some() || basic_retry {
                     self.send(method.clone(), &url, headers.clone(), body.clone()).await
                 } else {
                     self.send(method.clone(), &url, std::mem::take(&mut headers), body.take()).await
@@ -2459,6 +2703,32 @@ impl Io {
                 let (resp, proxy, scheme, realm) = match sent {
                     Ok(resp) => {
                         let proxy = resp.status() == StatusCode::PROXY_AUTHENTICATION_REQUIRED;
+                        if basic_retry && !proxy && resp.status() == StatusCode::UNAUTHORIZED {
+                            let challenge = auth_challenge(resp.headers(), header::WWW_AUTHENTICATE);
+                            if preemptive.is_some() && headers.get(header::AUTHORIZATION) == preemptive.as_ref() {
+                                // The session's credentials were refused: they are gone.
+                                self.shared.basic_auth.lock().unwrap().evict(&url, preemptive.as_ref().unwrap());
+                            }
+                            // Chrome then answers the challenge with what is stored for its realm.
+                            if let Some((scheme, realm)) = challenge.filter(|_| auth_attempts == 0) {
+                                let value = match &url_credentials {
+                                    Some((user, password)) if scheme == "basic" => basic_authorization(user, password).ok(),
+                                    None if scheme == "basic" && !ephemeral_session => {
+                                        self.shared.basic_auth.lock().unwrap().for_realm(&url, &realm)
+                                    }
+                                    _ => None,
+                                };
+                                if let Some(value) = value {
+                                    headers.insert(header::AUTHORIZATION, value.clone());
+                                    basic_sent = Some((realm, value));
+                                    auth_attempts += 1;
+                                    // The challenge's body is dropped unread, as for an interceptor's retry.
+                                    drop(resp);
+                                    continue;
+                                }
+                            }
+                            break resp;
+                        }
                         if (resp.status() != StatusCode::UNAUTHORIZED && !proxy) || auth_interceptor.is_none() {
                             break resp;
                         }
@@ -2467,12 +2737,36 @@ impl Io {
                         let Some((scheme, realm)) = auth_challenge(resp.headers(), challenge_header) else {
                             break resp;
                         };
+                        // Chrome answers the first Basic 401 with the URL's own credentials before asking the interceptor.
+                        if let (true, Some((user, password)), false, 0, "basic") =
+                            (basic_hop, &url_credentials, proxy, auth_attempts, scheme.as_str())
+                        {
+                            if let Ok(value) = basic_authorization(user, password) {
+                                headers.insert(header::AUTHORIZATION, value);
+                                auth_attempts += 1;
+                                drop(resp);
+                                continue;
+                            }
+                        }
                         (Some(resp), proxy, scheme, realm)
                     }
                     Err(SendError::ProxyChallenge { scheme, realm }) if auth_interceptor.is_some() => {
                         (None, true, scheme, realm)
                     }
-                    Err(e) => return Err(e.into()),
+                    Err(e) => {
+                        // Network Error Logging: a failure to get a response (a report upload has no policy).
+                        if let (Some((phase, kind)), true) = (nel_failure(&e), req.destination != Destination::Report) {
+                            self.shared.nel.record(
+                                &url,
+                                &method,
+                                referrer.referrer.as_ref(),
+                                &HeaderMap::new(),
+                                request_start,
+                                crate::nel::Outcome::Failure { phase, kind },
+                            );
+                        }
+                        return Err(e.into());
+                    }
                 };
                 let Some(interceptor) = auth_interceptor else { unreachable!("no challenge without an interceptor") };
                 if auth_attempts >= self.shared.config.max_auth_retries {
@@ -2529,6 +2823,16 @@ impl Io {
                     Err(_) => return Err(NetError::Other("authentication interception dropped".into())),
                 }
             };
+            // The server took the credentials a challenge was answered with: the session keeps them.
+            if let Some((realm, value)) = basic_sent.take().filter(|_| !ephemeral_session) {
+                let mut sessions = self.shared.basic_auth.lock().unwrap();
+                if resp.status() == StatusCode::UNAUTHORIZED {
+                    sessions.evict(&url, &value);
+                } else {
+                    sessions.store(&url, &realm, value);
+                    self.shared.basic_auth_stored.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
             // pyro: a response to an authentication retry answers the request as last sent, with
             // its `Authorization`: it is stored (if at all) under those headers and as credentialed,
             // never as the anonymous request that got the challenge (the shared asset store refuses
@@ -2575,7 +2879,28 @@ impl Io {
             }
             // pyro: the same decision as the cookies sent (`includes_credentials`): a tainted hop
             // (a no-cors chain that went through another origin) neither sends nor stores.
-            self.store_cookies(&req, &url, &resp_headers, includes_credentials(req.credentials, basic_tainting));
+            self.store_cookies(&req, &url, &resp_headers, includes_credentials(req.hop_credentials(basic_tainting), basic_tainting));
+            // Network Error Logging: this exchange (each redirect hop and each revalidation is one) is reported
+            // when a policy of the origin asks for it; its `Report-To` and `NEL` headers count first. A response
+            // the HTTP cache serves never gets here.
+            if req.destination != Destination::Report {
+                self.shared.nel.record(
+                    &url,
+                    &method,
+                    referrer.referrer.as_ref(),
+                    &resp_headers,
+                    request_start,
+                    crate::nel::Outcome::Response { status: status.as_u16(), protocol },
+                );
+            }
+            // Client Hints: a top-level document's `Accept-CH` (a redirect's too) replaces the origin's
+            // set; `Clear-Site-Data` clears it from a navigation or a same-origin fetch, not a subframe's.
+            self.shared.client_hints.lock().unwrap().response(
+                &url,
+                &resp_headers,
+                req.destination == Destination::Document,
+                basic_tainting && req.destination != Destination::Iframe,
+            );
             let response_time = wall_time();
             if !matches!(method, Method::GET | Method::HEAD | Method::OPTIONS | Method::TRACE)
                 && (status.is_success() || status.is_redirection())
@@ -2611,9 +2936,7 @@ impl Io {
 
             // Fetch's cross-origin resource policy check, on every response a
             // `no-cors` request gets (a redirect's included) before it is used.
-            if cors::corp_blocks(&req, &url, &resp_headers) {
-                return Err(corp_blocked());
-            }
+            corp_check(&req, &url, &resp_headers)?;
             // Redirects.
             // Fetch's redirect statuses: 300, 304, 305 and 306 are ordinary responses.
             if matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308) {
@@ -2682,6 +3005,25 @@ impl Io {
                     if req.csp.as_ref().is_some_and(|csp| !csp.allows_redirect(&target)) {
                         return Err(NetError::Blocked(crate::csp::BLOCKED_BY_CSP.into()));
                     }
+                    // A speculation prefetch fails at a hop to another site than its initiator's or
+                    // the previous hop's, before that hop is requested (its credentials were decided
+                    // for the first URL only).
+                    if req.prefetch_redirect_stop.as_ref().is_some_and(|stop| stop.crosses_site(&url, &target)) {
+                        return Err(NetError::Blocked("net::ERR_UNSAFE_REDIRECT".into()));
+                    }
+                    // A prefetch's hop into a service worker's scope: its fetch event cannot see the
+                    // hops, so the prefetch fails here (the navigation fetches normally later).
+                    if let Some(stop) = req.prefetch_redirect_stop.as_ref().filter(|stop| stop.stops_at(&target)) {
+                        if stop.navigation {
+                            // A navigation's hop into a scope: the redirect goes back to the caller,
+                            // whose next request goes through that scope's worker.
+                            let head = self
+                                .head(&url, status, resp_headers, ResponseKind::OpaqueRedirect, redirects > 1)
+                                .over(protocol);
+                            return self.finish_empty(id, &req, sink, head);
+                        }
+                        return Err(NetError::Blocked("net::ERR_UNSAFE_REDIRECT".into()));
+                    }
                     let cross_origin = !cors::same_origin(&url, &target);
                     crate::timing::note(|t| {
                         t.redirect_end = Some(Instant::now());
@@ -2700,7 +3042,10 @@ impl Io {
                             headers: resp_headers,
                         },
                     );
-                    if (status == StatusCode::SEE_OTHER && req.method != Method::HEAD)
+                    // Fetch "HTTP-redirect fetch" step 12: 303 for a method other than GET or HEAD (a GET stays as
+                    // it is, with all its headers), or 301/302 for POST, becomes GET without a body, and the
+                    // request-body-header names are dropped (Content-Encoding, -Language, -Location, -Type).
+                    if (status == StatusCode::SEE_OTHER && req.method != Method::HEAD && req.method != Method::GET)
                         || (matches!(status.as_u16(), 301 | 302) && req.method == Method::POST)
                     {
                         req.method = Method::GET;
@@ -2710,6 +3055,7 @@ impl Io {
                             header::CONTENT_LENGTH,
                             header::CONTENT_ENCODING,
                             header::CONTENT_LANGUAGE,
+                            header::CONTENT_LOCATION,
                         ] {
                             req.headers.remove(h);
                         }
@@ -2756,6 +3102,13 @@ impl Io {
             // Clear-Site-Data "cache": the origin's responses in the HTTP cache go too.
             if clear.cache {
                 self.shared.cache.lock().unwrap().clear_origin(&url);
+            }
+            if clear.prefetch_cache {
+                let mut clears = self.shared.prefetch_clears.lock().unwrap();
+                if clears.len() >= 64 {
+                    clears.remove(0);
+                }
+                clears.push((url.origin().ascii_serialization(), Instant::now()));
             }
             let registration = (!matches!(kind, ResponseKind::Opaque)
                 && status == StatusCode::OK
@@ -3020,9 +3373,7 @@ impl Io {
         from_cache: bool,
         encoded_len: u64,
     ) -> Result<(), NetError> {
-        if cors::corp_blocks(req, url, &cached.headers) {
-            return Err(corp_blocked());
-        }
+        corp_check(req, url, &cached.headers)?;
         let kind = if hop.cors_cross {
             cors::cors_check(&cached.headers, req.origin.as_deref().unwrap_or("null"), req.credentials)
                 .map_err(NetError::Cors)?;
@@ -3298,6 +3649,32 @@ struct Hop {
     redirected: bool,
 }
 
+/// Fetch's cross-origin resource policy check on one response, with HTML § 7.1.4's reports: a
+/// response the report-only policy would block is reported (`disposition: "reporting"`, before the
+/// enforced policy's report, as Chrome orders them) and let through; one the enforced policy
+/// blocks is reported and fails the request.
+pub fn corp_check(req: &Request, url: &Url, headers: &HeaderMap) -> Result<(), NetError> {
+    let report = req.defaults.corp_report.as_ref();
+    let violation = |report: &CorpReport, report_only| CorpViolation {
+        kind: "corp",
+        blocked_url: report.first_url.as_ref().unwrap_or(&req.url).as_str().to_owned(),
+        destination: Some(crate::referrer::fetch_dest(req.destination)),
+        report_only,
+    };
+    if let Some(report) = report.filter(|r| r.report_only != EmbedderPolicy::UnsafeNone) {
+        if cors::corp_blocks_under(req, url, headers, report.report_only) {
+            (report.sink)(violation(report, true));
+        }
+    }
+    if cors::corp_blocks(req, url, headers) {
+        if let Some(report) = report {
+            (report.sink)(violation(report, false));
+        }
+        return Err(corp_blocked());
+    }
+    Ok(())
+}
+
 /// The network error of a response `Cross-Origin-Resource-Policy` blocks
 /// (Chromium's errorText; its blockedReason is not modelled).
 fn corp_blocked() -> NetError {
@@ -3420,6 +3797,55 @@ impl NetClient {
         })
     }
 
+    /// Publishes the `NetEvent`s of the navigation `req` that a speculation-rules prefetch
+    /// answered, as Chrome reports one: `RequestWillBeSent` with the headers the navigation
+    /// would have sent (`req` is the navigation's own request, never sent), `ResponseReceived`
+    /// of `head` marked `from_prefetch_cache`, the body (`body` is only called when someone
+    /// observes) and `LoadingFinished` (`encoded_len` bytes on the wire). On the caller's thread,
+    /// in order, all at once. Returns the request's identity for the caller's delivery frontier.
+    pub fn report_prefetched(&self, req: &Request, mut head: ResponseHead, body: impl FnOnce() -> Bytes, encoded_len: u64) -> RequestId {
+        let id = self.next_request_id();
+        let shared = &self.inner.shared;
+        if !shared.observed() {
+            return id;
+        }
+        let origin_url = req.origin.as_deref().and_then(|o| Url::parse(o).ok());
+        let site = hop_site(req, origin_url.as_ref());
+        let headers = shared.build_headers(&self.inner.cookies, req, req.referrer.as_ref(), origin_url.as_ref(), false, site, true);
+        let now = shared.now();
+        shared.emit(NetEvent::RequestWillBeSent {
+            id,
+            request: Box::new(RequestInfo {
+                url: req.url.clone(),
+                method: req.method.clone(),
+                headers,
+                post_data: None,
+                destination: req.destination,
+                frame_id: req.frame_id.clone(),
+                loader_id: req.loader_id.clone(),
+            }),
+            redirect_response: None,
+            timestamp: now,
+            wall_time: wall_time(),
+        });
+        head.from_cache = false;
+        head.from_prefetch_cache = true;
+        shared.emit(NetEvent::ResponseReceived {
+            id,
+            head: Box::new(head),
+            destination: req.destination,
+            frame_id: req.frame_id.clone(),
+            loader_id: req.loader_id.clone(),
+            timestamp: now,
+        });
+        let body = body();
+        if !body.is_empty() {
+            shared.emit(NetEvent::DataReceived { id, data: body, timestamp: now });
+        }
+        shared.emit(NetEvent::LoadingFinished { id, encoded_len, timestamp: now });
+        id
+    }
+
     /// Publishes the `NetEvent`s of a request the embedder answered from a
     /// `static_direct` hit (on the caller's thread, in order, all at once)
     /// and returns the response head to build the resource from.
@@ -3448,6 +3874,7 @@ impl NetClient {
             charset,
             redirected: false,
             from_cache: false,
+            from_prefetch_cache: false,
             kind: ResponseKind::Basic,
             remote_addr: None,
             protocol: Version::HTTP_11,

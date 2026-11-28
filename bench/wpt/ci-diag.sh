@@ -40,6 +40,8 @@ case "${1:-}" in
   stop)
     [ -f "$pidf" ] && kill "$(cat "$pidf")" 2>/dev/null
     snapshot after
+    # No log when `start` did not run (an earlier step failed): nothing to summarize.
+    [ -f "$log" ] || exit 0
     awk 'NR==1{mins=$3;maxs=$3;minf=$4;minl=$5} {l+=$2; n++; if($3>maxs)maxs=$3; if($4<minf)minf=$4; if($5<minl)minl=$5; if($2>maxl)maxl=$2}
       END { if (n) printf "samples %d: load mean %.1f max %.1f; swap used max %s MB; free memory min %s%%; CPU speed limit min %s%%\n", n, l/n, maxl, maxs, minf, minl }' "$log"
     ;;

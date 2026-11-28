@@ -321,6 +321,7 @@ mod tests {
                 charset: None,
                 redirected: false,
                 from_cache: false,
+                from_prefetch_cache: false,
                 kind: ResponseKind::Basic,
                 remote_addr: None,
                 protocol: pyro_net::http::Version::HTTP_11,

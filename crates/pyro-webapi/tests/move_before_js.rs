@@ -415,10 +415,15 @@ fn a_picture_source_is_the_current_source_of_its_image() {
         env("<!doctype html><html><body><picture id=pic><source id=src srcset='/green.png' media='(min-width: 10px)'>\
          <img id=img src='/red.png'></picture></body></html>");
     let r = &e.main;
+    // (A relevant mutation takes effect in the microtask it queues: in the script that made it
+    // `currentSrc` still reads what it was, as in Chrome, so each read is a script of its own.)
     assert_eq!(eval(r, "img.currentSrc"), "http://localhost:5173/green.png");
-    assert_eq!(eval(r, "document.body.moveBefore(src, null); img.currentSrc"), "http://localhost:5173/red.png");
-    assert_eq!(eval(r, "pic.moveBefore(src, img); img.currentSrc"), "http://localhost:5173/green.png");
-    assert_eq!(eval(r, "src.media = '(min-width: 99999px)'; img.currentSrc"), "http://localhost:5173/red.png");
+    assert_eq!(eval(r, "document.body.moveBefore(src, null); img.currentSrc"), "http://localhost:5173/green.png");
+    assert_eq!(eval(r, "img.currentSrc"), "http://localhost:5173/red.png");
+    assert_eq!(eval(r, "pic.moveBefore(src, img); img.currentSrc"), "http://localhost:5173/red.png");
+    assert_eq!(eval(r, "img.currentSrc"), "http://localhost:5173/green.png");
+    assert_eq!(eval(r, "src.media = '(min-width: 99999px)'; img.currentSrc"), "http://localhost:5173/green.png");
+    assert_eq!(eval(r, "img.currentSrc"), "http://localhost:5173/red.png");
 }
 
 /// The rendering update's focus fixup: a focused element that becomes `display: none` (itself or

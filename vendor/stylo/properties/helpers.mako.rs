@@ -62,6 +62,16 @@ pub mod ${property.ident} {
                                 let value = get_initial_specified_value().to_computed_value(context);
                                 context.builder.set_${property.ident}(value);
                             }
+                        % elif engine == "servo" and property.name == "color":
+                            // pyro: the initial `color` is the system color CanvasText of the element's used
+                            // color scheme (css-color-adjust-1 § color-scheme-processing).
+                            {
+                                let canvas_text = context.device().system_color(
+                                    crate::values::specified::color::SystemColor::Canvastext,
+                                    context.builder.color_scheme,
+                                );
+                                context.builder.set_${property.ident}(canvas_text);
+                            }
                         % else:
                             context.builder.reset_${property.ident}();
                         % endif

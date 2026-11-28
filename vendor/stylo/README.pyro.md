@@ -518,8 +518,24 @@ without a style context (custom properties left as they are): pyro serializes a 
   (`container_rule.rs` `SCROLL_STATE_FEATURES`: `scrollable`, keyword `queries/values.rs` `Scrollable`). It
   needs a `scroll-state` container (`FeatureFlags::SCROLL_STATE`) and evaluates against the edges
   `TElement::query_scrollable_edges` gives (`ScrollableEdges`), logical values by the container's writing mode;
-  blitz-dom records them per container after layout. `scrolled`, `snapped` and `stuck` stay
-  `<general-enclosed>`. `queries/feature_expression.rs` `to_css_unparenthesized`. WPT css-conditional
+  blitz-dom records them per container after layout. `queries/feature_expression.rs` `to_css_unparenthesized`.
+- Round 8 (scroll-state `scrolled`, `snapped`, `stuck`): `SCROLL_STATE_FEATURES` grows to four keyword features
+  (`scrolled` shares `Scrollable`'s value set, `snapped` is `Snapped`, `stuck` is `Stuck` in `queries/values.rs`; a bare
+  feature means not `none`). `ContainerInfo` carries `scrolled` / `stuck` (`ScrollableEdges`) and `snapped`
+  (`SnappedAxes`), read through `TElement::query_scrolled_edges` / `query_snapped_axes` / `query_stuck_edges`, whose
+  defaults are empty (so `none` matches until the embedder feeds them). WPT css-conditional
+  `container-queries/scroll-state/at-container-{scrolled,snapped,stuck}-{parsing,serialization}`.
+  `stuck` is fed by blitz-dom (`BaseDocument::set_stuck`, from pyro-dom `Layout::push_stuck`: the sign of each sticky
+  offset says which edge holds the box).
+- Round 8 (`scrolled` evaluation): blitz-dom's `scroll_state_queries` entry (`tree.rs` `ScrollStateEntry`) holds `scrollable`
+  and `scrolled` per container; `scrolled` comes from `BaseDocument::set_scroll_directions` (pyro-dom `Layout` records the
+  last direction per axis at each scroll write and pushes it with `push_scroll`), and `scrollable` reads the offsets of
+  `set_timeline_scroll` when it has them (a geometry document's nodes carry none). WPT css-conditional
+  `scroll-state-scrolled-{hv,wm,multiple-scrollers,programmatic-*}`, `scroll-state-scrollable-change`.
+- Round 8 (`snapped` evaluation): `Layout::snapped_keys` (the elements the scroll containers last snapped to, with their x/y
+  axes) goes to the geometry source with `push_scroll` (also when only the snap targets changed) and to
+  `BaseDocument::set_snapped`; `query_snapped_axes` feeds `ContainerInfo::snapped`. WPT css-conditional
+  `scroll-state-snapped-*`, `scroll-state-initially-snapped`. WPT css-conditional
   `container-queries/scroll-state/*scrollable*`, `container-type-scroll-state-*`.
 - Round 7 (R-HTML-16r): `queries/feature_expression.rs` `QueryExpressionValue::parse`: a length media feature takes a
   math function that resolves to the number 0 (`calc(0)`) as a zero length, as Blink does. WPT html
@@ -546,3 +562,4 @@ without a style context (custom properties left as they are): pyro serializes a 
   animation's weights `(1 - p, p)` at a huge extrapolated progress (2^31) were (-2^31, 2^31) in f32, summed to 0, and
   the fold skipped the end color. WPT css/filter-effects `animation/filter-interpolation-002` (drop-shadow color at
   2147483648).
+- Round 8 lane csslayoutA, small property fixes, as Chrome: `text-orientation` takes `sideways-right` for servo too (an alias of `sideways`, `values/specified/box.rs`); the `columns` shorthand also resets `column-wrap` (to `auto`; not serialized when `column-wrap` is not `auto`); `ruby-overhang` (`auto | spaces`, `none` as an alias of `spaces`; `RubyOverhang`, parsed and computed, nothing lays it out); the computed `resize` keeps `inline` and `block` (`values/computed/box.rs`, no layout reads `resize`); `allowed_in_rule` takes every property in an `@page` rule (`properties.mako.rs`), so `column-count` and `display` stay in its declarations as Chrome's CSSOM keeps them (WPT css-page `cssom/margin-001`).

@@ -273,9 +273,36 @@ first use of any of `BaseAudioContext`, `AudioContext`,
   allows; `resume()` without activation stays pending. While running,
   `currentTime` follows the document clock in whole quanta (virtual time
   included) and sources fire `ended` when their buffer, duration or stop
-  time runs out, on a timer that does not keep the page busy; no sample is
-  computed. `suspend()`, `close()`, `baseLatency`, `outputLatency`,
-  `getOutputTimestamp()`. `sampleRate` is 48000 unless given.
+  time runs out, on a timer that does not keep the page busy. There is no
+  device to play to, so the destination's result is dropped, but while a
+  worklet node, script processor or analyser exists the graph is computed
+  for every quantum the clock passed (a media timer, 64 quanta at most per
+  tick; suspending computes what was passed, then stops), so those nodes see
+  real samples. `suspend()`, `close()`, `baseLatency`, `outputLatency`,
+  `getOutputTimestamp()`. `sampleRate` is 48000 unless given. `statechange`
+  is a task of its own after the promise of the call. A context of a document
+  that is no longer fully active reads `closed`, its constructors throw and
+  its promise methods reject, all with InvalidStateError.
+- `audioWorklet.addModule()` evaluates modules in the context's own
+  AudioWorkletGlobalScope realm (`audio_worklet.rs`,
+  `audio_worklet_global.js`). `new AudioWorkletNode(context, name, options)`
+  constructs the registered processor there (options serialized,
+  `parameterDescriptors` become the node's `parameters`, an
+  `AudioParamMap`) and `process(inputs, outputs, parameters)` runs once per
+  render quantum with copies of the input channels (empty for an input
+  with nothing active), fresh output channels and one-sample parameter
+  arrays for k-rate or constant a-rate parameters. A processor that returns
+  false runs again only while an input is active. `port` is a MessagePort
+  bridged to the processor's own; `currentFrame`, `currentTime`,
+  `sampleRate` and `renderQuantumSize` follow the context; an exception in
+  `process()` or the constructor fires `processorerror` (an ErrorEvent,
+  with line and column only for thrown `Error`s) and silences the node.
+  Worklet nodes are pulled every quantum, connected or not. On a running
+  `AudioContext` they run on the quantum clock above (a processor's frames lag the
+  clock by at most the timer's tick).
+- `createScriptProcessor()` / `ScriptProcessorNode`: `audioprocess` with an
+  `AudioProcessingEvent` each `bufferSize` frames (0 is 16384 offline, 512
+  real-time), two buffers of latency as in Chrome.
 - `decodeAudioData(buffer, success?, error?)` detaches the buffer, decodes
   it with pyro-media on a thread made for the call (MP3, AAC/M4A, Ogg
   Vorbis/Opus, WebM Opus, FLAC, WAV PCM/float, AIFF, CAF, ALAC), resamples
@@ -294,12 +321,13 @@ first use of any of `BaseAudioContext`, `AudioContext`,
 - No audio output: media elements and `AudioContext` compute no samples;
   `MediaElementAudioSourceNode`, `MediaStreamAudioDestinationNode` and
   `captureStream` are missing.
-- Web Audio has only the nodes above: no `AnalyserNode`,
-  `DelayNode`, `DynamicsCompressorNode`,
-  `PannerNode`/`AudioListener`, `StereoPannerNode`,
-  `WaveShaperNode`, `ChannelSplitterNode`,
-  `PeriodicWave` or `AudioWorklet`. Audio fingerprinting
-  scripts that use a compressor fail where Chrome succeeds.
+- `MediaElementAudioSourceNode`, `MediaStreamAudioSourceNode` and
+  `MediaStreamAudioDestinationNode` do not exist (an element's audio is
+  never decoded, and there is no `MediaStream`): no node is made that would
+  output silence where the element's or stream's audio is specified.
+  `PannerNode`'s HRTF model is unavailable (no impulse response set).
+  `AudioWorkletGlobalScope.port` and `AudioWorklet.port` are missing, and a
+  processor's microtasks run after the quantum, not after each `process()`.
 - `decodeAudioData` keeps AAC priming and padding samples and WebM Opus end
   padding: those buffers are up to a few thousand frames longer than
   Chrome's. Opus with more than two channels does not decode.

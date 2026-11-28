@@ -268,7 +268,7 @@ pub(crate) enum Early {
     Message(WireMessage),
     Inspect(InspectTask),
     /// A document connects to a shared worker (its port in the message).
-    Connect(WireMessage),
+    Connect(WireMessage, crate::worker_scope::ConnectCheck),
 }
 
 /// Runs on the worker's thread between its tasks.
@@ -283,6 +283,9 @@ pub(crate) enum Up {
     /// Violations of the owner document's CSP that the worker's thread found (a redirect of
     /// its script, a static import of its module graph): reported at that document.
     Violations(Vec<pyro_net::csp::Violation>),
+    /// A shared worker refused the connection of the `SharedWorker` object this token names (its embedder
+    /// policy is not compatible with the connecting document's).
+    ConnectRefused(u64),
 }
 
 enum State {
@@ -303,6 +306,8 @@ pub(crate) struct WorkerInner {
     state: RefCell<State>,
     /// Whether the embedder was told (`WorkerEvent::Created`).
     announced: Cell<bool>,
+    /// The worker as a service worker client (a document's worker; `None` for a nested one).
+    sw_client: Option<Rc<crate::service_worker::WorkerClient>>,
 }
 
 /// The embedder's handle on a live worker.
@@ -378,7 +383,7 @@ impl WorkerInner {
                     let _ = handle.post(move |state| match item {
                         Early::Message(message) => state.receive(message),
                         Early::Inspect(task) => state.inspect(task),
-                        Early::Connect(message) => state.connect(message),
+                        Early::Connect(message, check) => state.connect(message, check),
                     });
                 }
                 *self.state.borrow_mut() = State::Running(handle);
@@ -476,6 +481,7 @@ impl WorkerInner {
             Up::LoadFailed => self.fail_to_load(),
             Up::Closed => self.finish(),
             Up::Violations(violations) => crate::csp::report(&page, violations, None),
+            Up::ConnectRefused(_) => {}
         }
     }
 }
@@ -529,7 +535,13 @@ pub(crate) fn csp_check(
     let Some(list) = crate::csp::policy_list(page) else { return Ok(WorkerCsp { dest, ..WorkerCsp::default() }) };
     let request = pyro_net::csp::CspRequest::new(url.clone(), dest);
     let guard = crate::csp::check_request_with(page, list.clone(), request, None)?;
-    Ok(WorkerCsp { owner: Some(list), guard, dest, inherited: crate::csp::inherited_policies(page) })
+    Ok(WorkerCsp {
+        owner: Some(list),
+        guard,
+        dest,
+        inherited: crate::csp::inherited_policies(page),
+        inherited_allowlist: page.connection_allowlist(),
+    })
 }
 
 /// What a worker's thread checks against its owner's CSP: its script's redirects (`guard`) and
@@ -541,11 +553,19 @@ pub(crate) struct WorkerCsp {
     pub(crate) guard: Option<Arc<pyro_net::csp::RequestCsp>>,
     pub(crate) dest: pyro_net::csp::RequestDest,
     pub(crate) inherited: Vec<pyro_dom::CspPolicy>,
+    /// The owner's `Connection-Allowlist`, which a `data:` or `blob:` worker inherits too.
+    pub(crate) inherited_allowlist: Option<Arc<pyro_net::connection_allowlist::ConnectionPolicy>>,
 }
 
 impl Default for WorkerCsp {
     fn default() -> WorkerCsp {
-        WorkerCsp { owner: None, guard: None, dest: pyro_net::csp::RequestDest::Worker, inherited: Default::default() }
+        WorkerCsp {
+            owner: None,
+            guard: None,
+            dest: pyro_net::csp::RequestDest::Worker,
+            inherited: Default::default(),
+            inherited_allowlist: None,
+        }
     }
 }
 
@@ -584,7 +604,8 @@ impl JsClass for Worker {
             if page.is_disposed() {
                 return Err(JsError::ContextDestroyed);
             }
-            let input = dom_string(a.get(0))?;
+            // Trusted Types: the script URL is a TrustedScriptURL sink ("Worker constructor").
+            let input = crate::trusted_types::compliant_string(s, &page, crate::trusted_types::Kind::ScriptUrl, a.get(0), "Worker constructor", false)?;
             let mut name = String::new();
             let mut module = false;
             let options = a.get(1);
@@ -651,6 +672,22 @@ impl JsClass for Worker {
             let nested = worker_scope::is_worker(s);
             let slot = if nested { NestedSlot::take() } else { None };
             let refused = nested && slot.is_none();
+            // A service worker client: a document's worker is controlled by the registration its
+            // script URL matches (a `blob:` one by its creator's controller) and a controlled
+            // one's requests go through its controller; a worker's worker shares its creator's link.
+            let (sw_client, control) = if nested {
+                (None, crate::service_worker::inherited_control(&page))
+            } else {
+                let alive = shared.clone();
+                let client = crate::service_worker::worker_client(
+                    &page,
+                    &url,
+                    "worker",
+                    Box::new(move || !alive.closing.load(Ordering::Acquire)),
+                );
+                let control = client.as_ref().map(|c| c.link());
+                (client, control)
+            };
             // A script CSP blocked fails to load, as one that never arrived.
             let blocked = csp.is_err();
             let start = WorkerStart::new(id, &page, s, url, name, shared.clone()).filter(|_| !blocked).map(|mut start| {
@@ -658,6 +695,7 @@ impl JsClass for Worker {
                 start.referrer = referrer;
                 start.nested = slot;
                 start.csp = csp.unwrap_or_default();
+                start.control = control;
                 start
             });
             let full = page.workers.borrow().len() >= MAX_WORKERS_PER_DOCUMENT
@@ -671,6 +709,7 @@ impl JsClass for Worker {
                 shared,
                 state: RefCell::new(start.map_or(State::Failed, |start| State::Held(Box::new(start)))),
                 announced: Cell::new(false),
+                sw_client,
             });
             let object = s.wrap_new::<Worker>(WorkerData(inner.clone()), nt, Some(key))?;
             pin_target(s, &page, inner.target.key, object);

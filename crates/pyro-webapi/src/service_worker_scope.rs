@@ -8,8 +8,9 @@
 //!
 //! Intercepted requests: the page's `fetch()`/XHR hand their `pyro_net::Request`
 //! and response sink here ([`FetchJob`]). The `fetch` event gets a `Request`
-//! made from it. `respondWith(response)` reads the response's body whole and
-//! answers the sink as the network would (status, headers, one data chunk);
+//! made from it. `respondWith(response)` streams the response to the sink as the
+//! network would (status, headers, a data event per chunk its body yields, the end; a page that
+//! cancels reaches the worker through `NetClient::on_cancel`);
 //! no `respondWith` sends the request on to the network with the sink, so
 //! Playwright's routing and the Network domain see it as any other request;
 //! a rejected or invalid response is a network error. A job the worker never
@@ -18,7 +19,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -56,10 +57,136 @@ pub(crate) struct FetchJob {
     /// A `fetch` event has it: dropping it unanswered is a network error.
     pub dispatched: bool,
     pub observed: bool,
+    /// `respondHead` sent the response head: the rest is chunks and the end,
+    /// and a worker that goes away now truncates the body.
+    pub head_sent: bool,
+    /// Body bytes `respondChunk` sent so far.
+    pub sent: u64,
+    /// The static router's `race-network-and-fetch-handler` source: the network request runs
+    /// beside the fetch event and `sink` is the worker's side of the race.
+    pub race: Option<Arc<Race>>,
+    /// A navigation with navigation preload enabled: the `Service-Worker-Navigation-Preload`
+    /// header value its preload request carries (`startPreload`).
+    pub preload: Option<String>,
+}
+
+/// What a navigation preload request has delivered so far; the net thread fills it, and the
+/// worker's thread reads it once the request ended (`preload_ready`).
+#[derive(Default)]
+struct PreloadBuffer {
+    head: Option<ResponseHead>,
+    body: Vec<Bytes>,
+    /// The end: `Err` is the failure's text.
+    done: Option<Result<(), String>>,
+}
+
+/// Which of the two answers of a race goes to the page.
+#[derive(Clone, Copy, PartialEq)]
+enum Side {
+    Network,
+    Worker,
+}
+
+struct RaceInner {
+    winner: Option<Side>,
+    sink: ResponseSink,
+    /// The network's events (a redirect, then a non-ok response or a failure) held until the
+    /// worker has decided: a non-ok network response only wins when the worker has nothing.
+    held: Vec<ResponseEvent>,
+}
+
+/// The network and the fetch handler both answer one request; whichever side answers first
+/// with something usable wins and the other side's events are dropped. A network response
+/// wins when it is ok (2xx); the worker wins with its first event (`respondWith`, or a
+/// failure of it); a worker that passes (no `respondWith`, or it went away) hands over to
+/// the network, held events included.
+pub(crate) struct Race {
+    inner: Mutex<RaceInner>,
+}
+
+impl Race {
+    fn new(sink: ResponseSink) -> Arc<Race> {
+        Arc::new(Race { inner: Mutex::new(RaceInner { winner: None, sink, held: Vec::new() }) })
+    }
+
+    /// The sink of the network request.
+    fn network_sink(self: &Arc<Self>) -> ResponseSink {
+        let race = self.clone();
+        Box::new(move |event| {
+            let mut guard = race.inner.lock().unwrap_or_else(PoisonError::into_inner);
+            let inner = &mut *guard;
+            match inner.winner {
+                Some(Side::Worker) => {}
+                Some(Side::Network) => (inner.sink)(event),
+                None => {
+                    if matches!(&event, ResponseEvent::Response(head) if head.status.is_success()) {
+                        inner.winner = Some(Side::Network);
+                        for held in std::mem::take(&mut inner.held) {
+                            (inner.sink)(held);
+                        }
+                        (inner.sink)(event);
+                    } else {
+                        inner.held.push(event);
+                    }
+                }
+            }
+        })
+    }
+
+    /// The sink the worker's response (`respondHead` ...) goes through.
+    fn worker_sink(self: &Arc<Self>) -> ResponseSink {
+        let race = self.clone();
+        Box::new(move |event| {
+            let mut guard = race.inner.lock().unwrap_or_else(PoisonError::into_inner);
+            let inner = &mut *guard;
+            if inner.winner.is_none() {
+                // A worker's failure before its response is no answer: the network's stands.
+                if matches!(event, ResponseEvent::Failed(_)) {
+                    inner.winner = Some(Side::Network);
+                    for held in std::mem::take(&mut inner.held) {
+                        (inner.sink)(held);
+                    }
+                    return;
+                }
+                inner.winner = Some(Side::Worker);
+                inner.held.clear();
+            }
+            if inner.winner == Some(Side::Worker) {
+                (inner.sink)(event);
+            }
+        })
+    }
+
+    /// The worker has no answer: the network's is the page's.
+    fn worker_passes(&self) {
+        let mut guard = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let inner = &mut *guard;
+        if inner.winner.is_none() {
+            inner.winner = Some(Side::Network);
+            for held in std::mem::take(&mut inner.held) {
+                (inner.sink)(held);
+            }
+        }
+    }
 }
 
 impl Drop for FetchJob {
     fn drop(&mut self) {
+        // Its answer ends here: a cancellation of the request is no longer news to the worker.
+        self.net.forget_cancel(self.id);
+        if self.head_sent {
+            if let Some(mut sink) = self.sink.take() {
+                sink(ResponseEvent::Failed(NetError::Other("The service worker stopped before it finished its response".into())));
+            }
+            return;
+        }
+        if let Some(race) = self.race.take() {
+            // Unanswered: the network's answer is the page's.
+            self.request.take();
+            self.sink.take();
+            race.worker_passes();
+            return;
+        }
         let (Some(request), Some(mut sink)) = (self.request.take(), self.sink.take()) else { return };
         if self.dispatched {
             sink(ResponseEvent::Failed(NetError::Other("The service worker stopped before it responded".into())));
@@ -75,6 +202,8 @@ thread_local! {
     /// Fetch events waiting for their answer, by key.
     static PENDING: RefCell<FxHashMap<u64, FetchJob>> = RefCell::default();
     static NEXT_KEY: Cell<u64> = const { Cell::new(1) };
+    /// Navigation preload requests under way, by the key of the fetch job they belong to.
+    static PRELOADS: RefCell<FxHashMap<u64, Arc<Mutex<PreloadBuffer>>>> = RefCell::default();
     /// Queries sent to the browser thread and not answered yet.
     static QUERIES: Cell<usize> = const { Cell::new(0) };
 }
@@ -107,6 +236,7 @@ impl Drop for Queued {
 pub(crate) fn tear_down() {
     drop(GLUE.with(|g| g.take()));
     drop(PENDING.with(|p| std::mem::take(&mut *p.borrow_mut())));
+    drop(PRELOADS.with(|p| std::mem::take(&mut *p.borrow_mut())));
 }
 
 fn next_key() -> u64 {
@@ -139,6 +269,14 @@ fn call(s: &Scope<'_>, name: &str, args: &[Value<'_>]) {
             s.report_exception(&error);
         }
     }
+}
+
+/// [`call`] of a function that dispatches events. The call's return ran the microtask checkpoint,
+/// the end of the events' dispatch: their dispatch flags clear then (`closeDispatch`), which is
+/// when a `fetch` event's outcome is decided.
+fn call_event(s: &Scope<'_>, name: &str, args: &[Value<'_>]) {
+    call(s, name, args);
+    call(s, "closeDispatch", &[]);
 }
 
 /// Makes the glue in a new service worker realm, before its script runs.
@@ -194,6 +332,7 @@ pub(crate) fn install(s: &Scope<'_>, start: &ServiceStart, poster: RemotePoster,
             "get" => QueryKind::Get(a.get(1).to_string()?),
             "unregister" => QueryKind::Unregister,
             "update" => QueryKind::Update,
+            "preload" => QueryKind::Preload { op: a.get(1).to_string()?, value: a.get(2).to_string()? },
             other => return Err(JsError::Type(format!("unknown query {other}").into())),
         };
         QUERIES.with(|q| q.set(q.get() + 1));
@@ -236,7 +375,7 @@ pub(crate) fn install(s: &Scope<'_>, start: &ServiceStart, poster: RemotePoster,
         PENDING.with(|pending| {
             let mut pending = pending.borrow_mut();
             if let Some(job) = pending.get_mut(&key) {
-                if !job.observed {
+                if !job.observed && job.race.is_none() {
                     if let (Some(request), Some(sink)) = (job.request.as_ref(), job.sink.take()) {
                         job.sink = Some(job.net.observe_service_worker_response(job.id, request, sink));
                         job.observed = true;
@@ -247,17 +386,157 @@ pub(crate) fn install(s: &Scope<'_>, start: &ServiceStart, poster: RemotePoster,
         Ok(s.undefined())
     })?;
     native.set_atom("observeFetch", observe.value())?;
-    let respond = s.function("respond", |s, _, a| {
+    let p = poster.clone();
+    let head_fn = s.function("respondHead", move |s, _, a| {
         let key = a.get(0).to_number()? as u64;
-        let Some(job) = PENDING.with(|p| p.borrow_mut().remove(&key)) else { return Ok(s.undefined()) };
-        respond(s, job, &a)?;
+        let Some(mut job) = PENDING.with(|p| p.borrow_mut().remove(&key)) else { return Ok(s.undefined()) };
+        // Kept for the chunks and the end when the head went out; a refused head dropped the job.
+        if respond_head(s, &mut job, &a)? {
+            // The page cancelling the response (its body's `cancel()`, an abort) reaches the
+            // worker, which cancels the body it streams.
+            let poster = p.clone();
+            job.net.on_cancel(job.id, Box::new(move || poster(Box::new(move || deliver(version, SwUp::CancelFetch(key))))));
+            PENDING.with(|p| p.borrow_mut().insert(key, job));
+        }
         Ok(s.undefined())
     })?;
-    native.set_atom("respond", respond.value())?;
+    native.set_atom("respondHead", head_fn.value())?;
+    // responseCorp(response): [`Cross-Origin-Resource-Policy`, URL] a network response arrived with
+    // (an opaque one hides both from script), for the embedder policy check of the answer to the
+    // client; null for a response a script made.
+    let corp_fn = s.function("responseCorp", |s, _, a| match crate::response::network_source(a.get(0), s) {
+        Some((corp, url)) => {
+            let corp = corp.map_or_else(|| s.null(), |c| s.string(&c));
+            Ok(s.array(&[corp, s.string(&url)])?.value())
+        }
+        None => Ok(s.null()),
+    })?;
+    native.set_atom("responseCorp", corp_fn.value())?;
+    // What an opaque-redirect Response hides from script: its redirect's status and headers, as
+    // "status\nname:value\n..." (undefined for any other Response).
+    let internal_head = s.function("internalHead", |s, _, a| {
+        Ok(match crate::response::internal_head(s, a.get(0)) {
+            Some((status, headers)) => {
+                let mut text = status.to_string();
+                for (name, value) in headers {
+                    text.push('\n');
+                    text.push_str(&name);
+                    text.push(':');
+                    text.push_str(&value);
+                }
+                s.string(&text)
+            }
+            None => s.undefined(),
+        })
+    })?;
+    native.set_atom("internalHead", internal_head.value())?;
+    // An opaque response's bytes, which script's `body` hides: a promise of an ArrayBuffer.
+    let internal_body = s.function("internalBody", |s, _, a| crate::response::read_internal(s, a.get(0)))?;
+    native.set_atom("internalBody", internal_body.value())?;
+    let chunk_fn = s.function("respondChunk", |s, _, a| {
+        let key = a.get(0).to_number()? as u64;
+        let bytes = crate::encoding::buffer_source_bytes(s, a.get(1))?.map(Bytes::from).unwrap_or_default();
+        // Out of the map while the sink runs, as in `respondHead`.
+        let job = PENDING.with(|p| p.borrow_mut().remove(&key));
+        if let Some(mut job) = job {
+            if job.head_sent && !bytes.is_empty() {
+                job.sent += bytes.len() as u64;
+                if let Some(sink) = job.sink.as_mut() {
+                    sink(ResponseEvent::Data(bytes));
+                }
+            }
+            PENDING.with(|p| p.borrow_mut().insert(key, job));
+        }
+        Ok(s.undefined())
+    })?;
+    native.set_atom("respondChunk", chunk_fn.value())?;
+    let end_fn = s.function("respondEnd", |s, _, a| {
+        let key = a.get(0).to_number()? as u64;
+        let job = PENDING.with(|p| p.borrow_mut().remove(&key)).filter(|job| job.head_sent);
+        if let Some(mut job) = job {
+            let len = job.sent;
+            if let Some(mut sink) = job.sink.take() {
+                sink(ResponseEvent::Finished { encoded_len: len, decoded_len: len });
+            }
+        }
+        Ok(s.undefined())
+    })?;
+    native.set_atom("respondEnd", end_fn.value())?;
+    let race_fn = s.function("startRace", |s, _, a| {
+        let key = a.get(0).to_number()? as u64;
+        PENDING.with(|pending| {
+            let mut pending = pending.borrow_mut();
+            let Some(job) = pending.get_mut(&key).filter(|job| job.race.is_none()) else { return };
+            let Some(request) = job.request.clone() else { return };
+            let Some(sink) = job.sink.take() else { return };
+            let race = Race::new(sink);
+            job.net.fetch_with_id(job.id, request, race.network_sink());
+            job.sink = Some(race.worker_sink());
+            job.race = Some(race);
+        });
+        Ok(s.undefined())
+    })?;
+    native.set_atom("startRace", race_fn.value())?;
+    let p = poster.clone();
+    let start_preload = s.function("startPreload", move |s, _, a| {
+        let key = a.get(0).to_number()? as u64;
+        let started = PENDING.with(|pending| {
+            let pending = pending.borrow();
+            let Some(job) = pending.get(&key) else { return false };
+            let (Some(header), Some(request)) = (job.preload.as_deref(), job.request.as_ref()) else { return false };
+            let Some(request) = preload_request(request, header) else { return false };
+            let buffer = Arc::new(Mutex::new(PreloadBuffer::default()));
+            let (sink_buffer, poster) = (buffer.clone(), p.clone());
+            let sink: ResponseSink = Box::new(move |event| {
+                let finished = {
+                    let mut buffer = sink_buffer.lock().unwrap_or_else(PoisonError::into_inner);
+                    match event {
+                        ResponseEvent::Redirect { .. } => false,
+                        ResponseEvent::Response(head) => {
+                            buffer.head = Some(head);
+                            false
+                        }
+                        ResponseEvent::Data(bytes) => {
+                            buffer.body.push(bytes);
+                            false
+                        }
+                        ResponseEvent::Finished { .. } => {
+                            buffer.done = Some(Ok(()));
+                            true
+                        }
+                        ResponseEvent::Failed(error) => {
+                            buffer.done = Some(Err(error.to_string()));
+                            true
+                        }
+                    }
+                };
+                if finished {
+                    poster(Box::new(move || deliver(version, SwUp::PreloadDone(key))));
+                }
+            });
+            PRELOADS.with(|preloads| preloads.borrow_mut().insert(key, buffer));
+            job.net.fetch_with_id(job.net.next_request_id(), request, sink);
+            true
+        });
+        Ok(s.boolean(started))
+    })?;
+    native.set_atom("startPreload", start_preload.value())?;
+    let has_fetch = s.function("hasFetchHandler", |s, _, _| {
+        let page = crate::target::page_of(s)?;
+        let has = page.window_target().is_some_and(|window| page.dom.try_borrow().is_ok_and(|dom| dom.has_listener_for(window, "fetch")));
+        Ok(s.boolean(has))
+    })?;
+    native.set_atom("hasFetchHandler", has_fetch.value())?;
     let passthrough = s.function("passthrough", |s, _, a| {
         let key = a.get(0).to_number()? as u64;
         if let Some(mut job) = PENDING.with(|p| p.borrow_mut().remove(&key)) {
-            // Dropped undispatched: the request goes to the network.
+            // Dropped undispatched: the request goes to the network. In a race the network
+            // request is already running: the worker only gives up its side.
+            if let Some(race) = job.race.take() {
+                job.request.take();
+                job.sink.take();
+                race.worker_passes();
+            }
             job.dispatched = false;
         }
         Ok(s.undefined())
@@ -290,13 +569,88 @@ pub(crate) fn install(s: &Scope<'_>, start: &ServiceStart, poster: RemotePoster,
     Ok(())
 }
 
-/// The `respondWith` response, as the network would have given it.
-fn respond(s: &Scope<'_>, mut job: FetchJob, a: &pyro_js::Args<'_>) -> JsResult<()> {
-    let (Some(request), Some(mut sink)) = (job.request.take(), job.sink.take()) else { return Ok(()) };
+/// The request a navigation preload sends for `navigation` (the navigation's own, as the page
+/// sent it): "Handle Fetch" adds `Service-Worker-Navigation-Preload` (the registration's header
+/// value, a ByteString); the redirect mode is manual, so a redirect is the preload response
+/// (an opaque-redirect one) and not followed. Chrome's navigations carry
+/// `Upgrade-Insecure-Requests`, which the preload then does too. `None` for a value that is not
+/// a header value.
+fn preload_request(navigation: &Request, header: &str) -> Option<Request> {
+    let bytes: Vec<u8> = header.chars().map(|c| c as u32 as u8).collect();
+    let value = HeaderValue::from_bytes(&bytes).ok()?;
+    let mut request = navigation.clone();
+    request.headers.insert(HeaderName::from_static("service-worker-navigation-preload"), value);
+    request.headers.insert(HeaderName::from_static("upgrade-insecure-requests"), HeaderValue::from_static("1"));
+    request.redirect = pyro_net::RedirectMode::Manual;
+    Some(request)
+}
+
+/// The navigation preload request of job `key` ended (the browser thread told the worker): its
+/// `Response` (a network error rejects `preloadResponse`) goes to the glue.
+pub(crate) fn preload_ready(s: &Scope<'_>, key: u64) {
+    let Some(buffer) = PRELOADS.with(|p| p.borrow_mut().remove(&key)) else { return };
+    let (head, body, done) = {
+        let mut buffer = buffer.lock().unwrap_or_else(PoisonError::into_inner);
+        (buffer.head.take(), std::mem::take(&mut buffer.body), buffer.done.take())
+    };
+    let failure = |message: &str| call(s, "preloadFailed", &[s.number(key as f64), s.string(message)]);
+    // Service Worker "handle fetch": `preloadResponse` settles when the response's headers are in; a body
+    // that breaks afterwards (a chunked encoding cut short) fails the reading of the body, never the
+    // promise. The body kept is what arrived before the error.
+    let (Some(head), Some(_)) = (head, done.clone()) else {
+        failure(&match done {
+            Some(Err(error)) => format!("The service worker navigation preload request failed with network error: {error}"),
+            _ => "The service worker navigation preload request failed with network error: no response".to_owned(),
+        });
+        return;
+    };
+    let kind = match head.kind {
+        ResponseKind::Basic => "basic",
+        ResponseKind::Cors => "cors",
+        ResponseKind::Opaque => "opaque",
+        ResponseKind::OpaqueRedirect => "opaqueredirect",
+    };
+    // What script sees of the response: no cookies, and nothing of an opaque one's headers.
+    let headers: Vec<(String, String)> = if matches!(head.kind, ResponseKind::Opaque | ResponseKind::OpaqueRedirect) {
+        Vec::new()
+    } else {
+        head.headers
+            .iter()
+            .filter(|(name, _)| !matches!(name.as_str(), "set-cookie" | "set-cookie2"))
+            .map(|(name, value)| (name.as_str().to_owned(), value.as_bytes().iter().map(|b| char::from(*b)).collect()))
+            .collect()
+    };
+    let body = (!matches!(head.kind, ResponseKind::OpaqueRedirect)).then_some(body);
+    // The preload response's own Cross-Origin-Resource-Policy travels with it (checked where it is used).
+    let corp = head.headers.get("cross-origin-resource-policy").and_then(|v| v.to_str().ok()).map(str::to_owned);
+    match crate::response::stored(s, corp.as_deref(), kind, head.url.as_str(), head.status.as_u16(), head.status_text.clone(), headers, head.redirected, body) {
+        Ok(response) => call(s, "preloadDone", &[s.number(key as f64), response]),
+        Err(_) => failure("The service worker navigation preload response could not be made"),
+    }
+}
+
+/// The page cancelled the response job `key` streams: the job goes (its sink hears an abort) and
+/// the glue cancels the body's reader.
+pub(crate) fn fetch_cancelled(s: &Scope<'_>, key: u64) {
+    let removed = PENDING.with(|p| p.borrow_mut().remove(&key));
+    if let Some(mut job) = removed {
+        if let Some(mut sink) = job.sink.take() {
+            sink(ResponseEvent::Failed(NetError::Aborted));
+        }
+    }
+    call(s, "cancelFetch", &[s.number(key as f64)]);
+}
+
+/// The head of the `respondWith` response, as the network would have given it
+/// (arguments: key, status, statusText, header list, url, type). `Ok(true)`: it
+/// went to the sink and the job awaits `respondChunk`/`respondEnd`; `Ok(false)`:
+/// refused (the request failed) or no longer there.
+fn respond_head(s: &Scope<'_>, job: &mut FetchJob, a: &pyro_js::Args<'_>) -> JsResult<bool> {
+    let (Some(request), Some(mut sink)) = (job.request.take(), job.sink.take()) else { return Ok(false) };
     let fail = |mut sink: ResponseSink, reason: &str| {
         sink(ResponseEvent::Failed(NetError::Other(format!("The service worker's response failed: {reason}"))));
     };
-    let kind = match a.get(6).to_string()?.as_str() {
+    let kind = match a.get(5).to_string()?.as_str() {
         "opaque" => ResponseKind::Opaque,
         "opaqueredirect" => ResponseKind::OpaqueRedirect,
         "cors" => ResponseKind::Cors,
@@ -313,15 +667,18 @@ fn respond(s: &Scope<'_>, mut job: FetchJob, a: &pyro_js::Args<'_>) -> JsResult<
     };
     if unsuitable {
         fail(sink, "its type does not suit the request's mode");
-        return Ok(());
+        return Ok(false);
     }
     let status = a.get(1).to_number()? as u16;
     let status = match (StatusCode::from_u16(status), kind) {
+        // An opaque-redirect response keeps its redirect's own status (`internalHead`): the
+        // navigation it answers follows the redirect it names.
+        (Ok(status), ResponseKind::OpaqueRedirect) if status.is_redirection() => status,
         (_, ResponseKind::Opaque | ResponseKind::OpaqueRedirect) => StatusCode::OK,
         (Ok(status), _) => status,
         (Err(_), _) => {
             fail(sink, "invalid status");
-            return Ok(());
+            return Ok(false);
         }
     };
     let mut headers = HeaderMap::new();
@@ -336,8 +693,28 @@ fn respond(s: &Scope<'_>, mut job: FetchJob, a: &pyro_js::Args<'_>) -> JsResult<
             i += 2;
         }
     }
-    let body = crate::encoding::buffer_source_bytes(s, a.get(4))?.map(Bytes::from).unwrap_or_default();
-    let url = a.get(5).to_string().ok().filter(|u| !u.is_empty()).and_then(|u| pyro_net::Url::parse(&u).ok());
+    let url = a.get(4).to_string().ok().filter(|u| !u.is_empty()).and_then(|u| pyro_net::Url::parse(&u).ok());
+    // An opaque response hides its headers and URL from script; the ones it came with decide the
+    // check below. A response a script made (`null`) has neither and is the worker's own.
+    let source = a.get(6).as_object();
+    let mut checked = url.clone();
+    if let Some(source) = source.filter(|_| kind == ResponseKind::Opaque) {
+        let corp = source.get_index(0)?;
+        if !corp.is_nullish() {
+            if let Ok(value) = HeaderValue::from_str(&corp.to_string()?) {
+                headers.insert(HeaderName::from_static("cross-origin-resource-policy"), value);
+            }
+        }
+        checked = pyro_net::Url::parse(&source.get_index(1)?.to_string()?).ok();
+    }
+    // Fetch "main fetch": a no-cors request's response goes through the cross-origin resource policy
+    // check whatever made it, the worker's included.
+    if let Some(url) = &checked {
+        if let Err(error) = pyro_net::client::corp_check(&request, url, &headers) {
+            sink(ResponseEvent::Failed(error));
+            return Ok(false);
+        }
+    }
     let (mime, charset) = headers
         .get(pyro_net::http::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
@@ -352,19 +729,18 @@ fn respond(s: &Scope<'_>, mut job: FetchJob, a: &pyro_js::Args<'_>) -> JsResult<
         charset,
         redirected: false,
         from_cache: false,
+        from_prefetch_cache: false,
         kind,
         remote_addr: None,
         protocol: pyro_net::http::Version::HTTP_11,
-        // Made by the worker, not the network: no connection phases.
-        timing: Default::default(),
+        // Made by the worker, not the network: no connection phases, and the head is the
+        // response's start (Resource Timing: a delay in the handler shows at `responseStart`).
+        timing: pyro_net::NetTiming { response_start: Some(std::time::Instant::now()), ..Default::default() },
     };
-    let len = body.len() as u64;
     sink(ResponseEvent::Response(head));
-    if !body.is_empty() {
-        sink(ResponseEvent::Data(body));
-    }
-    sink(ResponseEvent::Finished { encoded_len: len, decoded_len: len });
-    Ok(())
+    job.sink = Some(sink);
+    job.head_sent = true;
+    Ok(true)
 }
 
 /// Moves this worker's own `state` (the browser thread's lifecycle step).
@@ -376,7 +752,7 @@ pub(crate) fn extendable_event<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
 /// and lifetime-promise machinery as its install/activate events.
 pub(crate) fn cookie_change(s: &Scope<'_>, page: &Rc<PageDom>, changes: &[pyro_net::cookies::CookieChange]) {
     match crate::cookie_store::events::cookie_event(s, page, true, changes) {
-        Ok(event) => call(s, "dispatchCookieChange", &[event]),
+        Ok(event) => call_event(s, "dispatchCookieChange", &[event]),
         Err(err) => s.report_exception(&err),
     }
 }
@@ -386,7 +762,7 @@ pub(crate) fn set_state(s: &Scope<'_>, state: &str) {
 }
 
 pub(crate) fn lifecycle(s: &Scope<'_>, kind: Lifecycle) {
-    call(s, if kind == Lifecycle::Install { "install" } else { "activate" }, &[]);
+    call_event(s, if kind == Lifecycle::Install { "install" } else { "activate" }, &[]);
 }
 
 pub(crate) fn reply(s: &Scope<'_>, id: u64, result: Result<String, (String, String)>) {
@@ -413,13 +789,13 @@ pub(crate) fn message(
     let origin = s.string(crate::event::serialize_message_origin(origin_key));
     let key = s.string(origin_key);
     match crate::structured_clone::decode_with_ports(s, message) {
-        Ok((data, ports)) => call(
+        Ok((data, ports)) => call_event(
             s,
             "dispatchMessage",
             &[data, ports.map_or_else(|| s.undefined(), |p| p.value()), source, origin, key],
         ),
         Err(JsError::Terminated) => {}
-        Err(_) => call(s, "dispatchMessageError", &[source, origin, key]),
+        Err(_) => call_event(s, "dispatchMessageError", &[source, origin, key]),
     }
 }
 
@@ -472,11 +848,16 @@ fn destination_name(destination: pyro_net::Destination) -> &'static str {
 /// Fires a `fetch` event for `job`.
 pub(crate) fn fetch(s: &Scope<'_>, mut job: FetchJob) {
     let Some(request) = job.request.as_ref() else { return };
-    let headers = request
+    let mut headers: Vec<(String, String)> = request
         .headers
         .iter()
         .map(|(n, v)| (n.as_str().to_owned(), String::from_utf8_lossy(v.as_bytes()).into_owned()))
         .collect();
+    // Fetch's "http-network-or-cache fetch" adds `Accept` before the network sees the request; the
+    // worker's `Request` has the headers the page's request carries on its way, it included.
+    if !request.headers.contains_key(pyro_net::http::header::ACCEPT) {
+        headers.push(("accept".to_owned(), pyro_net::client::default_accept(request.destination).to_owned()));
+    }
     let intercepted = crate::request::Intercepted {
         method: request.method.as_str().to_owned(),
         url: request.url.to_string(),
@@ -492,8 +873,8 @@ pub(crate) fn fetch(s: &Scope<'_>, mut job: FetchJob) {
             .and_then(|r| pyro_net::referrer::referrer_for(r, &request.url, request.referrer_policy))
             .unwrap_or_else(|| "no-referrer".to_owned()),
         referrer_policy: request.referrer_policy.as_str().to_owned(),
-        integrity: String::new(),
-        keepalive: false,
+        integrity: request.integrity.clone(),
+        keepalive: request.keepalive,
         destination: destination_name(request.destination),
         headers,
         body: request.body.clone(),
@@ -503,11 +884,33 @@ pub(crate) fn fetch(s: &Scope<'_>, mut job: FetchJob) {
         // The job drops undispatched: the request goes to the network.
         Err(_) => return,
     };
+    let is_navigation = request.mode == pyro_net::RequestMode::Navigate;
+    let preload = job.preload.clone();
     let key = next_key();
     let (client, resulting) = (job.client_id.clone(), job.resulting_client_id.clone());
     job.dispatched = true;
     PENDING.with(|p| p.borrow_mut().insert(key, job));
-    call(s, "dispatchFetch", &[s.number(key as f64), value, s.string(&client), s.string(&resulting)]);
+    // The glue's `dispatchFetch(job)`; `preload` is for navigation preload (sw-3).
+    let described = (|| {
+        let job = s.object();
+        job.set_atom("id", s.number(key as f64))?;
+        job.set_atom("request", value)?;
+        job.set_atom("clientId", s.string(&client))?;
+        job.set_atom("resultingClientId", s.string(&resulting))?;
+        job.set_atom("isNavigation", s.boolean(is_navigation))?;
+        job.set_atom("preload", preload.map_or_else(|| s.null(), |header| s.string(&header)))?;
+        Ok::<_, JsError>(job)
+    })();
+    match described {
+        Ok(job) => call_event(s, "dispatchFetch", &[job.value()]),
+        // As an undispatched job: dropped, the request goes to the network.
+        Err(_) => {
+            let removed = PENDING.with(|p| p.borrow_mut().remove(&key));
+            if let Some(mut job) = removed {
+                job.dispatched = false;
+            }
+        }
+    }
 }
 
 /// This module's part of [`crate::thread_state::reset_thread`]: what of its
@@ -522,6 +925,8 @@ pub(crate) fn thread_leftover() -> Option<&'static str> {
     if QUERIES.get() != 0 {
         return Some("service_worker_scope::QUERIES");
     }
+    // Navigation preloads belong to a fetch job; `tear_down` drops them with the job table.
+    drop(PRELOADS.with(|p| std::mem::take(&mut *p.borrow_mut())));
     NEXT_KEY.set(1);
     None
 }

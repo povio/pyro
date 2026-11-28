@@ -475,7 +475,7 @@ impl crate::BaseDocument {
             "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" \
              width=\"{width}\" height=\"{height}\"><defs>{source}</defs><g id=\"__pyro_box_reference\">{content}</g></svg>"
         );
-        crate::util::parse_svg_resources(document.as_bytes(), Some(&self.svg_images), &self.raster_budget).ok()
+        crate::util::parse_svg_resources(document.as_bytes(), Some(&self.svg_images_for_paint()), &self.raster_budget).ok()
     }
 }
 

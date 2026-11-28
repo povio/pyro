@@ -128,6 +128,14 @@ const ARIA: &[&str] = &[
     "ariaValueText",
 ];
 
+/// The content attribute an ARIAMixin property reflects: `role`, `ariaLabel` -> `aria-label`.
+fn aria_attribute(property: &str) -> String {
+    match property.strip_prefix("aria") {
+        Some(rest) => format!("aria-{}", rest.to_ascii_lowercase()),
+        None => property.to_owned(),
+    }
+}
+
 macro_rules! aria_accessors {
     ($def:expr, $($i:literal),*) => {
         $(
@@ -139,6 +147,8 @@ macro_rules! aria_accessors {
                 },
                 |_s, d, v| {
                     let value = opt_dom_string(v)?;
+                    // The default semantics the accessibility tree reads (as the content attribute would).
+                    d.page().dom.borrow_mut().set_default_aria(d.id(), &aria_attribute(ARIA[$i]), value.as_deref()).js()?;
                     let mut aria = d.aria.borrow_mut();
                     aria.retain(|(k, _)| *k != ARIA[$i]);
                     if let Some(v) = value {
@@ -187,6 +197,12 @@ impl JsClass for ElementInternals {
             let flags = validity_flags(a.get(0))?;
             let message = if a.get(1).is_undefined() { None } else { Some(dom_string(a.get(1))?) };
             let anchor = crate::node::opt_node_arg(s, a.get(2), "ElementInternals.setValidity")?;
+            // `optional HTMLElement anchor`: another kind of node (or a non-HTML element) fails the conversion.
+            if let Some(anchor) = anchor {
+                if !d.page().dom.borrow().element(anchor).is_ok_and(|e| e.is_html()) {
+                    return Err(JsError::Type("Failed to execute 'setValidity' on 'ElementInternals': parameter 3 is not of type 'HTMLElement'.".into()));
+                }
+            }
             if !flags.valid() && message.as_deref().unwrap_or("").is_empty() {
                 return Err(JsError::Type(
                     "Failed to execute 'setValidity' on 'ElementInternals': The second argument should not be empty if one or more flags in the first argument are true.".into(),
@@ -194,7 +210,8 @@ impl JsClass for ElementInternals {
             }
             if let Some(anchor) = anchor {
                 let dom = d.page().dom.borrow();
-                let inside = dom.is_shadow_including_descendant(el, anchor);
+                // Chrome accepts the element itself.
+                let inside = anchor == el || dom.is_shadow_including_descendant(el, anchor);
                 if !inside {
                     return Err(JsError::dom(
                         "NotFoundError",
@@ -216,8 +233,7 @@ impl JsClass for ElementInternals {
         });
         def.getter("validity", |s, d| {
             let el = d.face("validity")?;
-            let v = d.page().dom.borrow().validity(el).js()?;
-            Ok(s.wrap::<crate::validity::ValidityState>(v, None)?.value())
+            Ok(s.wrap::<crate::validity::ValidityState>(NodeHold::new(d.page(), el)?, None)?.value())
         });
         def.getter("validationMessage", |s, d| {
             let el = d.face("validationMessage")?;

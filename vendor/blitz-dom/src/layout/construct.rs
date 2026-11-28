@@ -799,7 +799,7 @@ fn place_inside_marker(doc: &mut BaseDocument, item: NodeId, out: &mut LayoutChi
 /// pyro: whether `node` is a drop-down select of base appearance (`appearance: base-select`,
 /// a customizable select) whose picker is open (`:open`, from pyro-dom's state tokens): its
 /// options, groups and separators have boxes, laid out below the select.
-pub(crate) fn is_open_base_select(node: &crate::node::Node) -> bool {
+pub fn is_open_base_select(node: &crate::node::Node) -> bool {
     node.element_data().is_some_and(|el| {
         el.name.local == local_name!("select")
             && el.element_state.contains(style_dom::ElementState::OPEN)
@@ -870,9 +870,9 @@ fn collect_layout_children_with_wrap(
         return;
     }
 
-    // pyro: an ordinary MathML fraction: its numerator and denominator are its layout children
-    // (`layout::math`).
-    if super::math::construct_fraction(doc, container_node_id, &mut out.children) {
+    // pyro: a MathML element with a layout algorithm of its own (an ordinary fraction, a row, ...)
+    // has its element children as its layout children (`layout::math`).
+    if super::math::construct_math(doc, container_node_id, &mut out.children) {
         return;
     }
 
@@ -1636,6 +1636,16 @@ pub(crate) fn flush_pseudo_elements(doc: &mut BaseDocument, node_id: NodeId) {
             // pyro: damage is set with its flag (`Node::mark_damaged`), which the walks
             // that follow damage rely on to skip a subtree (`Node::has_no_damage_below`).
             doc.nodes[new_node_id].mark_damaged();
+            // pyro: the damage walk that registers `anchor-name`s ran before this node existed, so
+            // register the pseudo-element's own names now (as `propagate_damage_flags` would).
+            {
+                let pe_names = &pe_style.get_box().anchor_name;
+                let names = (!pe_names.value.0.is_empty()).then(|| {
+                    let scope = pe_names.scope.get_shadow_root_for_scoped(&doc.nodes[new_node_id]);
+                    (scope.map(|root| root.id), pe_names.value.clone())
+                });
+                doc.update_anchor_names(new_node_id, names);
+            }
             sync_generated_children(doc, new_node_id, pe_style, pieces.as_deref().unwrap_or(&[]));
 
             let node = &mut doc.nodes[node_id];
@@ -1684,6 +1694,15 @@ pub(crate) fn flush_pseudo_elements(doc: &mut BaseDocument, node_id: NodeId) {
             if replaced {
                 doc.nodes[pe_node_id].update_layout_styles();
                 doc.pending_style_image_nodes.push(pe_node_id);
+                // pyro: re-register the pseudo-element's `anchor-name`s (see its creation above).
+                let names = doc.nodes[pe_node_id].primary_styles().and_then(|style| {
+                    let pe_names = &style.get_box().anchor_name;
+                    (!pe_names.value.0.is_empty()).then(|| {
+                        let scope = pe_names.scope.get_shadow_root_for_scoped(&doc.nodes[pe_node_id]);
+                        (scope.map(|root| root.id), pe_names.value.clone())
+                    })
+                });
+                doc.update_anchor_names(pe_node_id, names);
             }
         }
     }
@@ -2319,6 +2338,9 @@ pub(crate) fn find_inline_layout_embedded_boxes(
                             if !node.flags.contains(NodeFlags::IS_INITIAL_LETTER_BOX) {
                                 node.flags.remove(NodeFlags::IS_INLINE_ROOT);
                             }
+                            // pyro: nor a math box (`layout::math`) once it is flattened into its
+                            // container's inline layout.
+                            node.flags.remove(NodeFlags::IS_MATH_BOX);
                             iter_children_and_pseudos!(nodes[node_id], |child_id| {
                                 crate::util::ensure_stack(|| find_inline_layout_embedded_boxes_recursive(
                                     nodes,

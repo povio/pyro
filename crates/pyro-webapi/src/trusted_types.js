@@ -60,14 +60,6 @@
   }
   defineProperty(TrustedHTMLParserOptions.prototype, Symbol.toStringTag, { value: 'TrustedHTMLParserOptions', configurable: true });
 
-  function parserDictionary(options) {
-    if (options === null || options === undefined) return { runScripts: false };
-    if (typeof options !== 'object' && typeof options !== 'function') throw new TypeError('Expected HTML parser options');
-    const runScripts = !!options.runScripts;
-    if (options.sanitizer !== undefined) throw new TypeError('HTML sanitizer options are unsupported');
-    return { runScripts };
-  }
-
   // Each policy: its name and options.
   const policies = new WeakMap();
   const TrustedTypePolicy = class TrustedTypePolicy {
@@ -139,9 +131,14 @@
       if (blocked) {
         throw new TypeError(`Failed to execute 'createPolicy' on 'TrustedTypePolicyFactory': Policy "${name}" disallowed.`);
       }
+      // The default policy exists once, whether or not a `trusted-types` directive restricts names.
+      if (name === 'default' && defaultPolicy !== null) {
+        throw new TypeError('Failed to execute \'createPolicy\' on \'TrustedTypePolicyFactory\': Policy "default" already exists.');
+      }
       const callback = callbacks.createParserOptions;
-      const createOptions = (options, args) => {
-        const input = parserDictionary(options);
+      // `input` is the converted options dictionary (native.createParserOptions): `runScripts` and
+      // a `sanitizer` Sanitizer when the caller gave one.
+      const createOptions = (input, args) => {
         if (callback === undefined) throw new TypeError('This policy does not define createParserOptions');
         const result = callback(input, ...args);
         if (result === null || result === undefined) throw new TypeError('Expected parser options from policy');
@@ -180,13 +177,15 @@
   const HTML_NS = 'http://www.w3.org/1999/xhtml';
   const SVG_NS = 'http://www.w3.org/2000/svg';
   const XLINK_NS = 'http://www.w3.org/1999/xlink';
+  const MATHML_NS = 'http://www.w3.org/1998/Math/MathML';
   // An empty or null namespace is the HTML namespace for elements (the spec's default).
   const nsOf = ns => (ns === undefined || ns === null || ns === '' ? '' : String_(ns));
   // "Get Trusted Type data for attribute": event handler content attributes are TrustedScript;
   // the table: iframe srcdoc (TrustedHTML), HTML script src and SVG script href (TrustedScriptURL).
   function attributeType(tag, attribute, elementNs, attrNs) {
     const elNs = elementNs === '' ? HTML_NS : elementNs;
-    if (attrNs === '' && attribute.startsWith('on') && attribute.length > 2) return 'TrustedScript';
+    // Event handler content attributes of an HTML, SVG or MathML element (not a foreign one's).
+    if (attrNs === '' && (elNs === HTML_NS || elNs === SVG_NS || elNs === MATHML_NS) && native.isEventHandler(attribute)) return 'TrustedScript';
     if (elNs === HTML_NS && attrNs === '' && tag === 'iframe' && attribute === 'srcdoc') return 'TrustedHTML';
     if (elNs === HTML_NS && attrNs === '' && tag === 'script' && attribute === 'src') return 'TrustedScriptURL';
     if (elNs === SVG_NS && tag === 'script' && attribute === 'href' && (attrNs === '' || attrNs === XLINK_NS)) return 'TrustedScriptURL';
@@ -308,11 +307,12 @@
       for (const key of Object.keys(init)) full[key] = init[key];
       at.dispatchEvent(new SecurityPolicyViolationEvent('securitypolicyviolation', full));
     },
-    defaultParserOptions(runScripts, sink, hasSanitizer) {
+    defaultParserOptions(runScripts, sink, sanitizer) {
       const callback = defaultParserCallback;
       if (callback === undefined) return undefined;
-      if (hasSanitizer) throw new TypeError('Sanitizer objects for policy callback input are unsupported');
-      const result = callback({ runScripts }, 'TrustedHTMLParserOptions', sink);
+      const input = { runScripts };
+      if (sanitizer !== undefined) input.sanitizer = sanitizer;
+      const result = callback(input, 'TrustedHTMLParserOptions', sink);
       if (result === null || result === undefined) return null;
       return result;
     },

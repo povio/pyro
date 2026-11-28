@@ -76,6 +76,10 @@ struct AnimationFrame {
     backup: Option<TimerId>,
     /// Chain depth of the frame callback running now, if any.
     running: Option<u32>,
+    /// The waiting frame was asked for by the performance-entry modules alone
+    /// (`request_rendering_frame`): nothing else waits for it. Any other request
+    /// (`schedule_animation_frame`) clears it.
+    rendering_only: bool,
 }
 
 pub struct WindowData {
@@ -348,6 +352,8 @@ impl JsClass for Window {
         });
         // No COOP/COEP isolation here.
         def.getter("crossOriginIsolated", |s, _w| Ok(s.boolean(false)));
+        // HTML "credentialless": the document is in a credentialless iframe tree.
+        def.getter("credentialless", |s, w| Ok(s.boolean(w.target.page.is_credentialless())));
         def.method("queueMicrotask", 1, |s, _w, a| {
             let cb = a.get(0).as_object().filter(|f| f.is_function()).ok_or_else(|| {
                 JsError::Type(
@@ -370,9 +376,13 @@ impl JsClass for Window {
         });
         def.accessor(
             "location",
-            |s, w| Ok(location_object(s, w)?.value()),
+            |s, w| {
+                pyro_webapi::note_window_access(&w.target.page, "location");
+                Ok(location_object(s, w)?.value())
+            },
             |s, w, v| {
                 // `window.location = url` assigns href.
+                pyro_webapi::note_window_access(&w.target.page, "location");
                 location_object(s, w)?.set("href", v)
             },
         );
@@ -395,7 +405,8 @@ impl JsClass for Window {
             "NavigationDestination",
             "NavigationTransition",
             "NavigationCurrentEntryChangeEvent",
-            "NavigationActivation"
+            "NavigationActivation",
+            "NavigationPrecommitController"
         );
         // [Replaceable], as in Chrome: assignment shadows it on the window.
         def.accessor(
@@ -423,13 +434,19 @@ impl JsClass for Window {
         }
         observer_interfaces!("PerformanceObserver", "PerformanceObserverEntryList");
         def.getter("top", |s, w| match (w.frames.upgrade(), w.frame) {
-            (Some(host), Some(key)) => host.relation(s, key, true),
+            (Some(host), Some(key)) => {
+                pyro_webapi::note_window_access(&w.target.page, "top");
+                host.relation(s, key, true)
+            }
             _ => Ok(s.global().value()),
         });
         def.accessor(
             "parent",
             |s, w| match (w.frames.upgrade(), w.frame) {
-                (Some(host), Some(key)) => host.relation(s, key, false),
+                (Some(host), Some(key)) => {
+                    pyro_webapi::note_window_access(&w.target.page, "parent");
+                    host.relation(s, key, false)
+                }
                 _ => Ok(s.global().value()),
             },
             |s, w, v| pyro_webapi::window::replace_window_attribute(s, &w.target.page, "parent", v),
@@ -437,8 +454,9 @@ impl JsClass for Window {
         // HTML `closed`: true once the window's browsing context is gone (its container, or an
         // ancestor's, was removed and the frame detached; or its document was detached).
         def.getter("closed", |s, w| {
+            pyro_webapi::note_window_access(&w.target.page, "closed");
             let gone = match (w.frames.upgrade(), w.frame) {
-                (Some(host), Some(key)) => host.with_frame(key, |_| ()).is_none(),
+                (Some(host), Some(key)) => host.with_frame(key, |_| ()).is_none() || host.container_removed(key),
                 _ => false,
             };
             Ok(s.boolean(gone || w.target.page.is_detached() || w.target.page.is_disposed()))
@@ -486,7 +504,10 @@ impl JsClass for Window {
         def.accessor(
             "opener",
             |s, w| match (w.frames.upgrade(), w.frame) {
-                (Some(host), Some(key)) => host.opener_window(s, key),
+                (Some(host), Some(key)) => {
+                    pyro_webapi::note_window_access(&w.target.page, "opener");
+                    host.opener_window(s, key)
+                }
                 _ => Ok(s.null()),
             },
             |s, w, v| pyro_webapi::window::replace_window_attribute(s, &w.target.page, "opener", v),
@@ -494,6 +515,7 @@ impl JsClass for Window {
         def.accessor(
             "length",
             |s, w| {
+                pyro_webapi::note_window_access(&w.target.page, "length");
                 Ok(s.number(match (w.frames.upgrade(), w.frame) {
                     (Some(host), Some(key)) => host.child_keys(key).len() as f64,
                     _ => 0.0,
@@ -510,7 +532,11 @@ impl JsClass for Window {
         );
         def.indexed(|s, w, index| match (w.frames.upgrade(), w.frame) {
             (Some(host), Some(key)) => {
-                host.child_keys(key).get(index as usize).map(|target| host.window_value(s, key, *target)).transpose()
+                let child = host.child_keys(key).get(index as usize).copied();
+                if child.is_some() {
+                    pyro_webapi::note_window_access(&w.target.page, "indexed");
+                }
+                child.map(|target| host.window_value(s, key, target)).transpose()
             }
             _ => Ok(None),
         });
@@ -521,12 +547,18 @@ impl JsClass for Window {
         }
         def.accessor(
             "self",
-            |s, _w| Ok(s.global().value()),
+            |s, w| {
+                pyro_webapi::note_window_access(&w.target.page, "self");
+                Ok(s.global().value())
+            },
             |s, w, v| pyro_webapi::window::replace_window_attribute(s, &w.target.page, "self", v),
         );
         def.accessor(
             "frames",
-            |s, _w| Ok(s.global().value()),
+            |s, w| {
+                pyro_webapi::note_window_access(&w.target.page, "frames");
+                Ok(s.global().value())
+            },
             |s, w, v| pyro_webapi::window::replace_window_attribute(s, &w.target.page, "frames", v),
         );
         def.getter("isSecureContext", |s, w| Ok(s.boolean(is_secure_context(w))));
@@ -545,6 +577,7 @@ impl JsClass for Window {
         def.method("__lpNow", 0, |s, w, _a| Ok(s.number(w.now_ms())));
         // Window post message steps: from the window whose script is running.
         def.method("postMessage", 1, |s, w, a| {
+            pyro_webapi::note_window_access(&w.target.page, "postMessage");
             match (w.frames.upgrade(), w.frame) {
                 (Some(host), Some(key)) => {
                     crate::frames::post_message(s, &a, crate::frames::incumbent_window(), &host, key)?
@@ -815,23 +848,24 @@ fn request_animation_frame<'s>(s: &Scope<'s>, w: &WindowData, cb: Persistent) ->
 }
 
 fn schedule_animation_frame(s: &Scope<'_>, w: &WindowData, frame: &mut AnimationFrame) {
+    frame.rendering_only = false;
     if frame.timer.is_none() {
         // Timers must not keep a disposed realm alive: hold it weakly.
         let realm_weak = s.realm().downgrade();
-        let run = move |_browser: &mut Browser| {
+        let run = move |browser: &mut Browser| {
             let Some(realm) = realm_weak.upgrade() else { return };
             let Ok(scope) = realm.scope() else { return };
-            run_animation_frame(&scope);
+            run_animation_frame(&scope, browser);
         };
         // Moving animations must advance their layout sample between callbacks,
         // including after a client command replenishes the eager-frame budget.
         let animation_interval = w.target.page.moving_animation_frame_interval();
         frame.timer = Some(if animation_interval.is_none() && take_eager_frame() {
             let realm_weak = s.realm().downgrade();
-            frame.backup = Some(w.sched.set_frame_timer(Duration::from_millis(FRAME_MS), true, move |_browser: &mut Browser| {
+            frame.backup = Some(w.sched.set_frame_timer(Duration::from_millis(FRAME_MS), true, move |browser: &mut Browser| {
                 let Some(realm) = realm_weak.upgrade() else { return };
                 let Ok(scope) = realm.scope() else { return };
-                run_animation_frame(&scope);
+                run_animation_frame(&scope, browser);
             }));
             w.sched.set_idle_timer(true, run)
         } else {
@@ -864,6 +898,25 @@ pub(crate) fn request_frame(realm: &Realm) {
     schedule_animation_frame(&scope, window, &mut frame);
 }
 
+/// Runs a rendering update of the realm's window soon for the performance-entry modules
+/// (`pyro_webapi::perf::timeline::request_rendering`): a plain frame timer, never one of the
+/// client-activity eager frames, and none when a frame is already waiting.
+pub(crate) fn request_rendering_frame(realm: &Realm) {
+    let Ok(scope) = realm.scope() else { return };
+    let Some(w) = scope.global_data::<Window>() else { return };
+    let mut frame = w.animation.borrow_mut();
+    if frame.timer.is_some() {
+        return;
+    }
+    frame.rendering_only = true;
+    let realm_weak = realm.downgrade();
+    frame.timer = Some(w.sched.set_frame_timer(Duration::from_millis(FRAME_MS), true, move |browser: &mut Browser| {
+        let Some(realm) = realm_weak.upgrade() else { return };
+        let Ok(scope) = realm.scope() else { return };
+        run_animation_frame(&scope, browser);
+    }));
+}
+
 /// Forgets the frame's timers (the one that fired, and the other of an eager frame's pair).
 fn clear_frame_timers(w: &WindowData) {
     let mut frame = w.animation.borrow_mut();
@@ -886,45 +939,63 @@ pub(crate) fn navigation_activation(scope: &Scope<'_>, ty: &str, url: &str) -> O
     }
 }
 
-fn run_animation_frame(scope: &Scope<'_>) {
+/// The frame runs as soon as rendering is no longer blocked (a render-blocking element, or a view
+/// transition's rendering suppression): its timers are dropped, the callbacks stay queued.
+fn defer_frame_until_unblocked(scope: &Scope<'_>, w: &WindowData) {
+    clear_frame_timers(w);
+    let realm_weak = scope.realm().downgrade();
+    w.target.page.when_render_unblocked(Box::new(move || {
+        let Some(realm) = realm_weak.upgrade() else { return };
+        let Ok(scope) = realm.scope() else { return };
+        let Some(w) = scope.global_data::<Window>() else { return };
+        let mut frame = w.animation.borrow_mut();
+        // (A smooth scroll that was running when rendering blocked needs a frame too, though
+        // no callback asks for one: it would stall otherwise.)
+        if frame.timer.is_none()
+            && (!(frame.callbacks.is_empty() && frame.native_callbacks.is_empty())
+                || pyro_webapi::smooth_scroll::running(&w.target.page)
+                || w.target.page.timeline().wants_rendering())
+        {
+            let realm_weak = realm.downgrade();
+            frame.timer = Some(w.sched.set_timer(Duration::ZERO, false, true, move |browser: &mut Browser| {
+                let Some(realm) = realm_weak.upgrade() else { return };
+                let Ok(scope) = realm.scope() else { return };
+                run_animation_frame(&scope, browser);
+            }));
+        }
+    }));
+}
+
+fn run_animation_frame(scope: &Scope<'_>, browser: &Browser) {
     let Some(w) = scope.global_data::<Window>() else { return };
     // A render-blocked document (a pending render-blocking stylesheet or
     // script, an unresolved `<link rel=expect>`) has no rendering
     // opportunity: the frame runs as soon as rendering is unblocked.
     if w.target.page.render_blocked() {
-        clear_frame_timers(w);
-        let realm_weak = scope.realm().downgrade();
-        w.target.page.when_render_unblocked(Box::new(move || {
-            let Some(realm) = realm_weak.upgrade() else { return };
-            let Ok(scope) = realm.scope() else { return };
-            let Some(w) = scope.global_data::<Window>() else { return };
-            let mut frame = w.animation.borrow_mut();
-            // (A smooth scroll that was running when rendering blocked needs a frame too, though
-            // no callback asks for one: it would stall otherwise.)
-            if frame.timer.is_none()
-                && (!(frame.callbacks.is_empty() && frame.native_callbacks.is_empty())
-                    || pyro_webapi::smooth_scroll::running(&w.target.page))
-            {
-                let realm_weak = realm.downgrade();
-                frame.timer = Some(w.sched.set_timer(Duration::ZERO, false, true, move |_browser: &mut Browser| {
-                    let Some(realm) = realm_weak.upgrade() else { return };
-                    let Ok(scope) = realm.scope() else { return };
-                    run_animation_frame(&scope);
-                }));
-            }
-        }));
+        defer_frame_until_unblocked(scope, w);
         return;
     }
+    // The rendering update starts here (long animation frames' `renderStart`).
+    let render_start = if pyro_webapi::perf::FRAME_STAGE_TIMES { w.now_ms() } else { 0.0 };
     // HTML "update the rendering": a document's first rendering update reveals it (`pagereveal`),
     // then autofocus candidates flush before the scroll steps.
     pyro_webapi::lifecycle::reveal(&w.target.page);
-    pyro_webapi::lifecycle::flush_autofocus_candidates(&w.target.page);
+    // (Not while a script-blocking style sheet is pending: step 1 of "flush autofocus candidates";
+    // `Browser::stylesheets_changed` asks for the frame that flushes them once it is gone.)
+    if !w.frame_key().is_some_and(|key| browser.stylesheets_block_scripts(key)) {
+        pyro_webapi::lifecycle::flush_autofocus_candidates(&w.target.page);
+    }
     // The resize steps: child frames resized since the last update (an autofocus listener may
     // have resized one) fire `resize` before the animation frame callbacks.
     pyro_webapi::PageDom::run_pending_frame_resizes();
     // The scroll steps: the initial snap, running smooth scrolls advance a frame (CSSOM View
     // § 4.1), then the scroll and snap events.
-    pyro_webapi::layout_api::run_frame_scroll_steps(&w.target.page);
+    // (A rendering update that only the performance entries asked for, after a change made a
+    // moment ago, leaves the `scroll` events script queued to their own frame-paced delivery:
+    // Chromium's next frame after a scroll is not the one a paint scan happened to schedule
+    // earlier, and a client that scrolls and clicks at once must not see the event first.)
+    let rendering_only = std::mem::take(&mut w.animation.borrow_mut().rendering_only);
+    pyro_webapi::layout_api::run_frame_scroll_steps(&w.target.page, !rendering_only);
     // pyro: the frame determines `content-visibility: auto` relevance anew (CSS Contain 2 § 4.1).
     pyro_webapi::layout_api::content_visibility_frame(&w.target.page);
     // The style update of the frame before this one, when the document changed since and none
@@ -946,7 +1017,15 @@ fn run_animation_frame(scope: &Scope<'_>) {
     // HTML video frame callbacks run before the animation frame callbacks.
     pyro_webapi::media::run_video_frame_callbacks(&w.target.page, now_ms);
     let now = scope.number(now_ms);
+    let mut suppressed = false;
     for handle in handles {
+        // A callback that began a view transition's rendering suppression (the update callback runs
+        // after its old state was captured, at the start of this frame's callbacks): the callbacks
+        // after it stay queued for the first frame after the suppression.
+        if w.target.page.view_transition_suppressed() {
+            suppressed = true;
+            break;
+        }
         // A callback may cancel a later one of the same frame.
         let cb = {
             let mut frame = w.animation.borrow_mut();
@@ -964,9 +1043,17 @@ fn run_animation_frame(scope: &Scope<'_>) {
     for ready in native {
         ready.set(true);
     }
+    if suppressed {
+        defer_frame_until_unblocked(scope, w);
+    }
+    // Style and layout of the frame start after its callbacks (long animation frames'
+    // `styleAndLayoutStart`).
+    let style_and_layout_start = if pyro_webapi::perf::FRAME_STAGE_TIMES { w.now_ms() } else { now_ms };
     // The frame's style update: what its callbacks changed starts transitions
     // and animations now (the next frame's callbacks see them running).
     w.target.page.update_animations();
+    // Layout is final from here: the frame's paint time.
+    let paint_time = w.now_ms();
     // pyro: the frame's ResizeObserver step: last remembered sizes (CSS Sizing 4 § 5.1) are
     // recorded after its callbacks, on the layout they leave (WPT css-sizing
     // `contain-intrinsic-size/auto-006`: two frames, then skipping uses the size).
@@ -977,6 +1064,11 @@ fn run_animation_frame(scope: &Scope<'_>) {
     // HTML-in-Canvas: the `paint` events of `<canvas content=drawable>` (none without one).
     pyro_webapi::html_in_canvas::run_paint_step(&w.target.page);
     w.target.page.sync_frame_resources();
+    // The performance-entry modules (`pyro_webapi::perf`): the end of the update is its
+    // presentation. A presentation is later than its paint by at least one tick of the clock.
+    let presented = w.now_ms().max(paint_time + 0.1);
+    let render_start = if pyro_webapi::perf::FRAME_STAGE_TIMES { render_start } else { now_ms };
+    pyro_webapi::perf::rendering_update(&w.target.page, &pyro_webapi::perf::FrameInfo { start: now_ms, paint_time, presented, render_start, style_and_layout_start });
     // pyro: a smooth scroll still running asks for the next frame (its frame timers were cleared
     // above).
     pyro_webapi::smooth_scroll::request_frames(&w.target.page);

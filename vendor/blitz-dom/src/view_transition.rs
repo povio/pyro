@@ -53,6 +53,8 @@ struct BoxNode {
     id: NodeId,
     pseudo: PseudoElement,
     declarations: Option<Arc<Locked<PropertyDeclarationBlock>>>,
+    /// Whether it is its parent pseudo-element's only child (what `:only-child` matches).
+    only_child: bool,
 }
 
 pub(crate) struct Tree {
@@ -205,6 +207,11 @@ impl BaseDocument {
             if let Some(target) = part.target {
                 let filter = self.resolved_style_value(target, "backdrop-filter");
                 if !filter.is_empty() && filter != "none" { css.push_str("backdrop-filter:"); css.push_str(&filter); css.push(';'); }
+                // The group takes these from the element (css-view-transitions-1 § 3.4.2 "setup transition pseudo-elements").
+                for (property, initial) in [("mix-blend-mode", "normal"), ("text-orientation", "mixed"), ("color-scheme", "normal")] {
+                    let value = self.resolved_style_value(target, property);
+                    if !value.is_empty() && value != initial { css.push_str(property); css.push(':'); css.push_str(&value); css.push(';'); }
+                }
             }
             let both = part.old.is_some() && part.new.is_some();
             if both {
@@ -246,7 +253,12 @@ impl BaseDocument {
             }
         }
         let mut nodes = Vec::<BoxNode>::with_capacity(descriptors.len());
-        for (pseudo, parent, css, public_pseudo) in descriptors {
+        // (`:only-child` on a pseudo-element of the tree: no other pseudo-element of its parent.)
+        let only_children: Vec<bool> = (0..descriptors.len())
+            .map(|index| index != 0 && descriptors.iter().skip(1).filter(|other| other.1 == descriptors[index].1).count() == 1)
+            .collect();
+        for (index, (pseudo, parent, css, public_pseudo)) in descriptors.into_iter().enumerate() {
+            let only_child = only_children[index];
             let parent = nodes.get(parent).map_or(origin, |node| node.id);
             let declarations = (!css.is_empty()).then(|| {
                 Arc::new(self.guard.wrap(style::properties::declaration_block::parse_style_attribute(
@@ -257,7 +269,7 @@ impl BaseDocument {
                     style::stylesheets::CssRuleType::Style,
                 )))
             });
-            let Some(style) = self.transition_cascade(origin, parent, pseudo.clone(), declarations.as_ref()) else {
+            let Some(style) = self.transition_cascade(origin, parent, pseudo.clone(), declarations.as_ref(), only_child) else {
                 for node in nodes.into_iter().rev() {
                     self.remove_node_from_tree(node.id);
                 }
@@ -274,7 +286,7 @@ impl BaseDocument {
             }
             self.nodes[id].stylo_element_data_mut().ensure_init_mut().styles.primary = Some(style);
             self.nodes[id].update_layout_styles();
-            nodes.push(BoxNode { id, pseudo, declarations, samples:Vec::new(), public_pseudo });
+            nodes.push(BoxNode { id, pseudo, declarations, samples:Vec::new(), public_pseudo, only_child });
         }
         let count = nodes.len();
         let group_frames = generated.into_iter().map(|(index, name, css)| (nodes[index].id, (name, css))).collect();
@@ -305,6 +317,20 @@ impl BaseDocument {
         taffy::round_layout(&mut state, root);
     }
 
+    /// pyro: the keyframes of `name` on a view-transition pseudo-element of the transition rooted at
+    /// `origin` (`pseudo` as script spells it: `::view-transition-group(x)`): the author's
+    /// `@keyframes` or, for a group's UA `-ua-view-transition-group-anim-*`, the old state's
+    /// declarations (the `to` keyframe is the group's own style, implicit).
+    pub fn transition_animation_frames(&self, origin: NodeId, pseudo: &str, name: &str) -> Option<Vec<(f64, Option<String>, Option<String>, Vec<(String, String, String)>)>> {
+        let tree = self.transition_trees.as_ref()?.get(&origin)?;
+        let item = tree.nodes.iter().find(|item| item.public_pseudo == pseudo)?;
+        let node = self.nodes.get(origin)?;
+        let style = self.nodes.get(item.id)?.primary_styles()?.clone();
+        let parent = self.nodes.get(self.nodes.get(item.id)?.parent?)?.primary_styles()?.clone();
+        let generated = tree.group_frames.get(&item.id).filter(|(expected, _)| &**expected == name).map(|(_, css)| css.as_str());
+        self.animation_frames_in(node, style, name, Some((&item.pseudo, &parent)), generated)
+    }
+
     pub(crate) fn transition_group_from(&self, group: NodeId, name: &style::Atom) -> Option<&str> {
         let trees = self.transition_trees.as_ref()?;
         let root = self.nodes.get(group)?.parent?;
@@ -319,8 +345,9 @@ impl BaseDocument {
         parent: NodeId,
         pseudo: PseudoElement,
         block: Option<&Arc<Locked<PropertyDeclarationBlock>>>,
+        only_child: bool,
     ) -> Option<Arc<ComputedValues>> {
-        let base = self.pseudo_element_style(origin, &pseudo, false)?;
+        let base = self.pseudo_element_style_in_tree(origin, &pseudo, false, only_child)?;
         let _thread = crate::stylo::LayoutThreadScope::enter();
         let parent = self.nodes.get(parent)?.primary_styles()?;
         let guard = self.guard.read();
@@ -367,7 +394,7 @@ impl BaseDocument {
             for item in &tree.nodes {
                 if let Some(parent) = self.nodes.get(item.id).and_then(|node| node.parent)
                     && let Some(style) =
-                        self.transition_cascade(*origin, parent, item.pseudo.clone(), item.declarations.as_ref())
+                        self.transition_cascade(*origin, parent, item.pseudo.clone(), item.declarations.as_ref(), item.only_child)
                 {
                     let Some(style) = self.sample_transition_style(*origin,parent,item.pseudo.clone(),style,&item.samples,tree.group_frames.get(&item.id),&mut budget) else { complete = false; break; };
                     self.nodes[item.id].stylo_element_data_mut().ensure_init_mut().styles.primary = Some(style);

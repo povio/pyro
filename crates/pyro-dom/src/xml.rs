@@ -19,6 +19,8 @@ pub const MAX_NODES: usize = 100_000;
 pub const MAX_DEPTH: usize = 256;
 const MAX_ATTRIBUTES: usize = 256;
 const XMLNS: &str = "http://www.w3.org/2000/xmlns/";
+/// The error of a resource with no root element or an unclosed one.
+const NO_ROOT: &str = "Missing or unclosed XML root";
 const PARSERERROR: &str = "http://www.mozilla.org/newlayout/xml/parsererror.xml";
 type Result<T> = std::result::Result<T, &'static str>;
 
@@ -165,6 +167,13 @@ fn prepare_with(source: &str, scripting: bool) -> Result<Vec<Prepared>> {
 }
 
 fn read_nodes(source: &str, scripting: bool, context: Option<NamespaceResolver>) -> Result<Vec<Prepared>> {
+    let mut nodes = Vec::new();
+    read_nodes_into(source, scripting, context, &mut nodes)?;
+    Ok(nodes)
+}
+
+/// `read_nodes` that leaves the nodes read so far in `nodes` when it fails.
+fn read_nodes_into(source: &str, scripting: bool, context: Option<NamespaceResolver>, nodes: &mut Vec<Prepared>) -> Result<()> {
     let fragment = context.is_some();
     if source.len() > MAX_INPUT_BYTES {
         return Err("XML input limit exceeded");
@@ -176,7 +185,6 @@ fn read_nodes(source: &str, scripting: bool, context: Option<NamespaceResolver>)
     reader.config_mut().check_comments = true;
     let mut namespaces = context.unwrap_or_default();
     namespaces.set_max_namespace_bindings(256);
-    let mut nodes = Vec::new();
     let mut stack = Vec::new();
     let mut roots = 0;
     let mut first = true;
@@ -246,7 +254,7 @@ fn read_nodes(source: &str, scripting: bool, context: Option<NamespaceResolver>)
                     }
                     element.push_attr(Attr { name, value: value.into() });
                 }
-                let index = push(&mut nodes, parent, NodeKind::Element(Box::new(element)))?;
+                let index = push(nodes, parent, NodeKind::Element(Box::new(element)))?;
                 if empty {
                     namespaces.pop();
                 } else {
@@ -261,7 +269,7 @@ fn read_nodes(source: &str, scripting: bool, context: Option<NamespaceResolver>)
                 if value.as_ref().contains("]]>") {
                     return Err("Invalid XML text delimiter");
                 }
-                text(&mut nodes, parent, &value.xml10_content(), fragment)?;
+                text(nodes, parent, &value.xml10_content(), fragment)?;
             }
             Event::GeneralRef(value) => {
                 if parent.is_none() && !fragment {
@@ -271,20 +279,20 @@ fn read_nodes(source: &str, scripting: bool, context: Option<NamespaceResolver>)
                     if !xml_char(c) {
                         return Err("Invalid XML character reference");
                     }
-                    text(&mut nodes, parent, c.encode_utf8(&mut [0; 4]), fragment)?;
+                    text(nodes, parent, c.encode_utf8(&mut [0; 4]), fragment)?;
                 } else {
                     let value = entity(value.as_ref(), html_entities).ok_or("Unknown XML entity")?;
-                    text(&mut nodes, parent, value, fragment)?;
+                    text(nodes, parent, value, fragment)?;
                 }
             }
             Event::CData(value) => {
                 if parent.is_none() && !fragment {
                     return Err("CDATA outside XML root");
                 }
-                push(&mut nodes, parent, NodeKind::CData(value.xml10_content().into_owned()))?;
+                push(nodes, parent, NodeKind::CData(value.xml10_content().into_owned()))?;
             }
             Event::Comment(value) => {
-                push(&mut nodes, parent, NodeKind::Comment(value.xml10_content().into_owned()))?;
+                push(nodes, parent, NodeKind::Comment(value.xml10_content().into_owned()))?;
             }
             Event::PI(value) => {
                 validate_name(value.target()).map_err(|_| "Invalid XML processing instruction")?;
@@ -292,7 +300,7 @@ fn read_nodes(source: &str, scripting: bool, context: Option<NamespaceResolver>)
                     return Err("Reserved XML processing instruction");
                 }
                 push(
-                    &mut nodes,
+                    nodes,
                     parent,
                     NodeKind::ProcessingInstruction(Box::new(PiData {
                         target: value.target().into(),
@@ -347,16 +355,16 @@ fn read_nodes(source: &str, scripting: bool, context: Option<NamespaceResolver>)
                 }
                 let doctype = doctype(&value.xml10_content())?;
                 html_entities = HTML_ENTITY_PUBLIC_IDS.contains(&&*doctype.public_id);
-                push(&mut nodes, None, NodeKind::Doctype(Box::new(doctype)))?;
+                push(nodes, None, NodeKind::Doctype(Box::new(doctype)))?;
             }
             Event::Eof => break,
         }
         first = false;
     }
     if (!fragment && roots != 1) || !stack.is_empty() {
-        return Err("Missing or unclosed XML root");
+        return Err(NO_ROOT);
     }
-    Ok(nodes)
+    Ok(())
 }
 
 /// `encoding="..."` of a leading XML declaration.
@@ -472,7 +480,13 @@ impl Load {
     /// once the rest is attached. The elements open at a script get a
     /// reference each, added to `pins` for the caller to release: the script
     /// may remove them, and the nodes that follow still go into them.
-    pub(crate) fn step(&mut self, dom: &mut Dom, pins: &mut Vec<NodeId>) -> Option<NodeId> {
+    ///
+    /// `cell` is borrowed here and released around a custom element's
+    /// constructor (HTML "create an element for the token" runs it
+    /// synchronously, in script).
+    pub(crate) fn step(&mut self, cell: &std::cell::RefCell<Dom>, pins: &std::cell::RefCell<Vec<NodeId>>) -> Option<NodeId> {
+        let mut guard = cell.borrow_mut();
+        let mut dom: &mut Dom = &mut guard;
         let document = self.document.index();
         loop {
             // End tags: of every open element the next node is not a child of.
@@ -486,11 +500,12 @@ impl Load {
                     continue;
                 }
                 self.go_live(dom);
+                let mut pins = pins.borrow_mut();
                 for held in self.open.iter_mut().filter(|held| !held.pinned) {
-                    held.pinned = pin(dom, held.node, pins);
+                    held.pinned = pin(dom, held.node, &mut pins);
                 }
                 if !open.pinned {
-                    pin(dom, open.node, pins);
+                    pin(dom, open.node, &mut pins);
                 }
                 return Some(dom.id_of(open.node));
             }
@@ -512,8 +527,60 @@ impl Load {
                 ),
                 _ => (false, false),
             };
-            let (id, target) = create(dom, node.kind, owner);
-            if self.live {
+            let mut kind = node.kind;
+            // An element of a defined name is constructed as the parser creates it (HTML "create an
+            // element for the token", synchronous custom elements flag): made without its attributes,
+            // which are appended after the constructor ran. Before the first script nothing is defined.
+            let mut custom = None;
+            // A `customelementregistry` attribute, or a parent that has no registry, leaves the element without one.
+            let null_registry = dom.has_explicit_null_registry(parent)
+                || matches!(&kind, NodeKind::Element(e) if e.attr("customelementregistry").is_some());
+            if self.live && owner == document && !null_registry {
+                if let NodeKind::Element(e) = &mut kind {
+                    if e.is_html() {
+                        let is = e.attrs.iter().find(|a| a.name.ns == markup5ever::ns!() && &*a.name.local == "is").map(|a| crate::LocalName::from(&*a.value));
+                        if let Some(hooks) = dom.parser_custom_elements(document, &e.name, is.as_ref()) {
+                            let attrs: Vec<(QualName, String)> = e.attrs.iter().map(|a| (a.name.clone(), a.value.to_string())).collect();
+                            e.set_attrs(Vec::new());
+                            e.is_value = is;
+                            custom = Some((hooks, attrs));
+                        }
+                    }
+                }
+            }
+            let (id, target) = create(dom, kind, owner);
+            if null_registry && dom.n(id).element().is_some() {
+                dom.set_registry_idx(id, crate::RegistryAssociation::Null);
+            }
+            if let Some((hooks, attrs)) = custom {
+                let el = dom.id_of(id);
+                // The constructor runs script: what is open (and the new element) must survive it.
+                {
+                    let mut held_pins = pins.borrow_mut();
+                    for held in self.open.iter_mut().filter(|held| !held.pinned) {
+                        held.pinned = pin(dom, held.node, &mut held_pins);
+                    }
+                    pin(dom, id, &mut held_pins);
+                }
+                drop(guard);
+                let constructed = matches!(hooks.construct(el, &attrs), crate::custom::ParserConstruct::Constructed);
+                guard = cell.borrow_mut();
+                dom = &mut guard;
+                if !constructed {
+                    dom.set_parsed_attributes(id, attrs);
+                }
+                // The constructor may have put the element somewhere: the parser's insertion moves it.
+                if dom.n(id).parent != NIL {
+                    dom.unlink_raw(id);
+                }
+                dom.note_inline_handlers(id);
+                dom.note_inline_style(id);
+                dom.append_parsed(id, parent);
+                drop(guard);
+                hooks.run_reactions();
+                guard = cell.borrow_mut();
+                dom = &mut guard;
+            } else if self.live {
                 dom.note_inline_handlers(id);
                 dom.note_inline_style(id);
                 dom.append_parsed(id, parent);
@@ -577,6 +644,14 @@ fn create(dom: &mut Dom, kind: NodeKind, owner: u32) -> (u32, u32) {
             // `<base>` elements make `document_base_url` look for one.
             dom.base_seen |= &*e.name.local == "base";
             &*e.name.local == "template"
+        }
+        // pyro: SMIL animations to look for (`Dom::smil_seen`, which the HTML parser and
+        // `create_element_raw` set): without it a standalone `.svg` document's timeline never ran.
+        NodeKind::Element(e) => {
+            if e.name.ns == markup5ever::ns!(svg) && matches!(&*e.name.local, "animate" | "animateTransform" | "set" | "animateMotion") {
+                dom.smil_seen = true;
+            }
+            false
         }
         _ => false,
     };
@@ -655,7 +730,14 @@ fn attach(dom: &mut Dom, root: NodeId, nodes: Vec<Prepared>, registry: crate::Re
         let (parent, child_owner) = node.parent.map_or((root, owner), |index| targets[index]);
         let (id, target) = create(dom, node.kind, child_owner);
         if dom.n(id).element().is_some() {
-            let registry = if parent == root { registry } else { dom.registry_idx(parent) };
+            // A `customelementregistry` attribute leaves the element without a registry.
+            let registry = if dom.n(id).element().is_some_and(|e| e.attr("customelementregistry").is_some()) {
+                crate::RegistryAssociation::Null
+            } else if parent == root {
+                registry
+            } else {
+                dom.registry_idx(parent)
+            };
             dom.set_registry_idx(id, registry);
         }
         dom.link_raw(id, parent, NIL);
@@ -675,14 +757,24 @@ fn parser_error(dom: &mut Dom, document: NodeId, message: &str) {
 /// or an explicit parser limit. Validation finishes before allocating DOM nodes,
 /// so failed parses retain no partial arena trees. Never performs I/O.
 pub fn parse_document(dom: &mut Dom, url: &str, source: &str, content_type: &str) -> NodeId {
-    let prepared = prepare(source);
+    let mut nodes = Vec::new();
+    let prepared = read_nodes_into(source, false, None, &mut nodes);
     let document = new_document(dom, url, content_type);
     match prepared {
-        Ok(nodes) => {
+        Ok(()) => {
             let registry = dom.registry_idx(document.index());
             attach(dom, document, nodes, registry);
         }
-        Err(message) => parser_error(dom, document, message),
+        Err(message) => {
+            // A resource with a prolog but no root element keeps its prolog (processing
+            // instructions, comments, doctype) ahead of the parsererror, as Chrome's parser
+            // had already inserted them; any other failure keeps no partial tree.
+            if message == NO_ROOT && nodes.iter().all(|n| n.parent.is_none() && !matches!(n.kind, NodeKind::Element(_))) {
+                let registry = dom.registry_idx(document.index());
+                attach(dom, document, nodes, registry);
+            }
+            parser_error(dom, document, message)
+        }
     }
     document
 }

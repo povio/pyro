@@ -44,7 +44,9 @@ impl pyro_dom::layout::SubresourceLoader for LayoutLoader {
             pyro_dom::layout::SubresourceKind::Style => crate::ResourceKind::Stylesheet,
         };
         let options = crate::SubresourceOptions {
-            crossorigin: options.crossorigin.clone(),
+            // CSS Fonts: a font is fetched in CORS mode ("anonymous"), so `Sec-Fetch-Mode: cors`
+            // and a cross-origin font needs `Access-Control-Allow-Origin`, as in Chrome.
+            crossorigin: options.crossorigin.clone().or_else(|| (kind == crate::ResourceKind::Font).then(|| "anonymous".to_owned())),
             integrity: options.integrity.clone(),
             referrer: options.referrer.clone(),
             referrer_policy: options.referrer_policy.as_deref().and_then(pyro_net::ReferrerPolicy::parse),
@@ -207,6 +209,21 @@ impl PageHooks for Hooks {
         out
     }
 
+    fn top_level_origin(&self) -> Option<String> {
+        let host = self.frames.upgrade()?;
+        let origin = host.frame(FrameKey { page: self.page.page, child: None })?.origin;
+        (origin != "null").then_some(origin)
+    }
+
+    fn refresh_frame_documents(&self, owners: &[pyro_dom::NodeId]) {
+        let Some(host) = self.frames.upgrade() else { return };
+        if !host.matches(self.page, &self.loader) {
+            return;
+        }
+        let top = host.page_dom(FrameKey { page: self.page.page, child: None });
+        crate::update_same_origin_frame_documents_of(&host, top.as_ref(), self.page, owners);
+    }
+
     fn frame_detached(&self) -> bool {
         // Only a child frame can leave its page.
         self.page.child.is_some()
@@ -226,6 +243,38 @@ impl PageHooks for Hooks {
 
     fn request_focus(&self, target: pyro_webapi::FocusTarget, token: &pyro_webapi::FocusTransition) -> bool {
         self.frames.upgrade().is_some_and(|host| host.request_focus(self.page, &self.loader, target, token))
+    }
+
+    fn wants_link_hover(&self) -> bool {
+        // Only a top-level document's rule sets start speculation, and only those with a pointer rule.
+        self.page.child.is_none() && self.frames.upgrade().is_some_and(|host| host.pointer_rules.get())
+    }
+
+    fn link_hover(&self, link: Option<pyro_dom::NodeId>) {
+        // Only a top-level document's rule sets start speculation (see `speculation_document_rules`).
+        if self.page.child.is_some() {
+            return;
+        }
+        let page = self.page;
+        let loader = self.loader.clone();
+        self.sched.post(TaskSource::UserInteraction, move |b| {
+            if b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
+                b.speculation_link_hover(page, link);
+            }
+        });
+    }
+
+    fn link_pointer_down(&self, link: pyro_dom::NodeId) {
+        if self.page.child.is_some() {
+            return;
+        }
+        let page = self.page;
+        let loader = self.loader.clone();
+        self.sched.post(TaskSource::UserInteraction, move |b| {
+            if b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
+                b.speculation_link_pointer_down(page, link);
+            }
+        });
     }
 
     fn post_task(&self, task: Box<dyn FnOnce()>) {
@@ -349,6 +398,29 @@ impl PageHooks for Hooks {
                 return;
             };
             b.emit(page.page, crate::PageEvent::CloseRequested { frame_id });
+        });
+    }
+
+    fn resize_window(&self, width: u32, height: u32) {
+        let page = self.page;
+        let loader = self.loader.clone();
+        self.sched.post(TaskSource::DomManipulation, move |b| {
+            // Only a popup's top-level context (the page checked its window features already).
+            if page.child.is_some() || !b.page(page.page).is_some_and(|p| p.script_closable) {
+                return;
+            }
+            if !b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
+                return;
+            }
+            let Some(mut viewport) = b.page(page.page).map(|p| p.viewport.clone()) else { return };
+            viewport.width = width;
+            viewport.height = height;
+            if let Some(p) = b.page_mut(page.page) {
+                p.native_viewport = viewport.clone();
+                p.frames.settings.borrow_mut().viewport = viewport.clone();
+            }
+            // (The window's `resize` event follows, as with a CDP metrics change.)
+            let _ = b.set_viewport(page.page, viewport);
         });
     }
 
@@ -532,6 +604,16 @@ impl PageHooks for Hooks {
         }
     }
 
+    fn request_rendering_frame(&self) {
+        if let Some(host) = self.frames.upgrade() {
+            if host.matches(self.page, &self.loader) {
+                if let Some(realm) = host.frame(self.page).and_then(|f| f.main_realm().cloned()) {
+                    crate::window::request_rendering_frame(&realm);
+                }
+            }
+        }
+    }
+
     fn iframe_connected(&self, node: pyro_dom::NodeId) {
         if let Some(host) = self.frames.upgrade() {
             if let Err(e) = host.connected(self.page, &self.loader, node) {
@@ -570,7 +652,8 @@ impl PageHooks for Hooks {
                 host.quiet_reinserts.borrow_mut().push((node, Rc::downgrade(first)));
             }
         }
-        let unload = unload_allowed(&host, key);
+        // `unload` fires at the frame's own document when its permissions policy allows it.
+        let unload = documents.first().is_some_and(|d| pyro_webapi::permissions_policy::feature_allowed(d, "unload"));
         for (i, document) in documents.iter().enumerate() {
             pyro_webapi::lifecycle::removed(document, i == 0 && unload);
         }
@@ -626,6 +709,33 @@ impl PageHooks for Hooks {
         match self.frames.upgrade() {
             Some(host) if host.matches(self.page, &self.loader) => host.opener_window(scope, self.page),
             _ => Ok(scope.null()),
+        }
+    }
+
+    fn coop_side(&self) -> Option<Rc<dyn std::any::Any>> {
+        let host = self.frames.upgrade()?;
+        if !host.matches(self.page, &self.loader) {
+            return None;
+        }
+        Some(Rc::new(crate::coop_report::CoopSide { host: Rc::downgrade(&host), key: self.page }))
+    }
+
+    fn coop_access(
+        &self,
+        scope: &pyro_js::Scope<'_>,
+        target: &Rc<pyro_webapi::PageDom>,
+        target_side: &dyn std::any::Any,
+        property: &str,
+    ) {
+        let Some(host) = self.frames.upgrade().filter(|h| h.matches(self.page, &self.loader)) else { return };
+        let Some(side) = target_side.downcast_ref::<crate::coop_report::CoopSide>() else { return };
+        crate::coop_report::access(&host, self.page, scope, target, side, property);
+    }
+
+    fn coop_forces_noopener(&self) -> bool {
+        match self.frames.upgrade() {
+            Some(host) if host.matches(self.page, &self.loader) => host.coop_forces_noopener(self.page),
+            _ => false,
         }
     }
 
@@ -702,6 +812,7 @@ impl Browser {
                 .clone(),
             services: self.context_services(state.context).ok_or(JsError::ContextDestroyed)?,
             max_touch_points: state.max_touch_points,
+            window_hidden: state.window_hidden,
             session: state.session_storage.clone(),
             net: self.context_net(state.context).cloned(),
             viewport: state.viewport.clone(),
@@ -732,7 +843,11 @@ impl Browser {
         host.connect_rendered_objects(|parent| self.apply_same_document_url(parent));
         self.fetch_rendered_objects(&host);
         self.resume_lazy_frames(&host);
+        host.refresh_media_visibility();
         self.fetch_rendered_images(page);
+        for key in host.keys() {
+            self.reselect_responsive_images(key);
+        }
         // Runs at every checkpoint: leave early when nothing is queued.
         let (iframe_events, resource_events) = {
             let dom = host.dom.borrow();
@@ -784,6 +899,7 @@ impl Browser {
         // The store is shared with the pages of this page's DOM-store group (its popups, its opener):
         // the queue holds their documents' events too, which go to their frames, not dropped.
         let peers = host.dom_group();
+        let mut deferred: Vec<pyro_dom::script::ResourceEvent> = Vec::new();
         for event in events {
             let document = host.dom.borrow().owner_document(event.node).ok().flatten();
             let find = |h: &crate::frames::FrameHost| {
@@ -800,6 +916,13 @@ impl Browser {
                 }
                 continue;
             };
+            // A popup's initial about:blank document exists before the embedder registers its page
+            // (`Browser::create_page_with`): an `<img>` the opener inserted into it meanwhile has no
+            // document state to load for yet. The event waits in the queue for the drain after that.
+            if event.kind == pyro_dom::script::ResourceKind::Img && self.doc(target).is_none() {
+                deferred.push(event);
+                continue;
+            }
             self.apply_same_document_url(target);
             let Some(bindings) = frame_host.page_dom(target) else {
                 if event.kind == pyro_dom::script::ResourceKind::Script {
@@ -837,8 +960,13 @@ impl Browser {
                 }
             } else if event.kind == pyro_dom::script::ResourceKind::Script {
                 // Script-inserted (or `src`-changed) scripts: "already
-                // started" makes repeats of one element no-ops.
-                self.script_event(target, event.node);
+                // started" makes repeats of one element no-ops. A removal concerns only a
+                // speculation rules script (the DOM queues no other): its rule set goes.
+                if event.reason == pyro_dom::script::ResourceReason::Removed {
+                    self.speculation_script_removed(target, event.node);
+                } else {
+                    self.script_event(target, event.node);
+                }
             } else if event.kind == pyro_dom::script::ResourceKind::SvgImage {
                 if image_nodes.insert(event.node) {
                     self.svg_image_event(target, event.node);
@@ -863,6 +991,9 @@ impl Browser {
                     }
                 }
             }
+        }
+        if !deferred.is_empty() {
+            host.dom.borrow_mut().requeue_resource_events(&deferred);
         }
     }
 }
@@ -926,6 +1057,17 @@ impl Hooks {
                 }
             }
         }
+        // HTML "navigate" sets the target navigable's ongoing navigation as it is asked for: a link
+        // or form aimed at another frame of the page (by name) supersedes what that frame was asked
+        // to do before its task runs (a `javascript:` URL set on it by the link's onclick, WPT
+        // navigating-across-documents/007), so that frame's document takes a new number now.
+        if let (Some(name), Some(host)) = (request.target.as_deref(), self.frames.upgrade()) {
+            if !request.url.get(..11).is_some_and(|scheme| scheme.eq_ignore_ascii_case("javascript:")) {
+                if let Some(dom) = host.named_frame(page, name).filter(|key| *key != page).and_then(|key| host.page_dom(key)) {
+                    dom.note_navigation_started();
+                }
+            }
+        }
         let user_gesture = self.frames.upgrade().and_then(|host| host.page_dom(page)).is_some_and(|dom| dom.window_open_user_gesture());
         // CSP: a `javascript:` URL is checked against the policies of the document that made
         // the request (the link's, the form's, `window.open`'s caller's), snapshotted now.
@@ -937,19 +1079,43 @@ impl Hooks {
             .flatten()
             .map(|dom| pyro_webapi::csp::NavigationInitiator::of(&dom));
         let frames = self.frames.clone();
+        // HTML "navigate" aborts the document the frame leaves: while this navigation's task is
+        // queued the frame's document does not fire `load` (a link's `click()` or a form's
+        // `submit()` during parsing: the container's `load` fires once, for the new document).
+        // `PageNav::leaving_document` counts it, as it does for `location` navigations. Only a
+        // navigation of the document's own frame to another document leaves it.
+        let leaves = request.target.as_deref().is_none_or(|t| t.is_empty() || t.eq_ignore_ascii_case("_self"))
+            && !request.url.get(..11).is_some_and(|scheme| scheme.eq_ignore_ascii_case("javascript:"));
+        let own_nav = if leaves { frames.upgrade().and_then(|host| host.nav(page)) } else { None };
         let task = NavigationTask { page, loader: loader.clone(), started, user_gesture, initiator };
         match proceed {
             None => {
                 let Some(stops) = before_navigation(&frames, page, &loader, user_gesture, &mut request) else { return };
-                self.sched.post(TaskSource::Navigation, move |b| run_navigation(b, task, stops, request, false));
-            }
-            Some(proceed) => self.sched.post(TaskSource::Navigation, move |b| {
-                if !b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) || !proceed() {
-                    return;
+                if let Some(nav) = &own_nav {
+                    nav.queue_leaving_navigation();
                 }
-                let Some(stops) = before_navigation(&frames, page, &loader, user_gesture, &mut request) else { return };
-                run_navigation(b, task, stops, request, true);
-            }),
+                self.sched.post(TaskSource::Navigation, move |b| {
+                    if let Some(nav) = &own_nav {
+                        nav.leaving_navigation_ran();
+                    }
+                    run_navigation(b, task, stops, request, false)
+                });
+            }
+            Some(proceed) => {
+                if let Some(nav) = &own_nav {
+                    nav.queue_leaving_navigation();
+                }
+                self.sched.post(TaskSource::Navigation, move |b| {
+                    if let Some(nav) = &own_nav {
+                        nav.leaving_navigation_ran();
+                    }
+                    if !b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) || !proceed() {
+                        return;
+                    }
+                    let Some(stops) = before_navigation(&frames, page, &loader, user_gesture, &mut request) else { return };
+                    run_navigation(b, task, stops, request, true);
+                })
+            }
         }
     }
 }
@@ -1002,6 +1168,11 @@ fn before_navigation(
         key.and_then(|key| host.nav(key))
     });
     let get = request.method == "GET" && request.body.is_none();
+    // URL Fragment Text Directives: the navigation the target document will commit (or the
+    // fragment navigation below) has the activation of this one's initiator.
+    if let Some(nav) = &nav {
+        nav.directive_gesture.set(Some(user_gesture));
+    }
     // What the `navigate` event says of where the navigation is from.
     let source = crate::nav::NavigateSource {
         element: request
@@ -1011,6 +1182,8 @@ fn before_navigation(
         form_entries: request.form_entries.take(),
         replace: request.replace,
         cross_origin: cross_origin_target,
+        user_initiated: request.user_initiated,
+        history_api: false,
     };
     if get && nav.as_ref().is_some_and(|nav| nav.navigate_to_fragment_from(&request.url, &source)) {
         return None;
@@ -1138,6 +1311,8 @@ fn run_navigation(b: &mut Browser, task: NavigationTask, stops: Option<u64>, mut
         if let Some(ticket) = request.popup.as_ref() {
             ticket.set_opener_child(page.child);
         }
+        // Cross-Origin-Opener-Policy: a window made opener-less because of it has no name either.
+        let coop_unnamed = b.page(page.page).is_some_and(|p| p.frames.coop_forces_noopener(page));
         if let Some((frame_id, false)) = frame {
             b.emit(
                 page.page,
@@ -1147,12 +1322,17 @@ fn run_navigation(b: &mut Browser, task: NavigationTask, stops: Option<u64>, mut
                     opener: request.opener,
                     ticket: request.popup,
                     window_features: request.window_features,
-                    window_name: request.target.unwrap_or_default(),
+                    window_name: if coop_unnamed { String::new() } else { request.target.unwrap_or_default() },
                     user_gesture,
                     referrer: b.doc(page).and_then(|p| p.main_frame.navigation_referrer()),
                     referrer_policy: request.referrer_policy.or_else(|| b.doc(page)?.main_frame.page_dom.as_ref().map(|d| d.referrer_policy())),
                 },
             );
+            // HTML "rules for choosing a navigable" (`_blank`): creating the new navigable
+            // consumes the opener's transient user activation.
+            if let Some(dom) = b.doc(page).and_then(|p| p.main_frame.page_dom.clone()) {
+                dom.consume_transient_activation();
+            }
             if let Some((realm, source)) = popup_script {
                 if let Ok(scope) = realm.scope() {
                     let _ = crate::frames::javascript_url_result(&scope, &source);
@@ -1253,45 +1433,50 @@ pub(crate) fn frame_origin(host: &crate::frames::FrameHost, key: FrameKey, url: 
     (origin != "null").then_some(origin)
 }
 
-/// Whether a child frame's new document at `url` may use fullscreen
-/// ([`pyro_webapi::fullscreen::allowed_in_frame`]): its parent document may, and its
-/// container's `allow` / `allowfullscreen` (or the default allowlist) admit its origin.
-fn fullscreen_allowed_in(host: &crate::frames::FrameHost, key: FrameKey, url: &str, opaque: bool) -> bool {
+/// The permissions policy a document at `url` starts with ([`pyro_webapi::permissions_policy`]): for
+/// a child frame, what it inherits through its container (its `allow` / `allowfullscreen` /
+/// `allowpaymentrequest` attributes as the navigation began, or the feature's default allowlist)
+/// from its parent document's policy; a top-level document inherits nothing. Its own
+/// `Permissions-Policy` header joins when the document commits.
+fn permissions_policy_in(
+    host: &crate::frames::FrameHost,
+    key: FrameKey,
+    url: &str,
+    opaque: bool,
+) -> pyro_webapi::permissions_policy::PermissionsPolicy {
+    use pyro_webapi::permissions_policy::{inherit, Container, PermissionsPolicy};
+    let child_origin = frame_origin(host, key, url, opaque);
     let parent = host.parent_key(key);
-    let Some(frame) = host.frame(key) else { return false };
-    let Some(pd) = host.frame(parent).and_then(|f| f.page_dom.clone()) else { return false };
+    if parent == key {
+        return PermissionsPolicy::top_level(child_origin);
+    }
+    let (Some(frame), Some(pd)) = (host.frame(key), host.frame(parent).and_then(|f| f.page_dom.clone())) else {
+        return PermissionsPolicy::top_level(child_origin);
+    };
     // The container policy as it was when this navigation began.
     let container = frame.fullscreen_container.clone();
     let parent_url = pd.dom.borrow().document_url_parsed(pd.document()).ok().flatten().map(|u| u.to_string()).unwrap_or_default();
     let parent_origin = frame_origin(host, parent, &parent_url, pd.has_opaque_origin());
-    let child_origin = frame_origin(host, key, url, opaque);
-    pyro_webapi::fullscreen::allowed_in_frame(
-        pd.fullscreen_allowed(),
-        container.allowfullscreen,
-        container.allow.as_deref(),
-        parent_origin.as_deref(),
-        container.declared_origin.as_deref(),
+    // The origin the document was loaded from, which an opaque (sandboxed) document's `'src'` match uses.
+    let child_precursor = if url.starts_with("about:") {
+        parent_origin.clone()
+    } else {
+        Some(crate::loader::origin_of(url)).filter(|o| o != "null")
+    };
+    inherit(
+        &pd,
+        &Container {
+            allowfullscreen: container.allowfullscreen,
+            allowpaymentrequest: container.allowpaymentrequest,
+            allow: container.allow.as_deref(),
+            parent_origin: parent_origin.as_deref(),
+            declared_origin: container.declared_origin.as_deref(),
+            sandboxed: container.sandboxed,
+            sandbox_src_origin: container.sandbox_src_origin.as_deref(),
+            child_precursor: child_precursor.as_deref(),
+        },
         child_origin.as_deref(),
     )
-}
-
-/// Whether a child frame's container lets its document fire `unload` (Chrome: only when the
-/// container's `allow` declares `unload` for the frame's origin; no declaration, no `unload`).
-fn unload_allowed(host: &crate::frames::FrameHost, key: FrameKey) -> bool {
-    let parent = host.parent_key(key);
-    let (Some(frame), Some(pd)) = (host.frame(key), host.frame(parent).and_then(|f| f.page_dom.clone())) else { return false };
-    let container = frame.fullscreen_container.clone();
-    let parent_url = pd.dom.borrow().document_url_parsed(pd.document()).ok().flatten().map(|u| u.to_string()).unwrap_or_default();
-    let parent_origin = frame_origin(host, parent, &parent_url, pd.has_opaque_origin());
-    let child_origin = frame_origin(host, key, &frame.url, frame.sandbox.opaque);
-    pyro_webapi::fullscreen::container_allows(
-        "unload",
-        container.allow.as_deref(),
-        parent_origin.as_deref(),
-        container.declared_origin.as_deref(),
-        child_origin.as_deref(),
-    )
-    .unwrap_or(false)
 }
 
 pub(crate) fn create(
@@ -1332,7 +1517,21 @@ pub(crate) fn create(
     }));
     let (is_popup, left, top) = settings.window_chrome;
     bindings.set_window_chrome(is_popup, left, top);
-    bindings.set_storage_namespaces(settings.local, settings.session);
+    // HTML "credentialless": a frame whose container has the attribute, and every frame below a
+    // credentialless one, is in the anonymous partition of its top-level document: its own cookies
+    // and storage areas, shared by the credentialless frames of that document alone.
+    let partition = (page.child.is_some()
+        && (frame.fullscreen_container.credentialless
+            || host.page_dom(host.parent_key(page)).is_some_and(|parent| parent.is_credentialless())))
+    .then(|| host.page_dom(FrameKey { page: page.page, child: None }))
+    .flatten()
+    .map(|root| root.credentialless_partition());
+    let (local, session) = match &partition {
+        Some(partition) => (partition.local(), partition.session()),
+        None => (settings.local, settings.session),
+    };
+    bindings.set_storage_namespaces(local, session);
+    bindings.set_anonymous(partition.as_ref().map(|partition| partition.anonymous()));
     let mut viewport = settings.viewport;
     // Only the main frame lays out as a phone; frames take their iframe's box.
     viewport.mobile &= page.child.is_none();
@@ -1370,6 +1569,10 @@ pub(crate) fn create(
         let same = own_site.is_some();
         (own_site, same)
     };
+    // Storage Access API: the grant of a same-origin navigation the frame started itself is kept.
+    if host.storage_access_carry.borrow_mut().remove(&loader.0).is_some_and(|origin| origin == crate::loader::origin_of(url)) {
+        bindings.set_storage_access_granted(true);
+    }
     bindings.set_cookie_context(top_level_site, if same_site { pyro_net::cookies::SiteContext::SameSite } else { pyro_net::cookies::SiteContext::CrossSite });
     // The origin's identity, which an opaque origin needs (`PageDom::origin_key`).
     bindings.set_opaque_origin_token(frame.opaque_origin);
@@ -1397,7 +1600,7 @@ pub(crate) fn create(
             let child_origin = frame_origin(host, page, url, frame.sandbox.opaque);
             let container = frame.fullscreen_container.clone();
             let enabled_for = |origin: Option<&str>| {
-                pyro_webapi::fullscreen::container_allows(
+                pyro_webapi::permissions_policy::container_allows(
                     "deferred-fetch",
                     container.allow.as_deref(),
                     parent_origin.as_deref(),
@@ -1409,11 +1612,16 @@ pub(crate) fn create(
         });
         pyro_webapi::fetch_later::join_quota(&bindings, parent.as_deref(), same_origin, delegated);
     }
-    // Permissions Policy for `fullscreen`, inherited through the container when the document is made.
-    if page.child.is_some() {
-        bindings.set_fullscreen_allowed(fullscreen_allowed_in(host, page, url, frame.sandbox.opaque));
+    // The document's permissions policy: inherited through its container when the document is made
+    // (every gate asks `pyro_webapi::permissions_policy::feature_allowed`); its header joins at commit.
+    bindings.set_permissions_policy(permissions_policy_in(host, page, url, frame.sandbox.opaque));
+    // A document whose policy disables `media-playback-while-not-visible` has the host check its
+    // frame's rendering (iframe media pausing).
+    if page.child.is_some() && !bindings.media_while_hidden_allowed() {
+        host.media_policy_frames.set(true);
     }
     bindings.set_max_touch_points(settings.max_touch_points);
+    bindings.set_window_hidden_state(settings.window_hidden);
     bindings
         .set_user_agent_override(settings.user_agent)
         .map_err(|e| JsError::type_error(format!("invalid request defaults: {e}")))?;
@@ -1424,6 +1632,7 @@ pub(crate) fn create(
     bindings.set_popups_sandboxed(frame.sandbox.popups_blocked);
     bindings.set_document_domain_sandboxed(frame.sandbox.document_domain_blocked);
     bindings.set_forms_sandboxed(frame.sandbox.forms_blocked);
+    bindings.set_storage_access_sandboxed(frame.sandbox.storage_access_blocked);
     bindings.set_request_context(pyro_webapi::RequestContext {
         frame_id: Some(frame.id.0),
         loader_id: Some(loader.0.clone()),

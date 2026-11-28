@@ -760,7 +760,11 @@ pub enum ElClass {
     Unknown,
     Generic,
     Svg,
-    SvgGraphics,
+    SvgG,
+    SvgDefs,
+    SvgSwitch,
+    SvgDesc,
+    SvgMetadata,
     SvgImage,
     SvgForeignObject,
     SvgUse,
@@ -779,6 +783,8 @@ pub enum ElClass {
     SvgFilter,
     SvgMarker,
     SvgStop,
+    SvgScript,
+    SvgStyle,
     SvgPath,
     SvgPolyline,
     SvgPolygon,
@@ -811,6 +817,10 @@ pub enum ElClass {
     SvgFeSpecularLighting,
     SvgFeTile,
     SvgFeTurbulence,
+    SvgAnimate,
+    SvgSet,
+    SvgAnimateMotion,
+    SvgAnimateTransform,
     MathMl,
     Other,
 }
@@ -825,6 +835,8 @@ pub fn class_for(dom: &Dom, id: NodeId) -> ElClass {
             "a" => ElClass::SvgA,
             // SVGGraphicsElement interfaces (SVG 2).
             "stop" => ElClass::SvgStop,
+            "script" => ElClass::SvgScript,
+            "style" => ElClass::SvgStyle,
             "path" => ElClass::SvgPath,
             "polyline" => ElClass::SvgPolyline,
             "polygon" => ElClass::SvgPolygon,
@@ -832,7 +844,11 @@ pub fn class_for(dom: &Dom, id: NodeId) -> ElClass {
             "circle" => ElClass::SvgCircle,
             "ellipse" => ElClass::SvgEllipse,
             "line" => ElClass::SvgLine,
-            "g" | "switch" | "defs" => ElClass::SvgGraphics,
+            "g" => ElClass::SvgG,
+            "defs" => ElClass::SvgDefs,
+            "switch" => ElClass::SvgSwitch,
+            "desc" => ElClass::SvgDesc,
+            "metadata" => ElClass::SvgMetadata,
             "image" => ElClass::SvgImage,
             "foreignObject" => ElClass::SvgForeignObject,
             "use" => ElClass::SvgUse,
@@ -871,6 +887,10 @@ pub fn class_for(dom: &Dom, id: NodeId) -> ElClass {
             "feSpecularLighting" => ElClass::SvgFeSpecularLighting,
             "feTile" => ElClass::SvgFeTile,
             "feTurbulence" => ElClass::SvgFeTurbulence,
+            "animate" => ElClass::SvgAnimate,
+            "set" => ElClass::SvgSet,
+            "animateMotion" => ElClass::SvgAnimateMotion,
+            "animateTransform" => ElClass::SvgAnimateTransform,
             _ => ElClass::Svg,
         };
     }
@@ -1058,7 +1078,11 @@ pub fn wrap_element<'s>(s: &Scope<'s>, class: ElClass, d: NodeData, k: Option<Id
         Unknown => s.wrap::<HtmlUnknownElement>(d, k),
         Generic => s.wrap::<HtmlElement>(d, k),
         Svg => s.wrap::<SvgElement>(d, k),
-        SvgGraphics => s.wrap::<SvgGraphicsElement>(d, k),
+        SvgG => s.wrap::<SvgGElement>(d, k),
+        SvgDefs => s.wrap::<SvgDefsElement>(d, k),
+        SvgSwitch => s.wrap::<SvgSwitchElement>(d, k),
+        SvgDesc => s.wrap::<SvgDescElement>(d, k),
+        SvgMetadata => s.wrap::<SvgMetadataElement>(d, k),
         SvgImage => s.wrap::<SvgImageElement>(d, k),
         SvgForeignObject => s.wrap::<SvgForeignObjectElement>(d, k),
         SvgUse => s.wrap::<SvgUseElement>(d, k),
@@ -1077,6 +1101,8 @@ pub fn wrap_element<'s>(s: &Scope<'s>, class: ElClass, d: NodeData, k: Option<Id
         SvgFilter => s.wrap::<SvgFilterElement>(d, k),
         SvgMarker => s.wrap::<SvgMarkerElement>(d, k),
         SvgStop => s.wrap::<SvgStopElement>(d, k),
+        SvgScript => s.wrap::<SvgScriptElement>(d, k),
+        SvgStyle => s.wrap::<SvgStyleElement>(d, k),
         SvgPath => s.wrap::<SvgPathElement>(d, k),
         SvgPolyline => s.wrap::<SvgPolylineElement>(d, k),
         SvgPolygon => s.wrap::<SvgPolygonElement>(d, k),
@@ -1109,6 +1135,10 @@ pub fn wrap_element<'s>(s: &Scope<'s>, class: ElClass, d: NodeData, k: Option<Id
         SvgFeSpecularLighting => s.wrap::<SvgFeSpecularLightingElement>(d, k),
         SvgFeTile => s.wrap::<SvgFeTileElement>(d, k),
         SvgFeTurbulence => s.wrap::<SvgFeTurbulenceElement>(d, k),
+        SvgAnimate => s.wrap::<crate::svg_animation_element::SvgAnimateElement>(d, k),
+        SvgSet => s.wrap::<crate::svg_animation_element::SvgSetElement>(d, k),
+        SvgAnimateMotion => s.wrap::<crate::svg_animation_element::SvgAnimateMotionElement>(d, k),
+        SvgAnimateTransform => s.wrap::<crate::svg_animation_element::SvgAnimateTransformElement>(d, k),
         MathMl => s.wrap::<MathMlElement>(d, k),
         Other => s.wrap::<Element>(d, k),
     }
@@ -1195,7 +1225,11 @@ pub fn interface_name(class: ElClass) -> &'static str {
         Unknown => HtmlUnknownElement::NAME,
         Generic => HtmlElement::NAME,
         Svg => SvgElement::NAME,
-        SvgGraphics => SvgGraphicsElement::NAME,
+        SvgG => SvgGElement::NAME,
+        SvgDefs => SvgDefsElement::NAME,
+        SvgSwitch => SvgSwitchElement::NAME,
+        SvgDesc => SvgDescElement::NAME,
+        SvgMetadata => SvgMetadataElement::NAME,
         SvgImage => SvgImageElement::NAME,
         SvgForeignObject => SvgForeignObjectElement::NAME,
         SvgUse => SvgUseElement::NAME,
@@ -1214,6 +1248,8 @@ pub fn interface_name(class: ElClass) -> &'static str {
         SvgFilter => SvgFilterElement::NAME,
         SvgMarker => SvgMarkerElement::NAME,
         SvgStop => SvgStopElement::NAME,
+        SvgScript => SvgScriptElement::NAME,
+        SvgStyle => SvgStyleElement::NAME,
         SvgPath => SvgPathElement::NAME,
         SvgPolyline => SvgPolylineElement::NAME,
         SvgPolygon => SvgPolygonElement::NAME,
@@ -1246,6 +1282,10 @@ pub fn interface_name(class: ElClass) -> &'static str {
         SvgFeSpecularLighting => SvgFeSpecularLightingElement::NAME,
         SvgFeTile => SvgFeTileElement::NAME,
         SvgFeTurbulence => SvgFeTurbulenceElement::NAME,
+        SvgAnimate => crate::svg_animation_element::SvgAnimateElement::NAME,
+        SvgSet => crate::svg_animation_element::SvgSetElement::NAME,
+        SvgAnimateMotion => crate::svg_animation_element::SvgAnimateMotionElement::NAME,
+        SvgAnimateTransform => crate::svg_animation_element::SvgAnimateTransformElement::NAME,
         MathMl => MathMlElement::NAME,
         Other => Element::NAME,
     }
@@ -1349,7 +1389,11 @@ pub(crate) fn wrap_new_html_element<'s>(
         Unknown => crate::node::wrap_new_node::<HtmlUnknownElement>(s, page, el, new_target),
         Generic => crate::node::wrap_new_node::<HtmlElement>(s, page, el, new_target),
         Svg => crate::node::wrap_new_node::<SvgElement>(s, page, el, new_target),
-        SvgGraphics => crate::node::wrap_new_node::<SvgGraphicsElement>(s, page, el, new_target),
+        SvgG => crate::node::wrap_new_node::<SvgGElement>(s, page, el, new_target),
+        SvgDefs => crate::node::wrap_new_node::<SvgDefsElement>(s, page, el, new_target),
+        SvgSwitch => crate::node::wrap_new_node::<SvgSwitchElement>(s, page, el, new_target),
+        SvgDesc => crate::node::wrap_new_node::<SvgDescElement>(s, page, el, new_target),
+        SvgMetadata => crate::node::wrap_new_node::<SvgMetadataElement>(s, page, el, new_target),
         SvgImage => crate::node::wrap_new_node::<SvgImageElement>(s, page, el, new_target),
         SvgForeignObject => crate::node::wrap_new_node::<SvgForeignObjectElement>(s, page, el, new_target),
         SvgUse => crate::node::wrap_new_node::<SvgUseElement>(s, page, el, new_target),
@@ -1368,6 +1412,8 @@ pub(crate) fn wrap_new_html_element<'s>(
         SvgFilter => crate::node::wrap_new_node::<SvgFilterElement>(s, page, el, new_target),
         SvgMarker => crate::node::wrap_new_node::<SvgMarkerElement>(s, page, el, new_target),
         SvgStop => crate::node::wrap_new_node::<SvgStopElement>(s, page, el, new_target),
+        SvgScript => crate::node::wrap_new_node::<SvgScriptElement>(s, page, el, new_target),
+        SvgStyle => crate::node::wrap_new_node::<SvgStyleElement>(s, page, el, new_target),
         SvgPath => crate::node::wrap_new_node::<SvgPathElement>(s, page, el, new_target),
         SvgPolyline => crate::node::wrap_new_node::<SvgPolylineElement>(s, page, el, new_target),
         SvgPolygon => crate::node::wrap_new_node::<SvgPolygonElement>(s, page, el, new_target),
@@ -1400,6 +1446,10 @@ pub(crate) fn wrap_new_html_element<'s>(
         SvgFeSpecularLighting => crate::node::wrap_new_node::<SvgFeSpecularLightingElement>(s, page, el, new_target),
         SvgFeTile => crate::node::wrap_new_node::<SvgFeTileElement>(s, page, el, new_target),
         SvgFeTurbulence => crate::node::wrap_new_node::<SvgFeTurbulenceElement>(s, page, el, new_target),
+        SvgAnimate => crate::node::wrap_new_node::<crate::svg_animation_element::SvgAnimateElement>(s, page, el, new_target),
+        SvgSet => crate::node::wrap_new_node::<crate::svg_animation_element::SvgSetElement>(s, page, el, new_target),
+        SvgAnimateMotion => crate::node::wrap_new_node::<crate::svg_animation_element::SvgAnimateMotionElement>(s, page, el, new_target),
+        SvgAnimateTransform => crate::node::wrap_new_node::<crate::svg_animation_element::SvgAnimateTransformElement>(s, page, el, new_target),
         MathMl => crate::node::wrap_new_node::<MathMlElement>(s, page, el, new_target),
         Other => crate::node::wrap_new_node::<Element>(s, page, el, new_target),
     }
@@ -1428,6 +1478,7 @@ pub(crate) fn define_element_extras(def: &mut ClassDef<Element>) {
         |s, n| crate::layout_api::scroll_get(s, n, false),
         |s, n, v| crate::layout_api::scroll_set(s, n, v, false),
     );
+    def.getter("currentCSSZoom", |s, n| crate::layout_api::current_css_zoom(s, n));
     def.getter("scrollWidth", |s, n| crate::layout_api::metric(s, n, "scrollWidth"));
     def.getter("scrollHeight", |s, n| crate::layout_api::metric(s, n, "scrollHeight"));
     def.getter("clientWidth", |s, n| crate::layout_api::metric(s, n, "clientWidth"));
@@ -1689,32 +1740,7 @@ impl JsClass for HtmlElement {
         reflect_str!(def, "accessKey", "accesskey");
         reflect_enum!(def, "inputMode", "inputmode", INPUT_MODE);
         reflect_enum!(def, "enterKeyHint", "enterkeyhint", ENTER_KEY_HINT);
-        // The nonce IDL attribute reads the [[CryptographicNonce]] slot; setting
-        // it never touches the content attribute.
-        def.accessor(
-            "nonce",
-            |s, n| {
-                let dom = n.page().dom.borrow();
-                let attr = dom.get_attribute(n.id, "nonce").js()?;
-                if let Some(nonce) = n.page().nonce(n.id, attr) {
-                    return Ok(s.string(&nonce));
-                }
-                // Connecting to a document with a header-delivered CSP emptied
-                // the attribute: the slot still holds the nonce it had.
-                if attr == Some("") {
-                    if let Some(hidden) = dom.hidden_nonce(n.id) {
-                        return Ok(s.string(&n.page().nonce(n.id, Some(hidden)).unwrap_or_else(|| hidden.to_owned())));
-                    }
-                }
-                Ok(s.string(attr.unwrap_or("")))
-            },
-            |_s, n, v| {
-                let value = dom_string(v)?;
-                let dom = n.page().dom.borrow();
-                n.page().set_nonce(n.id, dom.get_attribute(n.id, "nonce").js()?, value);
-                Ok(())
-            },
-        );
+        define_nonce(def);
         // `hidden` is (boolean or unrestricted double or DOMString)?: the
         // "until-found" state reads back as that string.
         def.accessor(
@@ -2074,9 +2100,25 @@ simple_class!(HtmlScriptElement, "HTMLScriptElement", HtmlElement, |def| {
             dom.set_text_content(n.id, &arg0).js()
         },
     );
+    // Trusted Types override these two (TrustedScript sinks that trust the script with the text);
+    // `HTMLElement.innerText` and `Node.textContent` called on a script set it untrusted.
+    def.accessor("innerText", crate::layout_api::inner_text, crate::layout_api::set_script_inner_text);
+    def.accessor(
+        "textContent",
+        |s, n| {
+            let dom = n.page().dom.borrow();
+            Ok(dom.text_content_ref(n.id).js()?.map_or(s.null(), |t| s.string(&t)))
+        },
+        |s, n, v| {
+            let text = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Script, v, "HTMLScriptElement textContent", true)?;
+            let mut dom = n.page().dom.borrow_mut();
+            dom.set_script_text(n.id, &text);
+            dom.set_text_content(n.id, &text).js()
+        },
+    );
     def.static_method("supports", 1, |s, a| {
         let t = dom_string(a.get(0))?;
-        Ok(s.boolean(matches!(t.as_str(), "classic" | "module" | "importmap")))
+        Ok(s.boolean(matches!(t.as_str(), "classic" | "module" | "importmap") || (SPECULATION_RULES_SUPPORTED && t == "speculationrules")))
     });
 });
 simple_class!(HtmlDivElement, "HTMLDivElement", HtmlElement, |def| {
@@ -2089,6 +2131,14 @@ simple_class!(HtmlParagraphElement, "HTMLParagraphElement", HtmlElement, |def| {
 simple_class!(HtmlHeadingElement, "HTMLHeadingElement", HtmlElement, |def| {
     reflect_str!(def, "align", "align");
 });
+
+/// Whether `HTMLScriptElement.supports("speculationrules")` is true: the single support switch of
+/// speculation rules (see `pyro-browser/src/speculation_rules.rs`). `prefetch` rules are implemented
+/// (`pyro-browser/src/prefetch.rs`), prerender is not, and `supports()` cannot say "prefetch only":
+/// pages take a true answer to mean prerender works and wait for a prerendered page that never
+/// comes. So the answer is false and the whole feature is inert (no rule set is processed, nothing
+/// is prefetched) until prerender exists; flipping this constant turns prefetch back on.
+pub const SPECULATION_RULES_SUPPORTED: bool = false;
 
 /// URL decomposition shared by `<a>` and `<area>` (HTMLHyperlinkElementUtils).
 pub(crate) fn hyperlink_url(dom: &Dom, n: &NodeData, svg: bool) -> JsResult<Option<pyro_net::Url>> {
@@ -2253,6 +2303,14 @@ simple_class!(HtmlImageElement, "HTMLImageElement", HtmlElement, |def| {
                 return Ok(s.string(frozen));
             }
         }
+        // With no update pending this is the current request's URL: what a mutation made before
+        // the next read has to keep showing until its microtask (an image read for the first
+        // time after the mutation was frozen at the empty string, where Chrome shows the old one).
+        let mut state = n.page().current_src.borrow_mut();
+        if !state.frozen.contains_key(&n.id) {
+            state.last.insert(n.id, live.clone());
+        }
+        drop(state);
         Ok(s.string(&live))
     });
     def.method("decode", 0, |s, n, _a| crate::image_decode::decode(s, n.page(), n.id));
@@ -3097,6 +3155,9 @@ simple_class!(HtmlFormElement, "HTMLFormElement", HtmlElement, |def| {
         let c = collections::collection(s, n.page(), n.id, CollectionKind::FormElements)?;
         c.get_atom("length")
     });
+    // A legacy platform object: deleting or writing a supported index or visible name is refused
+    // (a TypeError in strict mode code: WPT the-form-element/form-indexed-element).
+    def.legacy_platform_object();
     def.indexed(|s, n, i| {
         let c = collections::collection(s, n.page(), n.id, CollectionKind::FormElements)?;
         let v = c.get_index(i)?;
@@ -3530,7 +3591,16 @@ simple_class!(HtmlTableColElement, "HTMLTableColElement", HtmlElement, |def| {
 
 simple_class!(HtmlIFrameElement, "HTMLIFrameElement", HtmlElement, |def| {
     reflect_url!(def, "src", "src");
-    reflect_str!(def, "srcdoc", "srcdoc");
+    // `srcdoc` is a Trusted Types sink ("HTMLIFrameElement srcdoc", TrustedHTML) under the element's node document's policies.
+    def.accessor(
+        "srcdoc",
+        |s, n| Ok(s.string(n.page().dom.borrow().get_attribute(n.id, "srcdoc").js()?.unwrap_or(""))),
+        |s, n, v| {
+            let doc = n.page().dom.borrow().node_document(n.id).unwrap_or_else(|_| n.page().document());
+            let arg0 = crate::trusted_types::compliant_string_in(s, n.page(), doc, crate::trusted_types::Kind::Html, v, "HTMLIFrameElement srcdoc", false)?;
+            n.page().dom.borrow_mut().set_attribute(n.id, "srcdoc", &arg0).js()
+        },
+    );
     reflect_str!(def, "name", "name");
     reflect_str!(def, "allow", "allow");
     // CSP Embedded Enforcement: the policy the frame's documents must accept.
@@ -3540,6 +3610,8 @@ simple_class!(HtmlIFrameElement, "HTMLIFrameElement", HtmlElement, |def| {
     reflect_enum!(def, "loading", "loading", LOADING);
     reflect_enum!(def, "referrerPolicy", "referrerpolicy", REFERRER_POLICY);
     reflect_bool!(def, "allowFullscreen", "allowfullscreen");
+    // HTML "anonymous iframe": a credentialless frame (`crate::credentialless`).
+    reflect_bool!(def, "credentialless", "credentialless");
     reflect_tokens!(def, "sandbox", "sandbox");
     reflect_str!(def, "align", "align");
     reflect_str!(def, "scrolling", "scrolling");
@@ -3678,13 +3750,13 @@ simple_class!(HtmlCanvasElement, "HTMLCanvasElement", HtmlElement, |def| {
     });
     def.method("updateElementGeometry", 2, |s, n, a| {
         a.require(1, "HTMLCanvasElement.updateElementGeometry")?;
-        let element = crate::html_in_canvas::element_of(s, n.page(), a.get(0))?;
+        let element = crate::html_in_canvas::geometry_target(s, n.page(), n.id, a.get(0))?;
         crate::html_in_canvas::update_geometry(s, n.page(), n.id, element, a.get(1))?;
         Ok(s.undefined())
     });
     def.method("clearElementGeometry", 1, |s, n, a| {
         a.require(1, "HTMLCanvasElement.clearElementGeometry")?;
-        let element = crate::html_in_canvas::element_of(s, n.page(), a.get(0))?;
+        let element = crate::html_in_canvas::geometry_target(s, n.page(), n.id, a.get(0))?;
         crate::html_in_canvas::clear_geometry(n.page(), n.id, element)?;
         Ok(s.undefined())
     });
@@ -3699,7 +3771,9 @@ simple_class!(HtmlCanvasElement, "HTMLCanvasElement", HtmlElement, |def| {
         "width",
         |s, n| Ok(s.number(int_attr(n, "width", 0, 300)?)),
         |s, n, v| {
-            set_ulong(n, "width", to_u32(v)?, 300)?;
+            let value = to_u32(v)?;
+            crate::canvas::ensure_not_placeholder(n.page(), n.id, "width")?;
+            set_ulong(n, "width", value, 300)?;
             crate::canvas::canvas_resized(s, n.page(), n.id)
         },
     );
@@ -3707,7 +3781,9 @@ simple_class!(HtmlCanvasElement, "HTMLCanvasElement", HtmlElement, |def| {
         "height",
         |s, n| Ok(s.number(int_attr(n, "height", 0, 150)?)),
         |s, n, v| {
-            set_ulong(n, "height", to_u32(v)?, 150)?;
+            let value = to_u32(v)?;
+            crate::canvas::ensure_not_placeholder(n.page(), n.id, "height")?;
+            set_ulong(n, "height", value, 150)?;
             crate::canvas::canvas_resized(s, n.page(), n.id)
         },
     );
@@ -3716,6 +3792,11 @@ simple_class!(HtmlCanvasElement, "HTMLCanvasElement", HtmlElement, |def| {
     def.method("getContext", 1, |s, n, a| {
         let kind = arg_string(&a, 0, "HTMLCanvasElement.getContext")?;
         crate::canvas::get_context(s, n.page(), n.id, &kind, a.get(1))
+    });
+    // Media Capture from DOM Elements: a MediaStream with one video track following the canvas.
+    def.method("captureStream", 0, |s, n, a| {
+        let wrapper = node_value(s, n.page(), Some(n.id))?;
+        crate::media_stream::stream_helper(s, n.page(), "captureCanvas", &[wrapper, a.get(0)])
     });
     def.method("toDataURL", 0, |s, n, a| crate::canvas::to_data_url(s, n.page(), n.id, a));
     def.method("toBlob", 1, |s, n, a| crate::canvas::to_blob(s, n.page(), n.id, a));
@@ -4150,6 +4231,37 @@ simple_class!(HtmlMicrophoneElement, "HTMLMicrophoneElement", HtmlElement, |def|
     own_handlers!(def, ["track", "error", "cancel"]);
 });
 
+/// The `nonce` IDL attribute of the HTMLOrSVGElement mixin (HTMLElement, SVGElement and
+/// MathMLElement).
+fn define_nonce<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
+    // The nonce IDL attribute reads the [[CryptographicNonce]] slot; setting
+    // it never touches the content attribute.
+    def.accessor(
+        "nonce",
+        |s, n| {
+            let dom = n.page().dom.borrow();
+            let attr = dom.get_attribute(n.id, "nonce").js()?;
+            if let Some(nonce) = n.page().nonce(n.id, attr) {
+                return Ok(s.string(&nonce));
+            }
+            // Connecting to a document with a header-delivered CSP emptied
+            // the attribute: the slot still holds the nonce it had.
+            if attr == Some("") {
+                if let Some(hidden) = dom.hidden_nonce(n.id) {
+                    return Ok(s.string(&n.page().nonce(n.id, Some(hidden)).unwrap_or_else(|| hidden.to_owned())));
+                }
+            }
+            Ok(s.string(attr.unwrap_or("")))
+        },
+        |_s, n, v| {
+            let value = dom_string(v)?;
+            let dom = n.page().dom.borrow();
+            n.page().set_nonce(n.id, dom.get_attribute(n.id, "nonce").js()?, value);
+            Ok(())
+        },
+    );
+}
+
 /// HTMLOrSVGOrMathMLElement reflects both focus attributes in no namespace,
 /// and the scoped focusgroup ones: `[SameObject, PutForwards=value]
 /// readonly attribute DOMTokenList focusGroup` (`focusgroup`) and the
@@ -4201,6 +4313,7 @@ impl JsClass for SvgElement {
             Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &SVG_CLASS)?.value())
         });
         crate::handlers::define_global(def);
+        define_nonce(def);
         def.getter("dataset", |s, n| Ok(collections::dataset(s, n.page(), n.id)?.value()));
         // [PutForwards=cssText]
         def.put_forwards("style", |s, n| Ok(crate::css::inline_style(s, n.page(), n.id)?.value()), "cssText");
@@ -4210,16 +4323,13 @@ impl JsClass for SvgElement {
             crate::typed_om::attribute_style_map(s, n.page(), el)
         });
         def.getter("ownerSVGElement", |s, n| {
-            let dom = n.page().dom.borrow();
-            let mut p = dom.parent_element(n.id).js()?;
-            while let Some(x) = p {
-                if dom.element(x).is_ok_and(|e| &*e.name.local == "svg") {
-                    drop(dom);
-                    return node_value(s, n.page(), Some(x));
-                }
-                p = dom.parent_element(x).js()?;
-            }
-            Ok(s.null())
+            let owner = svg_owner(&n.page().dom.borrow(), n.id);
+            node_value(s, n.page(), owner)
+        });
+        // The nearest viewport element: an `<svg>` ancestor (as Chrome; `ownerSVGElement`'s answer).
+        def.getter("viewportElement", |s, n| {
+            let owner = svg_owner(&n.page().dom.borrow(), n.id);
+            node_value(s, n.page(), owner)
         });
         def.method("focus", 0, focus_element);
         def.method("blur", 0, |s, n, _a| {
@@ -4238,6 +4348,7 @@ impl JsClass for MathMlElement {
     type Parent = Element;
     fn define(def: &mut ClassDef<Self>) {
         crate::handlers::define_global(def);
+        define_nonce(def);
         def.getter("dataset", |s, n| Ok(collections::dataset(s, n.page(), n.id)?.value()));
         // [PutForwards=cssText]
         def.put_forwards("style", |s, n| Ok(crate::css::inline_style(s, n.page(), n.id)?.value()), "cssText");
@@ -4254,6 +4365,25 @@ impl JsClass for MathMlElement {
         });
     }
 }
+/// The nearest `<svg>` ancestor of an SVG element (SVG 2 `ownerSVGElement`): none for the outermost
+/// one, and not through a `foreignObject` or a non-SVG ancestor (an `<svg>` in HTML content is outermost).
+fn svg_owner(dom: &Dom, el: NodeId) -> Option<NodeId> {
+    let mut p = dom.parent_element(el).ok().flatten();
+    while let Some(x) = p {
+        let e = dom.element(x).ok()?;
+        if e.namespace() != &markup5ever::ns!(svg) {
+            return None;
+        }
+        match &*e.name.local {
+            "svg" => return Some(x),
+            "foreignObject" => return None,
+            _ => {}
+        }
+        p = dom.parent_element(x).ok().flatten();
+    }
+    None
+}
+
 simple_class!(SvgGraphicsElement, "SVGGraphicsElement", SvgElement, |def| {
     use pyro_dom::svg_string_list::StringListAttribute;
     def.getter("requiredExtensions", |s, n| collections::svg_string_list(s, n, StringListAttribute::RequiredExtensions));
@@ -4264,19 +4394,126 @@ simple_class!(SvgGraphicsElement, "SVGGraphicsElement", SvgElement, |def| {
     // of shapes, paths, text and containers (pyro_dom::svg_geometry).
     def.method("getBBox", 0, |s, n, _a| {
         let page = n.page();
+        // (What SMIL animation changes, sampled before the layout is borrowed.)
+        let animated = collections::SmilGeometry::new(page);
         let dom = page.dom.borrow();
         let layout = page.layout();
-        crate::canvas::rect_value(s, page, false, pyro_dom::svg_geometry::bbox(&dom, layout.style(), n.id))
+        // A `text` or `tspan` is the union of its characters' glyph cells from the text layout
+        // (`svg_text`: the shaped advances, `x`/`dx`/`text-anchor`/`textLength`), the same
+        // numbers `getExtentOfChar` reports.
+        if dom.element(n.id).is_ok_and(|e| e.name.ns == markup5ever::ns!(svg) && matches!(&*e.name.local, "text" | "tspan")) {
+            let text = crate::svg_text::layout_of(page, &dom, &layout, n.id);
+            let (from, to) = text.range(n.id);
+            if let Some(rect) = text.bbox(from, to) {
+                return crate::canvas::svg_rect_value(s, page, rect);
+            }
+        }
+        crate::canvas::svg_rect_value(s, page, pyro_dom::svg_geometry::bbox_animated(&dom, layout.style(), n.id, &animated))
+    });
+    // The matrices to the outermost viewport and to the screen (client) space.
+    def.method("getCTM", 0, |s, n, _a| {
+        let matrix = {
+            let page = n.page();
+            let animated = collections::SmilGeometry::new(page);
+            let dom = page.dom.borrow();
+            let layout = page.layout();
+            pyro_dom::svg_geometry::ctm_animated(&dom, &layout, n.id, &animated)
+        };
+        collections::detached_matrix(s, matrix)
+    });
+    def.method("getScreenCTM", 0, |s, n, _a| {
+        let matrix = {
+            let page = n.page();
+            let animated = collections::SmilGeometry::new(page);
+            let dom = page.dom.borrow();
+            let layout = page.layout();
+            pyro_dom::svg_geometry::screen_ctm_animated(&dom, &layout, n.id, &animated)
+        };
+        collections::detached_matrix(s, matrix)
     });
 });
+simple_class!(SvgGElement, "SVGGElement", SvgGraphicsElement);
+simple_class!(SvgDefsElement, "SVGDefsElement", SvgGraphicsElement);
+simple_class!(SvgSwitchElement, "SVGSwitchElement", SvgGraphicsElement);
+// SVG 2: `<desc>` and `<metadata>` have their own interfaces, plain SVGElements (not graphics).
+simple_class!(SvgDescElement, "SVGDescElement", SvgElement);
+// `SVGScriptElement`: `href` (an SVGAnimatedString whose `baseVal` setter is a Trusted Types sink, see `SvgAnimatedString`).
+simple_class!(SvgScriptElement, "SVGScriptElement", SvgElement, svg_href);
+// SVG 2 `<style>`: `type`, `media` and `title` as reflected strings (a missing one is ""), and its sheet
+// (LinkStyle), as HTMLStyleElement's.
+simple_class!(SvgStyleElement, "SVGStyleElement", SvgElement, |def| {
+    reflect_str!(def, "type", "type");
+    reflect_str!(def, "media", "media");
+    reflect_str!(def, "title", "title");
+    def.getter("sheet", crate::css::element_sheet);
+});
+simple_class!(SvgMetadataElement, "SVGMetadataElement", SvgElement);
 fn svg_aspect_ratio<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     def.getter("preserveAspectRatio", |s, n| collections::animated_aspect(s, n));
 }
 
-simple_class!(SvgSymbolElement, "SVGSymbolElement", SvgGraphicsElement, svg_aspect_ratio);
-simple_class!(SvgViewElement, "SVGViewElement", SvgElement, svg_aspect_ratio);
-simple_class!(SvgSvgElement, "SVGSVGElement", SvgGraphicsElement, |def| {
+/// SVGFitToViewBox: `viewBox` (an `SVGAnimatedRect`), with `preserveAspectRatio`.
+fn svg_fit_to_view_box<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     svg_aspect_ratio(def);
+    svg_view_box(def);
+}
+fn svg_view_box<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
+    def.getter("viewBox", |s, n| Ok(collections::animated_rect(s, n.page(), n.id)?.value()));
+}
+
+simple_class!(SvgSymbolElement, "SVGSymbolElement", SvgGraphicsElement, svg_fit_to_view_box);
+simple_class!(SvgViewElement, "SVGViewElement", SvgElement, svg_fit_to_view_box);
+fn svg_rect_list<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, enclosure: bool) -> JsResult<Value<'s>> {
+    a.require(2, "SVGSVGElement.getIntersectionList")?;
+    let rect = svg_rect_argument(a.get(0))?;
+    let reference = a.get(1);
+    let reference = if reference.is_nullish() {
+        None
+    } else {
+        Some(crate::node::node_arg(s, reference, "SVGSVGElement.getIntersectionList")?)
+    };
+    let ids = {
+        let page = n.page();
+        let dom = page.dom.borrow();
+        let layout = page.layout();
+        pyro_dom::svg_geometry::intersection_list(&dom, &layout, n.id, reference, rect, enclosure)
+    };
+    Ok(collections::static_node_list(s, n.page(), ids)?.value())
+}
+fn svg_rect_check<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, enclosure: bool) -> JsResult<Value<'s>> {
+    a.require(2, "SVGSVGElement.checkIntersection")?;
+    let element = crate::node::node_arg(s, a.get(0), "SVGSVGElement.checkIntersection")?;
+    let rect = svg_rect_argument(a.get(1))?;
+    let page = n.page();
+    let dom = page.dom.borrow();
+    let layout = page.layout();
+    Ok(s.boolean(pyro_dom::svg_geometry::check_intersection(&dom, &layout, n.id, element, rect, enclosure)))
+}
+simple_class!(SvgSvgElement, "SVGSVGElement", SvgGraphicsElement, |def| {
+    svg_fit_to_view_box(def);
+    def.method("createSVGRect", 0, |s, _n, _a| collections::detached_rect(s));
+    // Hit-testing of graphics against a rectangle in the user space of this element (SVG 1.1).
+    def.method("getIntersectionList", 2, |s, n, a| svg_rect_list(s, n, a, false));
+    def.method("getEnclosureList", 2, |s, n, a| svg_rect_list(s, n, a, true));
+    def.method("checkIntersection", 2, |s, n, a| svg_rect_check(s, n, a, false));
+    def.method("checkEnclosure", 2, |s, n, a| svg_rect_check(s, n, a, true));
+    def.method("deselectAll", 0, |s, _n, _a| Ok(s.undefined()));
+    def.method("forceRedraw", 0, |s, _n, _a| Ok(s.undefined()));
+    def.method("suspendRedraw", 1, |s, _n, a| {
+        a.require(1, "SVGSVGElement.suspendRedraw")?;
+        Ok(s.number(1.0))
+    });
+    def.method("unsuspendRedraw", 1, |s, _n, a| {
+        a.require(1, "SVGSVGElement.unsuspendRedraw")?;
+        Ok(s.undefined())
+    });
+    def.method("unsuspendRedrawAll", 0, |s, _n, _a| Ok(s.undefined()));
+    def.method("createSVGTransform", 0, |s, _n, _a| collections::detached_transform(s, collections::IDENTITY_MATRIX));
+    def.method("createSVGTransformFromMatrix", 0, |s, _n, a| {
+        let matrix = collections::matrix_init_argument(s, a.get(0))?;
+        collections::detached_transform(s, matrix)
+    });
+    def.method("createSVGMatrix", 0, |s, _n, _a| collections::detached_matrix(s, collections::IDENTITY_MATRIX));
     def.method("createSVGPoint", 0, |s, _, _| collections::detached_point(s, 0.0, 0.0));
     def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_324)?.value()));
     def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_327)?.value()));
@@ -4314,7 +4551,7 @@ simple_class!(SvgSvgElement, "SVGSVGElement", SvgGraphicsElement, |def| {
     // pyro: the user agent's pan and zoom (SVG 2 `currentTranslate`, `currentScale`), which the
     // renderer applies to the `<svg>`'s content (pyro-dom `SVG_PAN_ATTR`).
     def.getter("currentTranslate", |s, n| {
-        Ok(s.wrap::<collections::SvgPoint>(collections::SvgPointData::Translate(collections::NodeHold::new(n.page(), n.id)?), None)?.value())
+        collections::current_translate(s, n.page(), n.id)
     });
     def.accessor(
         "currentScale",
@@ -4397,7 +4634,46 @@ simple_class!(SvgGeometryElement, "SVGGeometryElement", SvgGraphicsElement, |def
         collections::detached_point(s, point.x, point.y)
     });
     def.getter("pathLength", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &PATH_LENGTH)?.value()));
+    // `optional DOMPointInit point = {}`: a point whose coordinates are not finite is in nothing.
+    def.method("isPointInFill", 0, |s, n, args| {
+        let Some((x, y)) = dom_point_init(args.get(0))? else { return Ok(s.boolean(false)) };
+        let page = n.page();
+        let dom = page.dom.borrow();
+        let layout = page.layout();
+        Ok(s.boolean(pyro_dom::svg_geometry::is_point_in_fill(&dom, &layout, n.id, x, y)))
+    });
+    def.method("isPointInStroke", 0, |s, n, args| {
+        let Some((x, y)) = dom_point_init(args.get(0))? else { return Ok(s.boolean(false)) };
+        let page = n.page();
+        let dom = page.dom.borrow();
+        let layout = page.layout();
+        Ok(s.boolean(pyro_dom::svg_geometry::is_point_in_stroke(&dom, &layout, n.id, x, y)))
+    });
 });
+/// A `DOMPointInit` (`x` and `y` default to 0; `null` and `undefined` are `{}`): its coordinates, None
+/// when either is not finite.
+fn dom_point_init(value: Value<'_>) -> JsResult<Option<(f64, f64)>> {
+    if value.is_nullish() {
+        return Ok(Some((0.0, 0.0)));
+    }
+    let Some(init) = value.as_object() else {
+        return Err(JsError::Type("The provided value is not of type 'DOMPointInit'.".into()));
+    };
+    let coordinate = |name: &'static str| -> JsResult<f64> {
+        let v = init.get_atom(name)?;
+        if v.is_undefined() { Ok(0.0) } else { v.to_number() }
+    };
+    let (x, y) = (coordinate("x")?, coordinate("y")?);
+    Ok((x.is_finite() && y.is_finite()).then_some((x, y)))
+}
+/// The `x`, `y`, `width` and `height` of an `SVGRect` argument (TypeError for a non-object).
+fn svg_rect_argument(value: Value<'_>) -> JsResult<pyro_dom::layout::Rect> {
+    let Some(rect) = value.as_object() else {
+        return Err(JsError::Type("The provided value is not of type 'SVGRect'.".into()));
+    };
+    let n = |name: &'static str| -> JsResult<f64> { rect.get_atom(name)?.to_number() };
+    Ok(pyro_dom::layout::Rect { x: n("x")?, y: n("y")?, width: n("width")?, height: n("height")? })
+}
 simple_class!(SvgPathElement, "SVGPathElement", SvgGeometryElement);
 fn svg_animated_points<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     def.getter("points", |s, n| collections::point_list(s, n, false));
@@ -4456,7 +4732,96 @@ simple_class!(SvgTextContentElement, "SVGTextContentElement", SvgGraphicsElement
     def.constant("LENGTHADJUST_UNKNOWN", 0.0);
     def.constant("LENGTHADJUST_SPACING", 1.0);
     def.constant("LENGTHADJUST_SPACINGANDGLYPHS", 2.0);
+    // The query methods answer from the layout of the whole `<text>` (`svg_text`): the element's
+    // characters are its range of it.
+    def.method("getNumberOfChars", 0, |s, n, _a| {
+        let (_, range) = svg_text_range(n);
+        Ok(s.number((range.1 - range.0) as f64))
+    });
+    def.method("getComputedTextLength", 0, |s, n, _a| {
+        let (layout, range) = svg_text_range(n);
+        Ok(s.number(layout.length(range.0, range.1)))
+    });
+    def.method("getSubStringLength", 2, |s, n, a| {
+        a.require(2, "SVGTextContentElement.getSubStringLength")?;
+        let (charnum, nchars) = (to_u32(a.get(0))? as usize, to_u32(a.get(1))? as usize);
+        let (layout, range) = svg_text_range(n);
+        let (from, to) = svg_text_substring(range, charnum, nchars)?;
+        Ok(s.number(layout.length(from, to)))
+    });
+    def.method("getStartPositionOfChar", 1, |s, n, a| {
+        a.require(1, "SVGTextContentElement.getStartPositionOfChar")?;
+        let (layout, range) = svg_text_range(n);
+        let i = svg_text_char(range, to_u32(a.get(0))? as usize)?;
+        let (x, y) = layout.start(i);
+        collections::detached_point(s, x, y)
+    });
+    def.method("getEndPositionOfChar", 1, |s, n, a| {
+        a.require(1, "SVGTextContentElement.getEndPositionOfChar")?;
+        let (layout, range) = svg_text_range(n);
+        let i = svg_text_char(range, to_u32(a.get(0))? as usize)?;
+        let (x, y) = layout.end(i);
+        collections::detached_point(s, x, y)
+    });
+    def.method("getExtentOfChar", 1, |s, n, a| {
+        a.require(1, "SVGTextContentElement.getExtentOfChar")?;
+        let (layout, range) = svg_text_range(n);
+        let i = svg_text_char(range, to_u32(a.get(0))? as usize)?;
+        crate::canvas::svg_rect_value(s, n.page(), layout.extent(i))
+    });
+    def.method("getRotationOfChar", 1, |s, n, a| {
+        a.require(1, "SVGTextContentElement.getRotationOfChar")?;
+        let (layout, range) = svg_text_range(n);
+        let i = svg_text_char(range, to_u32(a.get(0))? as usize)?;
+        Ok(s.number(layout.chars[i].rotate))
+    });
+    // `SVGPoint` (or any object with `x` and `y`): the character whose glyph cell holds it, -1 for none.
+    def.method("getCharNumAtPosition", 1, |s, n, a| {
+        a.require(1, "SVGTextContentElement.getCharNumAtPosition")?;
+        let Some(point) = a.get(0).as_object() else {
+            return Err(JsError::Type("Failed to execute 'getCharNumAtPosition' on 'SVGTextContentElement': parameter 1 is not of type 'SVGPoint'.".into()));
+        };
+        let (x, y) = (point.get_atom("x")?.to_number()?, point.get_atom("y")?.to_number()?);
+        let (layout, range) = svg_text_range(n);
+        Ok(s.number(f64::from(layout.char_at(range.0, range.1, x, y))))
+    });
+    def.method("selectSubString", 2, |s, n, a| {
+        a.require(2, "SVGTextContentElement.selectSubString")?;
+        let (charnum, nchars) = (to_u32(a.get(0))? as usize, to_u32(a.get(1))? as usize);
+        let (layout, range) = svg_text_range(n);
+        let (from, to) = svg_text_substring(range, charnum, nchars)?;
+        if from < to {
+            let (first, last) = (&layout.chars[from], &layout.chars[to - 1]);
+            let (anchor, focus) = ((first.node, first.offset), (last.node, last.offset + 1));
+            crate::editing::set_selection(n.page(), anchor, focus);
+        }
+        Ok(s.undefined())
+    });
 });
+/// The layout of the `<text>` the element is in, and the range of it the element holds.
+fn svg_text_range(n: &NodeData) -> (std::rc::Rc<crate::svg_text::TextLayout>, (usize, usize)) {
+    let page = n.page();
+    let dom = page.dom.borrow();
+    let layout = page.layout();
+    let text = crate::svg_text::layout_of(page, &dom, &layout, n.id);
+    let range = text.range(n.id);
+    (text, range)
+}
+/// `[from, to)` of the layout's characters for `getSubStringLength(charnum, nchars)`: IndexSizeError
+/// past the last character, `nchars` cut at the end.
+fn svg_text_substring(range: (usize, usize), charnum: usize, nchars: usize) -> JsResult<(usize, usize)> {
+    let count = range.1 - range.0;
+    if charnum >= count {
+        return Err(JsError::dom("IndexSizeError", "The character index provided is out of range."));
+    }
+    Ok((range.0 + charnum, range.0 + charnum + nchars.min(count - charnum)))
+}
+fn svg_text_char(range: (usize, usize), charnum: usize) -> JsResult<usize> {
+    if charnum >= range.1 - range.0 {
+        return Err(JsError::dom("IndexSizeError", "The character index provided is out of range."));
+    }
+    Ok(range.0 + charnum)
+}
 simple_class!(SvgTextPositioningElement, "SVGTextPositioningElement", SvgTextContentElement, |def| {
     def.getter("x", |s, n| collections::animated_length_list(s, n, "x"));
     def.getter("y", |s, n| collections::animated_length_list(s, n, "y"));
@@ -4563,7 +4928,7 @@ simple_class!(SvgMaskElement, "SVGMaskElement", SvgElement, |def| {
     svg_enum!(def, "maskContentUnits", MASK_CONTENT_UNITS);
 });
 simple_class!(SvgPatternElement, "SVGPatternElement", SvgElement, |def| {
-    svg_aspect_ratio(def);
+    svg_fit_to_view_box(def);
     svg_href(def);
     def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_324)?.value()));
     def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_327)?.value()));
@@ -4572,6 +4937,7 @@ simple_class!(SvgPatternElement, "SVGPatternElement", SvgElement, |def| {
     unit_type_constants(def);
     svg_enum!(def, "patternUnits", PATTERN_UNITS);
     svg_enum!(def, "patternContentUnits", PATTERN_CONTENT_UNITS);
+    def.getter("patternTransform", |s, n| Ok(collections::animated_transform_list(s, n.page(), n.id, "patternTransform")?.value()));
 });
 simple_class!(SvgGradientElement, "SVGGradientElement", SvgElement, |def| {
     svg_href(def);
@@ -4581,6 +4947,7 @@ simple_class!(SvgGradientElement, "SVGGradientElement", SvgElement, |def| {
     def.constant("SVG_SPREADMETHOD_REFLECT", 2.0);
     def.constant("SVG_SPREADMETHOD_REPEAT", 3.0);
     svg_enum!(def, "gradientUnits", GRADIENT_UNITS);
+    def.getter("gradientTransform", |s, n| Ok(collections::animated_transform_list(s, n.page(), n.id, "gradientTransform")?.value()));
     svg_enum!(def, "spreadMethod", SPREAD_METHOD);
 });
 simple_class!(SvgLinearGradientElement, "SVGLinearGradientElement", SvgGradientElement, |def| {
@@ -4607,7 +4974,7 @@ simple_class!(SvgFilterElement, "SVGFilterElement", SvgElement, |def| {
     svg_enum!(def, "primitiveUnits", PRIMITIVE_UNITS);
 });
 simple_class!(SvgMarkerElement, "SVGMarkerElement", SvgElement, |def| {
-    svg_aspect_ratio(def);
+    svg_fit_to_view_box(def);
     def.getter("refX", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_366)?.value()));
     def.getter("refY", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_369)?.value()));
     def.getter("markerWidth", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_372)?.value()));
@@ -5027,6 +5394,7 @@ simple_class!(SvgAElement, "SVGAElement", SvgGraphicsElement, |def| {
     reflect_tokens!(def, "relList", "rel");
     reflect_str!(def, "download", "download");
     reflect_str!(def, "ping", "ping");
+    reflect_enum!(def, "referrerPolicy", "referrerpolicy", REFERRER_POLICY);
     reflect_str!(def, "hreflang", "hreflang");
     reflect_str!(def, "type", "type");
 });
@@ -5047,7 +5415,11 @@ pub(crate) fn ready_state(page: &PageDom, doc: NodeId) -> &'static str {
 pub(crate) fn document_cookie(page: &PageDom, doc: NodeId) -> String {
     let url = page.dom.borrow().document_data(doc).map(|d| d.url.to_string()).unwrap_or_default();
     let (Some(net), Ok(url)) = (page.net.borrow().clone(), pyro_net::Url::parse(&url)) else { return String::new() };
-    let jar = net.cookies().clone();
+    // A third party without storage access sees no unpartitioned cookies (`crate::storage_access`).
+    if page.cookie_blocking().is_some_and(|b| b.blocks(&url)) {
+        return String::new();
+    }
+    let jar = page.cookie_jar(&net);
     let mut jar = jar.lock().unwrap();
     jar.document_cookie_in(&url, pyro_net::cookies::now_secs(), page.cookie_partition_key().as_deref(), page.cookie_site_context())
 }
@@ -5055,10 +5427,10 @@ pub(crate) fn document_cookie(page: &PageDom, doc: NodeId) -> String {
 pub(crate) fn set_document_cookie(page: &PageDom, doc: NodeId, value: &str) {
     let url = page.dom.borrow().document_data(doc).map(|d| d.url.to_string()).unwrap_or_default();
     let (Some(net), Ok(url)) = (page.net.borrow().clone(), pyro_net::Url::parse(&url)) else { return };
-    if !matches!(url.scheme(), "http" | "https") {
+    if !matches!(url.scheme(), "http" | "https") || page.cookie_blocking().is_some_and(|b| b.blocks(&url)) {
         return;
     }
-    let jar = net.cookies().clone();
+    let jar = page.cookie_jar(&net);
     let mut jar = jar.lock().unwrap();
     jar.set_from_header_in(&url, value, pyro_net::cookies::Access::Script, pyro_net::cookies::now_secs(), page.cookie_partition_key().as_deref(), page.cookie_site_context());
 }
@@ -5256,12 +5628,26 @@ fn entry_document_url(page: &Rc<PageDom>, doc: NodeId) -> Option<String> {
 /// `document.write`/`writeln`.
 pub(crate) fn document_write<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, ln: bool) -> JsResult<Value<'s>> {
     let page = n.page();
+    // Trusted Types (document write steps 1-2): the arguments are converted and joined first,
+    // so a plain string throws its TypeError before an XML document's InvalidStateError
+    // (Document-write-exception-order.xhtml). All-TrustedHTML arguments are used as they are;
+    // otherwise the joined string goes through the policies once ("Document write[ln]").
+    let mut inputs = Vec::with_capacity(a.len());
+    for i in 0..a.len() {
+        inputs.push(crate::trusted_types::HtmlInput::convert(s, a.get(i))?);
+    }
+    let all_trusted = inputs.iter().all(|input| matches!(input, crate::trusted_types::HtmlInput::Trusted(_)));
+    let mut text = String::new();
+    for input in inputs {
+        match input {
+            crate::trusted_types::HtmlInput::Trusted(html) | crate::trusted_types::HtmlInput::String(html) => text.push_str(&html),
+        }
+    }
+    if !all_trusted {
+        text = crate::trusted_types::HtmlInput::String(text).compliant(s, page, if ln { "Document writeln" } else { "Document write" })?;
+    }
     html_document(page, n.id)?;
     crate::custom::check_dynamic_markup(page, n.id)?;
-    let mut text = String::new();
-    for i in 0..a.len() {
-        text.push_str(&dom_string(a.get(i))?);
-    }
     if ln {
         text.push('\n');
     }
@@ -5676,6 +6062,11 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<SvgElement>();
     engine.register::<MathMlElement>();
     engine.register::<SvgGraphicsElement>();
+    engine.register::<SvgGElement>();
+    engine.register::<SvgDefsElement>();
+    engine.register::<SvgSwitchElement>();
+    engine.register::<SvgDescElement>();
+    engine.register::<SvgMetadataElement>();
     engine.register::<SvgSvgElement>();
     engine.register::<SvgSymbolElement>();
     engine.register::<SvgViewElement>();
@@ -5699,6 +6090,8 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<SvgTSpanElement>();
     engine.register::<SvgTextPathElement>();
     engine.register::<SvgStopElement>();
+    engine.register::<SvgScriptElement>();
+    engine.register::<SvgStyleElement>();
     engine.register::<SvgPathElement>();
     engine.register::<SvgPolylineElement>();
     engine.register::<SvgPolygonElement>();

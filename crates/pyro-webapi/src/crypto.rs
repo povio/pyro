@@ -36,6 +36,11 @@ fn fill_random(buf: &mut [u8]) -> JsResult<()> {
     getrandom::fill(buf).map_err(|e| JsError::dom("OperationError", format!("random source failed: {e}")))
 }
 
+/// A random 64-bit value from the OS generator (salts that must differ between frames and not be guessable).
+pub fn random_u64() -> u64 {
+    getrandom::u64().expect("the OS random number generator failed")
+}
+
 /// `crypto.getRandomValues(array)`: integer typed arrays only.
 fn get_random_values<'s>(s: &Scope<'s>, v: Value<'s>) -> JsResult<Value<'s>> {
     let obj = v.as_object().ok_or_else(|| {
@@ -119,9 +124,41 @@ impl JsClass for Crypto {
         def.getter("subtle", |s, _d| {
             let key = IdentityKey(1 << 55, 2);
             let page = crate::target::page_of(s)?;
+            // `[SecureContext] readonly attribute SubtleCrypto subtle`: nothing in an insecure one.
+            if !secure_realm(s, &page) {
+                return Ok(s.undefined());
+            }
             crate::window::same_object(s, &page, key, || s.wrap::<SubtleCrypto>((), Some(key)))
         });
     }
+}
+
+/// Whether the realm (a window or a worker) is a secure context.
+fn secure_realm(s: &Scope<'_>, page: &Rc<PageDom>) -> bool {
+    crate::worker_scope::secure_worker(s).unwrap_or_else(|| crate::secure_context::secure(s, page))
+}
+
+/// Whether `v` is a SharedArrayBuffer or a view onto one (a BufferSource that is not `[AllowShared]`).
+const SHARED_CHECK: &str = r"(() => {
+  'use strict';
+  const apply = Reflect.apply;
+  const typedProto = Object.getPrototypeOf(Uint8Array.prototype);
+  const viewBuffer = Object.getOwnPropertyDescriptor(typedProto, 'buffer').get;
+  const dataViewBuffer = Object.getOwnPropertyDescriptor(DataView.prototype, 'buffer').get;
+  const byteLength = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'byteLength').get;
+  const isArrayBuffer = (b) => { try { apply(byteLength, b, []); return true; } catch (_) { return false; } };
+  return (v) => {
+    let buffer = v;
+    try { buffer = apply(viewBuffer, v, []); } catch (_) {
+      try { buffer = apply(dataViewBuffer, v, []); } catch (_) { /* not a view: `v` is the buffer */ }
+    }
+    return !isArrayBuffer(buffer);
+  };
+})()";
+
+fn is_shared_buffer(s: &Scope<'_>, v: Value<'_>) -> JsResult<bool> {
+    let check = s.agent_value("crypto.shared", SHARED_CHECK)?.as_object().ok_or_else(unavailable)?;
+    Ok(check.call(None, &[v])?.to_bool())
 }
 
 fn digest_name(s: &Scope<'_>, v: Value<'_>) -> JsResult<String> {
@@ -155,11 +192,15 @@ impl JsClass for SubtleCrypto {
             let args: Vec<_> = a.iter().collect();
             module.get_atom("supports")?.as_object().ok_or_else(unavailable)?.call(None, &args)
         });
-        def.method("digest", 2, |s, _d, a| {
+        // Promise-returning operations: a foreign receiver rejects ("Illegal invocation") rather than throws.
+        def.promise_method("digest", 2, |s, _d, a| {
             // Argument errors reject the promise (Web Crypto §14.3.5).
             let result = (|| -> JsResult<Vec<u8>> {
                 a.require(2, "SubtleCrypto.digest")?;
                 let name = digest_name(s, a.get(0))?;
+                if a.get(1).as_object().is_some() && is_shared_buffer(s, a.get(1))? {
+                    return Err(JsError::Type("Failed to execute 'digest' on 'SubtleCrypto': parameter 2 must not be a shared buffer.".into()));
+                }
                 let data = crate::encoding::buffer_source_bytes(s, a.get(1))?.ok_or_else(|| {
                     JsError::Type("Failed to execute 'digest' on 'SubtleCrypto': parameter 2 is not of type '(ArrayBuffer or ArrayBufferView)'.".into())
                 })?;
@@ -184,7 +225,7 @@ impl JsClass for SubtleCrypto {
         });
         macro_rules! operations {
             ($($m:literal: $length:literal),*) => {$(
-                def.method($m, $length, |s, _d, a| subtle_call(s, $m, a));
+                def.promise_method($m, $length, |s, _d, a| subtle_call(s, $m, a));
             )*};
         }
         def.promise_method("getPublicKey", 2, |s, _d, a| subtle_call(s, "getPublicKey", a));
@@ -199,7 +240,11 @@ impl JsClass for SubtleCrypto {
             "importKey": 5,
             "exportKey": 2,
             "wrapKey": 4,
-            "unwrapKey": 7
+            "unwrapKey": 7,
+            "encapsulateKey": 5,
+            "encapsulateBits": 2,
+            "decapsulateKey": 6,
+            "decapsulateBits": 3
         );
     }
 }
@@ -251,6 +296,10 @@ where
 }
 
 fn crypto_key<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Value<'s>> {
+    // `[SecureContext] interface CryptoKey`: not there in an insecure context.
+    if !secure_realm(s, page) {
+        return Ok(s.undefined());
+    }
     let value = subtle_module(s, page)?.get_atom("CryptoKey")?;
     replace(s, page, value)?;
     Ok(value)
@@ -315,6 +364,10 @@ pub(crate) fn foreign_key<'s>(s: &Scope<'s>, value: Value<'s>) -> JsResult<Value
 /// (making the realm's subtle.js if it has none yet).
 pub(crate) fn deserialize_key<'s>(s: &Scope<'s>, parts: Value<'s>) -> JsResult<Value<'s>> {
     let page = crate::target::page_of(s)?;
+    // CryptoKey is `[SecureContext, Serializable]`: an insecure receiver cannot deserialize one.
+    if !crate::secure_context::secure(s, &page) {
+        return Err(JsError::dom("DataCloneError", "A CryptoKey cannot be deserialized in an insecure context."));
+    }
     let module = subtle_module(s, &page)?;
     module.get_atom("deserializeKey")?.as_object().ok_or_else(unavailable)?.call(None, &[parts])
 }

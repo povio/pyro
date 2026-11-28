@@ -1201,7 +1201,12 @@ impl StyleEngine {
         let source = self.animation_source.try_borrow().ok()?.clone()?;
         let stamp = source.stamp();
         let frame = source.frame();
-        self.animation_synced.set(Some(stamp));
+        // The engine's styles now carry other animated values than the memoized `computed()`
+        // answers were derived from (the stamp they are keyed by is the document's: a sampled
+        // `display` stayed `none` for `getComputedStyle` after its first sample).
+        if self.animation_synced.replace(Some(stamp)) != Some(stamp) {
+            self.memo_at.set(None);
+        }
         Some(frame)
     }
 

@@ -2,7 +2,7 @@
 // `Element.startViewTransition`): per-scope lifecycle and native capture.
 (function (native) {
   'use strict';
-  const {captureValid, transitionAnimations, callbackGone, scopeState} = native;
+  const {captureValid, transitionAnimations, callbackGone, scopeState, sizeChanged, suppressRendering} = native;
   const global = globalThis;
   const rafFn = global.requestAnimationFrame, setTimeoutFn = global.setTimeout;
   const clearTimeoutFn = global.clearTimeout;
@@ -36,6 +36,12 @@
     if (!st.marked) return;
     st.marked = false;
     scopeState(st.scope, 0);
+  }
+  // A document's transition suppresses its rendering while its update callback runs.
+  function suppress(st, on) {
+    if (st.suppressing === on || st.scope === st.root) return;
+    st.suppressing = on;
+    suppressRendering(st.root, on);
   }
   function finish(st) {
     if (st.phase !== 'animating' || !st.animationDone) return;
@@ -181,6 +187,7 @@
     if (st.runs) { st.runs.release(); st.runs = null; }
     if (before) pending.delete(st.scope);
     if (st.admitted) { captureValid(st.root, false, true, st.scope); st.admitted = false; }
+    suppress(st, false);
     unmark(st);
     st.phase = 'done';
     if (st.timer !== null) { clearTimeoutFn.call(global, st.timer); st.timer = null; }
@@ -198,6 +205,7 @@
   function callUpdate(st) {
     if (st.called) return;
     st.called = true;
+    if (st.phase !== 'done') suppress(st, true);
     if (st.phase !== 'done') st.timer = setTimeout_(() => skip(st, new DOMException('Update callback timed out', 'TimeoutError')), 4000);
     let result;
     try {
@@ -213,6 +221,7 @@
       st.updateCallbackDone.resolve();
       st.updateDone.resolve();
       if (st.phase === 'done') return;
+      suppress(st, false);
       // The new state is captured at the scope's own size.
       if (st.marked) scopeState(st.scope, 1);
       if (!capture(st)) return;
@@ -226,16 +235,23 @@
       later(function checkAnimations() {
         if (st.phase !== 'animating') return;
         const entries = transitionAnimations(st.root, true);
+        // The window was resized since the old state was captured: the transition is skipped.
+        if (sizeChanged(st.root, st.scope)) { skip(st, new DOMException('The snapshot containing block size changed', 'InvalidStateError')); return; }
         if (entries === null || ++frames > 4096) { skip(st, abortError('Transition animation limit reached'), true); return; }
         st.runs.sync(entries);
         if (!native.sample(st.root, st.runs.sample())) { skip(st, abortError('Cannot sample transition boxes'), true); return; }
-        if (st.runs.active()) { later(checkAnimations); return; }
+        if (st.runs.active()) { st.idleFrames = 0; later(checkAnimations); return; }
+        // The frame that sees the animations done keeps the pseudo-elements and the active
+        // transition (script in that frame and its tasks still read them); the next frame cleans
+        // up and resolves `finished`, ahead of that frame's animation frame callbacks (Chrome).
+        if (!st.idleFrames++) { later(checkAnimations); return; }
         st.animationDone = true;
         finish(st);
       });
     }, (e) => {
       st.updateCallbackDone.reject(e);
       st.updateDone.reject(e);
+      suppress(st, false);
       if (st.phase !== 'done') skip(st, e);
     });
   }
@@ -258,7 +274,7 @@
     const self = Object.create(ViewTransition.prototype);
     const st = {
       self, scope, root, update, phase: 'pending-capture', called: false, readySettled: false, inactive, marked: false,
-      types: typeSet(types), timer: null, waiting: 0, animationDone: false,
+      types: typeSet(types), timer: null, waiting: 0, animationDone: false, idleFrames: 0, suppressing: false,
       updateCallbackDone: deferred(), ready: deferred(), finished: deferred(), updateDone: deferred(),
     };
     handled(st.updateDone.promise);

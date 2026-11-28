@@ -34,6 +34,9 @@ struct ElementInternalsData {
     /// `CustomStateSet`, in insertion order.
     states: Vec<Atom>,
     face: Option<FaceState>,
+    /// The default ARIA semantics set through `ElementInternals` (`role`, `aria-label`, ...), by
+    /// content attribute name: what the element has when it has no such attribute.
+    aria: Vec<(Box<str>, Box<str>)>,
 }
 
 /// A form-associated custom element's form state.
@@ -61,6 +64,23 @@ impl Dom {
             return Err(DomError::Type("not an element"));
         }
         Ok((i, self.internals.map.entry(i).or_default()))
+    }
+
+    /// `ElementInternals`' ARIAMixin setters: the default `role` / `aria-*` value of `el` (`name` is
+    /// the content attribute name, `None` removes it).
+    pub fn set_default_aria(&mut self, el: NodeId, name: &str, value: Option<&str>) -> DomResult<()> {
+        let (_, data) = self.internals_entry(el)?;
+        data.aria.retain(|(k, _)| &**k != name);
+        if let Some(value) = value {
+            data.aria.push((name.into(), value.into()));
+        }
+        Ok(())
+    }
+
+    /// The default ARIA value `ElementInternals` set for the content attribute `name`.
+    pub fn default_aria(&self, el: NodeId, name: &str) -> Option<&str> {
+        let i = self.check(el).ok()?;
+        self.internals.map.get(&i)?.aria.iter().find(|(k, _)| &**k == name).map(|(_, v)| &**v)
     }
 
     /// The element was freed.
@@ -158,13 +178,22 @@ impl Dom {
     /// `formAssociatedCallback` when it has a form owner and
     /// `formDisabledCallback(true)` when it is disabled.
     pub fn set_form_associated(&mut self, el: NodeId) -> DomResult<()> {
-        let (i, data) = self.internals_entry(el)?;
-        if data.face.is_some() {
-            return Ok(());
-        }
-        data.face = Some(FaceState::default());
-        self.internals.faces += 1;
+        self.begin_form_associated(el)?;
+        let i = self.check(el)?;
         self.refresh_face(i);
+        Ok(())
+    }
+
+    /// An element about to run a form-associated definition's constructor (upgrade): its
+    /// `ElementInternals` already work on it (`setFormValue`, `setValidity` in the constructor),
+    /// but no owner or disabled state is computed, and no callback queued, until
+    /// [`Dom::set_form_associated`] after the constructor.
+    pub fn begin_form_associated(&mut self, el: NodeId) -> DomResult<()> {
+        let (_, data) = self.internals_entry(el)?;
+        if data.face.is_none() {
+            data.face = Some(FaceState::default());
+            self.internals.faces += 1;
+        }
         Ok(())
     }
 
@@ -354,15 +383,33 @@ impl Dom {
     /// HTML "reset" of `form`: `formResetCallback` for the form-associated
     /// custom elements it owns, in tree order.
     pub fn enqueue_form_reset(&mut self, form: NodeId) -> DomResult<()> {
+        let targets = self.form_reset_targets(form)?;
+        self.enqueue_form_reset_for(&targets);
+        Ok(())
+    }
+
+    /// The form-associated custom elements `form` owns, in tree order: those `reset` calls back.
+    pub fn form_reset_targets(&self, form: NodeId) -> DomResult<Vec<NodeId>> {
         if self.internals.faces == 0 {
-            return Ok(());
+            return Ok(Vec::new());
         }
+        let mut targets = Vec::new();
         for element in self.owned_form_elements(form)? {
             let idx = self.check(element)?;
+            if self.is_face_idx(idx) {
+                targets.push(element);
+            }
+        }
+        Ok(targets)
+    }
+
+    /// Queues `formResetCallback` for `targets` (a node released since is skipped).
+    pub fn enqueue_form_reset_for(&mut self, targets: &[NodeId]) {
+        for &element in targets {
+            let Ok(idx) = self.check(element) else { continue };
             if self.is_face_idx(idx) {
                 self.push_custom_reaction(idx, crate::custom::CustomReaction::FormReset);
             }
         }
-        Ok(())
     }
 }

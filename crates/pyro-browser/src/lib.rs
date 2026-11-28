@@ -7,7 +7,9 @@
 //! `pyro-webapi` supplies bindings in the main and isolated document worlds.
 
 mod bindings;
+mod bounce;
 pub mod clock;
+mod coop_report;
 mod csp_embedded;
 mod focus;
 mod frames;
@@ -17,10 +19,14 @@ mod media;
 mod nav;
 mod network_idle;
 mod preload;
+mod prefetch;
 mod quiet;
 mod refresh;
 mod responsive_frames;
 mod speculate;
+mod speculation_document_rules;
+mod speculation_rules;
+mod speculation_tags;
 mod stylesheets;
 mod viewport;
 mod window;
@@ -35,7 +41,7 @@ pub use frames::{realm_page, FrameInfo};
 pub use images::LazyStarted;
 use frames::{FrameHost, FrameKey};
 pub use loader::{
-    FetchDone, FetchRequest, NetLoader, Resource, ResourceCancellation, ResourceKind, ResourceLoader, StaticLoader,
+    FetchDone, FetchRequest, NetLoader, Purpose, Resource, ResourceCancellation, ResourceKind, ResourceLoader, StaticLoader,
 };
 pub use nav::{set_navigation_rate_limit, History, HistoryEntry, Location, PageNav, Performance};
 pub use network_idle::NetworkIdle;
@@ -155,6 +161,7 @@ fn subresource_request_with(
     FetchRequest {
         csp: None,
         required_csp: None,
+        purpose: None,
         parser_priority: false,
         credentials: None,
         post: None,
@@ -169,6 +176,7 @@ fn subresource_request_with(
         initiator: None,
         module: None,
         part: None,
+        accept_signature: None,
     }
 }
 
@@ -600,6 +608,8 @@ pub struct DocumentState {
     pub(crate) stylesheets: stylesheets::Stylesheets,
     pub(crate) images: images::Images,
     pub(crate) preloads: preload::Preloads,
+    /// The speculation rule sets registered by this document (`speculation_rules`).
+    pub(crate) speculation: speculation_rules::SpeculationRules,
     pub(crate) refresh: refresh::Refresh,
     pub(crate) _owner_pin: Option<loader::ResourceNode>,
     /// CSP Embedded Enforcement: the policy the current document's navigation required (the
@@ -655,12 +665,17 @@ pub struct Page {
     /// URL (origin, opaque-origin token, base URL), as a child frame's do
     /// from its parent.
     opener_origin: Option<(String, u64, String)>,
+    /// The page whose `window.open` made this popup, also when it has no opener handle
+    /// (`noopener`): the page whose speculation-rules prefetches its first navigations may use.
+    popup_creator: Option<PageId>,
     /// A popup's sandboxing flags from the sandboxed document that opened it (HTML "popup
     /// sandboxing flag set"): its top-level documents take them.
     popup_sandbox: Option<frames::Sandbox>,
     user_agent_override: Option<pyro_webapi::UserAgentOverride>,
     /// `navigator.maxTouchPoints` of its documents (touch emulation).
     max_touch_points: u32,
+    /// The page's window is minimized (`Browser.setWindowBounds`): its documents, current and future, are hidden.
+    window_hidden: bool,
     /// `Emulation.setScriptExecutionDisabled`: documents committed from now
     /// on, and their frames, run no script of their own.
     script_execution_disabled: bool,
@@ -718,94 +733,13 @@ impl Page {
         }
     }
 
-    /// The documents of this page's frames (the store may hold other pages' too).
-    fn frame_tree_documents(&self) -> Vec<pyro_dom::NodeId> {
-        let mut docs: Vec<pyro_dom::NodeId> =
-            self.frames.keys().into_iter().filter_map(|k| self.frames.with_frame(k, |f| f.document).flatten()).collect();
-        if let Some(d) = self.main_frame.page_dom.as_ref().map(|p| p.document()) {
-            if !docs.contains(&d) {
-                docs.push(d);
-            }
-        }
-        docs
-    }
-
     /// Gives each iframe of the page the document it shows as the renderer paints it (its render
     /// HTML, URL and scroll position; see [`pyro_dom::FrameDocument`]), innermost frames first so a
     /// frame's HTML holds its own frames' documents. pyro: each frame document carries its own
     /// sheets ([`pyro_dom::FrameDocument::sheets`]), never merged with the page's by URL.
     pub fn update_frame_documents(&self) -> Vec<pyro_dom::geometry::TransitionFrame> {
-        let mut transitions = Vec::new();
-        if !self.frames.has_children() {
-            if let Some(page_dom) = &self.main_frame.page_dom {
-                if let Ok(mut dom) = page_dom.dom.try_borrow_mut() {
-                    dom.set_frame_documents(&self.frame_tree_documents(), Vec::new());
-                    dom.frame_animations.clear();
-                }
-            }
-            return transitions;
-        }
-        let depth = |mut key: frames::FrameKey| {
-            let mut depth = 0;
-            while key.child.is_some() && depth < 64 {
-                key = self.frames.parent_key(key);
-                depth += 1;
-            }
-            depth
-        };
-        let mut keys: Vec<(usize, frames::FrameKey)> =
-            self.frames.keys().into_iter().filter(|k| k.child.is_some()).map(|k| (depth(k), k)).collect();
-        keys.sort_by(|a, b| b.0.cmp(&a.0));
-        let mut documents = Vec::new();
-        let mut frame_animations = Vec::new();
-        for (_, key) in keys {
-            let Some((owner, page_dom, base_url, url, client)) = self.frames.with_frame(key, |f| {
-                (f.owner, f.page_dom.clone(), f.base_url.clone(), f.url.clone(), document_client(f))
-            })
-            else {
-                continue;
-            };
-            let (Some(owner), Some(page_dom)) = (owner, page_dom) else { continue };
-            // Each frame's HTML is taken after its own frames' documents are set (deeper first).
-            // (Its animated elements keyed, its animations kept for the renderer.)
-            // pyro: at the frame document's own base (its `<base href>`), as the top document's
-            // capture takes it (`render_base_url`).
-            let frame_base = if base_url.is_empty() { &url } else { &base_url };
-            let base = page_dom.render_base_url(frame_base);
-            // pyro: with its own frames' table (set before, deeper first), which its markup names.
-            let frames = page_dom.dom.try_borrow().map(|dom| dom.frame_table(page_dom.document())).unwrap_or_default();
-            let start = transitions.len();
-            page_dom.transition_frames(&frames.nonce, &mut transitions);
-            let (snapshot, animations) = page_dom.render_snapshot_frame(&base, &transitions[start..]);
-            let document = pyro_dom::FrameDocument {
-                html: snapshot.html,
-                document_url: (url != base).then_some(url),
-                url: base,
-                scroll: (snapshot.scroll_x, snapshot.scroll_y),
-                client,
-                frames,
-                // pyro: its own sheets, with it (never merged into the page's by URL).
-                sheets: snapshot.sheets.into_iter().collect(),
-            };
-            if let Ok(mut dom) = page_dom.dom.try_borrow_mut() {
-                dom.set_frame_document(owner, Some(document.clone()));
-            }
-            frame_animations.push((document.client.clone(), animations));
-            documents.push((owner, document));
-        }
-        let store = self.main_frame.page_dom.as_ref().map(|p| p.dom.clone());
-        if let Some(store) = store {
-            if let Ok(mut dom) = store.try_borrow_mut() {
-                dom.set_frame_documents(&self.frame_tree_documents(), documents);
-                dom.frame_animations = frame_animations
-                    .into_iter()
-                    .filter_map(|(client, frame)| Some((client, std::sync::Arc::new(frame?))))
-                    .collect();
-            }
-        }
-        transitions
+        update_frame_documents_of(&self.frames, self.main_frame.page_dom.as_ref(), None)
     }
-
 
     /// Copies the page's own request options (extra headers, cache bypass)
     /// into `defaults`, e.g. those derived from a user agent override.
@@ -813,6 +747,146 @@ impl Page {
         defaults.extra_headers = self.extra_http_headers.clone();
         defaults.cache_disabled = self.cache_disabled;
     }
+}
+
+/// The documents of a page's frames (`frames`'s store may hold other pages' too; `main`: the page's
+/// top document).
+fn frame_tree_documents_of(frames: &frames::FrameHost, main: Option<&Rc<pyro_webapi::PageDom>>) -> Vec<pyro_dom::NodeId> {
+    let mut docs: Vec<pyro_dom::NodeId> =
+        frames.keys().into_iter().filter_map(|k| frames.with_frame(k, |f| f.document).flatten()).collect();
+    if let Some(d) = main.map(|p| p.document()) {
+        if !docs.contains(&d) {
+            docs.push(d);
+        }
+    }
+    docs
+}
+
+/// [`Page::update_frame_documents`] for the frames of `frames` (a page's), whose top document is
+/// `main`: also what a `drawElementImage` of an element holding a frame asks of its document's hooks
+/// (`PageHooks::refresh_frame_documents`), as a screenshot does before its snapshot.
+///
+/// `only`: render just these frames and leave the documents the others have as they are (a
+/// `drawElementImage`'s refresh, [`update_same_origin_frame_documents_of`]); `None`: all of them.
+pub(crate) fn update_frame_documents_of(frames: &frames::FrameHost, main: Option<&Rc<pyro_webapi::PageDom>>, only: Option<&[frames::FrameKey]>) -> Vec<pyro_dom::geometry::TransitionFrame> {
+    let mut transitions = Vec::new();
+    if !frames.has_children() {
+        if only.is_some() {
+            return transitions;
+        }
+        if let Some(page_dom) = main {
+            if let Ok(mut dom) = page_dom.dom.try_borrow_mut() {
+                dom.set_frame_documents(&frame_tree_documents_of(frames, main), Vec::new());
+                dom.frame_animations.clear();
+            }
+        }
+        return transitions;
+    }
+    let depth = |mut key: frames::FrameKey| {
+        let mut depth = 0;
+        while key.child.is_some() && depth < 64 {
+            key = frames.parent_key(key);
+            depth += 1;
+        }
+        depth
+    };
+    let mut keys: Vec<(usize, frames::FrameKey)> =
+        frames.keys().into_iter().filter(|k| k.child.is_some()).map(|k| (depth(k), k)).collect();
+    keys.sort_by(|a, b| b.0.cmp(&a.0));
+    let mut documents = Vec::new();
+    let mut frame_animations = Vec::new();
+    for (_, key) in keys {
+        if only.is_some_and(|only| !only.contains(&key)) {
+            continue;
+        }
+        let Some((owner, page_dom, base_url, url, client)) = frames.with_frame(key, |f| {
+            (f.owner, f.page_dom.clone(), f.base_url.clone(), f.url.clone(), document_client(f))
+        })
+        else {
+            continue;
+        };
+        let (Some(owner), Some(page_dom)) = (owner, page_dom) else { continue };
+        // Each frame's HTML is taken after its own frames' documents are set (deeper first).
+        // (Its animated elements keyed, its animations kept for the renderer.)
+        // pyro: at the frame document's own base (its `<base href>`), as the top document's
+        // capture takes it (`render_base_url`).
+        let frame_base = if base_url.is_empty() { &url } else { &base_url };
+        let base = page_dom.render_base_url(frame_base);
+        // pyro: with its own frames' table (set before, deeper first), which its markup names.
+        let table = page_dom.dom.try_borrow().map(|dom| dom.frame_table(page_dom.document())).unwrap_or_default();
+        let start = transitions.len();
+        page_dom.transition_frames(&table.nonce, &mut transitions);
+        let (snapshot, animations) = page_dom.render_snapshot_frame(&base, &transitions[start..]);
+        let document = pyro_dom::FrameDocument {
+            html: snapshot.html,
+            document_url: (url != base).then_some(url),
+            url: base,
+            scroll: (snapshot.scroll_x, snapshot.scroll_y),
+            client,
+            frames: table,
+            // pyro: its own sheets, with it (never merged into the page's by URL).
+            sheets: snapshot.sheets.into_iter().collect(),
+        };
+        if let Ok(mut dom) = page_dom.dom.try_borrow_mut() {
+            dom.set_frame_document(owner, Some(document.clone()));
+        }
+        frame_animations.push((document.client.clone(), animations));
+        documents.push((owner, document));
+    }
+    let store = main.map(|p| p.dom.clone());
+    if let Some(store) = store {
+        if let Ok(mut dom) = store.try_borrow_mut() {
+            if only.is_some() {
+                // (Each frame's document is set above; those of the frames left out stay.)
+                dom.frame_animations = frame_animations
+                    .into_iter()
+                    .filter_map(|(client, frame)| Some((client, std::sync::Arc::new(frame?))))
+                    .collect();
+                return transitions;
+            }
+            dom.set_frame_documents(&frame_tree_documents_of(frames, main), documents);
+            dom.frame_animations = frame_animations
+                .into_iter()
+                .filter_map(|(client, frame)| Some((client, std::sync::Arc::new(frame?))))
+                .collect();
+        }
+    }
+    transitions
+}
+
+/// [`update_frame_documents_of`] for a `drawElementImage` of an element of the document `drawing`
+/// holding the frame elements `owners`: only the frames of `drawing`'s origin that those elements
+/// hold, and the frames of that origin inside them. A frame of another origin (or an opaque one)
+/// is not painted into a canvas a page can read back, and rendering it anyway would make the time
+/// the call takes show what the frame holds; frames outside the drawn subtree are not painted
+/// either.
+pub(crate) fn update_same_origin_frame_documents_of(
+    frames: &frames::FrameHost,
+    main: Option<&Rc<pyro_webapi::PageDom>>,
+    drawing: frames::FrameKey,
+    owners: &[pyro_dom::NodeId],
+) -> Vec<pyro_dom::geometry::TransitionFrame> {
+    let Some(origin) = frames.with_frame(drawing, |f| f.origin.clone()).filter(|origin| origin != "null") else {
+        return Vec::new();
+    };
+    let mut selected: Vec<frames::FrameKey> = Vec::new();
+    let mut stack = vec![(drawing, true)];
+    while let Some((parent, in_drawing)) = stack.pop() {
+        for child in frames.child_keys(parent) {
+            let Some((owner, child_origin)) = frames.with_frame(child, |f| (f.owner, f.origin.clone())) else { continue };
+            // (The top frames must be held by the drawn subtree; the frames inside a selected one
+            // are all painted with it.)
+            if child_origin != origin || (in_drawing && !owner.is_some_and(|owner| owners.contains(&owner))) || selected.contains(&child) {
+                continue;
+            }
+            selected.push(child);
+            stack.push((child, false));
+        }
+    }
+    if selected.is_empty() {
+        return Vec::new();
+    }
+    update_frame_documents_of(frames, main, Some(&selected))
 }
 
 /// Browser-thread state: the loop state type for [`EventLoop`].
@@ -852,18 +926,93 @@ pub struct Browser {
     /// Completions of in-flight fetches, keyed by completion id.
     pub(crate) completions: std::collections::HashMap<u64, FetchDone>,
     ready_responses: loader::ReadyResponses,
+    /// The speculation-rules prefetches of this browser's documents (`prefetch`).
+    prefetches: prefetch::PrefetchCache,
     /// The CSP the next document committed in this frame inherits instead of what its URL would
     /// give (a `javascript:` result: the document it replaces), taken by that commit.
     csp_inherit_next: Option<(FrameKey, pyro_webapi::csp::InheritedCsp)>,
+    /// The Document-Isolation-Policy of the document a frame's navigation is about to commit
+    /// (`Browser::commit_document` takes it).
+    isolation_next: Option<(FrameKey, u8)>,
     /// The CSP `sandbox` flags the next document committed in this frame takes besides its
     /// response's (a `javascript:` result: those of the document it replaces, whose policies it
     /// has), taken by that commit.
     csp_sandbox_next: Option<(FrameKey, frames::Sandbox)>,
+    /// Speculation rules' document rules and eagerness triggers, per top-level document.
+    pub(crate) document_rules: speculation_document_rules::DocumentRulesState,
 }
 
 impl LoopState for Browser {
     fn after_task(&mut self) {
         self.checkpoint();
+    }
+
+    fn task_finished(&mut self, start: std::time::Instant, end: std::time::Instant) {
+        if !pyro_webapi::perf::TASK_HOOKS {
+            return;
+        }
+        // Every document of every page: the entry types of long tasks are per document.
+        let depth = pyro_runtime::task_depth();
+        let duration = end.saturating_duration_since(start).as_secs_f64() * 1000.0;
+        let nested_ms = pyro_webapi::perf::task_accounted(depth, duration);
+        // No document's script ran (no realm entered since the outermost task began): neither hook
+        // attributes such a task (`longtask::on_task` and `loaf::on_task` both start with
+        // `ran_script`, and a Long Animation Frame is made of script tasks), so no page is visited
+        // and nothing is allocated. Nor is a short task, unless a module keeps books on every task.
+        // The documents whose script ran are forgotten at the end of each outermost task
+        // (`pyro_webapi::perf::longtask::ran_script` reads them); a nested task's belong to the
+        // task it ran in.
+        if (duration < pyro_webapi::perf::LONG_TASK_MS && !pyro_webapi::perf::TASK_BOOKKEEPING) || !pyro_js::entered_any() {
+            if depth <= 1 {
+                pyro_js::reset_entered();
+            }
+            return;
+        }
+        let pages: Vec<_> = self.pages.iter().map(|p| p.id).collect();
+        for id in pages {
+            let Some(host) = self.page(id).map(|p| p.frames.clone()) else { continue };
+            for key in host.keys() {
+                let Some(dom) = host.page_dom(key) else { continue };
+                // State only for the documents that ran script in this task.
+                if !pyro_webapi::perf::ran_script(&dom) {
+                    continue;
+                }
+                let Some(nav) = self.doc(key).map(|state| state.nav.clone()) else { continue };
+                let task = pyro_webapi::perf::TaskInfo { start: nav.time_at(start), end: nav.time_at(end), depth, nested_ms };
+                pyro_webapi::perf::task_finished(&dom, &task);
+            }
+        }
+        if depth <= 1 {
+            pyro_js::reset_entered();
+        }
+    }
+}
+
+/// The Reporting side of a browser context's network client: the `Report-To` groups responses carry and the
+/// Network Error Logging reports of its requests (`pyro_net::ReportingSink`, called on the network thread)
+/// are applied and sent on the browser's thread, in the order they arrived.
+struct ContextReporting {
+    handle: pyro_runtime::LoopHandle<Browser>,
+    context: ContextId,
+}
+
+impl pyro_net::ReportingSink for ContextReporting {
+    fn report_to(&self, url: &pyro_net::Url, value: &str) {
+        let (url, value, context) = (url.clone(), value.to_owned(), self.context);
+        let _ = self.handle.post(move |browser: &mut Browser| {
+            if let Some(services) = browser.context_services(context) {
+                pyro_webapi::reporting_store::apply_report_to(&services, &url, &value);
+            }
+        });
+    }
+
+    fn network_error(&self, report: pyro_net::NelReport) {
+        let context = self.context;
+        let _ = self.handle.post(move |browser: &mut Browser| {
+            if let (Some(services), Some(net)) = (browser.context_services(context), browser.context_net(context)) {
+                pyro_webapi::reporting_store::send_network_error(&services, net, &report);
+            }
+        });
     }
 }
 
@@ -889,11 +1038,32 @@ impl Browser {
         p.main_frame.page_dom.as_ref().is_none_or(|d| d.quiet_since_last_task())
     }
 
-    /// Paint Timing without a renderer: a document has its first paint at
-    /// the first safe point at which it has a body and is not render-blocked
-    /// (HTML: a render-blocked document has no rendering opportunity).
+    /// Paint Timing: with the paint module (`pyro_webapi::perf::paint`) the entries are reported
+    /// from rendering updates, so here the document only asks for one while it still has no
+    /// `first-contentful-paint` (after each task that changed something: a page with no
+    /// `requestAnimationFrame` and no observer gets its frame too, and a document that sits still
+    /// asks for nothing). Without the module the first safe point with a body and no render block
+    /// is the first paint (HTML: a render-blocked document has no rendering opportunity).
     fn note_first_paint(&mut self, key: frames::FrameKey) {
         let Some(state) = self.doc(key) else { return };
+        if pyro_webapi::perf::paint::ENABLED {
+            let Some(bindings) = state.main_frame.page_dom.clone() else { return };
+            drop(state);
+            // The modules that must see every paint (not only the first) ask for frames too, while
+            // the document changed since its last scan.
+            let wanted = pyro_webapi::perf::paint::wants_frame(&bindings)
+                || pyro_webapi::perf::element::wants_frame(&bindings)
+                || pyro_webapi::perf::lcp::wants_frame(&bindings)
+                || pyro_webapi::perf::shift::wants_frame(&bindings);
+            if wanted && !bindings.is_disposed() {
+                let has_body =
+                    bindings.dom.try_borrow().is_ok_and(|dom| dom.body(bindings.document()).ok().flatten().is_some());
+                if has_body {
+                    pyro_webapi::perf::timeline::request_rendering(&bindings);
+                }
+            }
+            return;
+        }
         if state.nav.first_paint().is_some() {
             return;
         }
@@ -937,6 +1107,15 @@ impl Browser {
                 self.fire_load_if_ready(key);
                 self.note_first_paint(key);
             }
+        }
+        // Document rules of speculation rules follow the links the tasks above changed.
+        self.document_rules_after_task();
+        // The script the checkpoint ran (observer callbacks, `load` events) or a host command
+        // ran before it belongs to no task body: it is not attributed to the next task
+        // (`pyro_webapi::perf::longtask::ran_script`). The checkpoint of a nested task leaves
+        // it to the outer task.
+        if pyro_webapi::perf::TASK_HOOKS && pyro_runtime::task_depth() <= 1 {
+            pyro_js::reset_entered();
         }
     }
 }
@@ -1019,6 +1198,7 @@ impl BrowserThread {
         engine.register::<pyro_webapi::performance::PerformanceResourceTiming>();
         engine.register::<pyro_webapi::server_timing::PerformanceServerTiming>();
         engine.register::<pyro_webapi::performance::PerformanceNavigationTiming>();
+        engine.register::<pyro_webapi::performance::PerformanceTimingConfidence>();
         engine.register::<nav::PerformanceTiming>();
         engine.register::<nav::PerformanceNavigation>();
         Ok(engine)
@@ -1065,8 +1245,11 @@ impl BrowserThread {
             local_storage_seed: Default::default(),
             completions: std::collections::HashMap::new(),
             ready_responses: Default::default(),
+            prefetches: Default::default(),
             csp_inherit_next: None,
+            isolation_next: None,
             csp_sandbox_next: None,
+            document_rules: Default::default(),
         };
         // The VM's deferred work (WebAssembly.compile/instantiate settling, finished on a
         // compilation thread) runs in a task of this loop: JavaScriptCore would run it from a WTF
@@ -1298,6 +1481,7 @@ impl Browser {
         let layout_bodies = self.layout_bodies_for(own_identity, &config);
         let client = pyro_net::NetClient::new(config)?;
         client.set_ignore_certificate_errors(self.ignore_certificate_errors);
+        client.set_reporting_sink(Some(std::sync::Arc::new(ContextReporting { handle: self.loop_handle(), context: id })));
         if let Some(c) = self.contexts.iter_mut().find(|c| c.id == id) {
             c.loader = Some(Rc::new(NetLoader::new(client.clone())));
             c.net = Some(client);
@@ -1352,6 +1536,8 @@ impl Browser {
             }
             c.id != id
         });
+        // Prefetches of a context that is gone.
+        self.sweep_prefetches();
         before != self.contexts.len()
     }
 
@@ -1426,10 +1612,11 @@ impl Browser {
             self.scheduler().post(pyro_runtime::TaskSource::Networking, move |b| done(b, Err("page is gone".into())));
             return;
         };
+        let cors = options.crossorigin.is_some();
+        let document_origin = origin.clone();
         let done: FetchDone = match options.integrity {
             None => done,
             Some(integrity) => {
-                let cors = options.crossorigin.is_some();
                 Box::new(move |b, result| {
                     let result = result.and_then(|r| match loader::integrity_error(&r, Some(&integrity), cors, &origin) {
                         Some(message) => Err(message),
@@ -1439,6 +1626,15 @@ impl Browser {
                 })
             }
         };
+        // pyro: the tainting the response is used with is the final origin's, as the document's own
+        // layout fetches take it (`loader::is_opaque`: a no-cors redirect through another origin, or
+        // a loader that does not report it, is opaque though the response says otherwise).
+        let done: FetchDone = Box::new(move |b, result| {
+            done(b, result.map(|mut r| {
+                r.opaque = loader::is_opaque(&r, cors, &document_origin);
+                r
+            }))
+        });
         let Some(loader) = self.loader_for(page) else {
             self.scheduler()
                 .post(pyro_runtime::TaskSource::Networking, move |b| done(b, Err("no resource loader".into())));
@@ -1468,7 +1664,7 @@ impl Browser {
         options: SubresourceOptions,
         done: Box<dyn FnOnce(Result<pyro_dom::layout::LayoutBody, String>) + Send>,
     ) {
-        let (request, origin) = {
+        let (mut request, origin) = {
             let Some(state) = self.doc(frame) else { return };
             if state.main_frame.loader_id != *loader {
                 return;
@@ -1478,6 +1674,9 @@ impl Browser {
                 state.main_frame.origin.clone(),
             )
         };
+        // Resource Timing: what a style sheet's `url()` or `@import` fetches has an entry, initiator
+        // type "css" (Paint Timing's contentful paint of a CSS image reads it to know the image arrived).
+        request.initiator = Some(pyro_webapi::resource_timing::Initiator::Css);
         let cors = options.crossorigin.is_some();
         if kind == ResourceKind::Image && options.integrity.is_none() {
             let shape = speculate::Shape::of(self, &request).expect("whole image");
@@ -1553,7 +1752,12 @@ impl Browser {
         // Only for the document that is still the frame's (the key names it).
         let live = self.doc(frame).is_some_and(|d| document_client(&d.main_frame) == key.document());
         let Some(p) = self.page(frame.page).filter(|_| live) else { return };
-        if p.frames.layout_bodies.start(&key) {
+        // A layout that asked first has its own fetch of the same request in flight: the document's
+        // body completes that slot (the fetch's later answer finds it ready and writes nothing), so a
+        // script that measures right after the document's load sees the layout with the body, not
+        // one that still waits for a second request (an `@import` a frame's layout reached before
+        // the import event did).
+        if p.frames.layout_bodies.start(&key) || p.frames.layout_bodies.pending(&key) {
             p.frames.layout_bodies.finish(key, body);
         }
     }
@@ -1661,6 +1865,7 @@ impl Browser {
                 stylesheets: Default::default(),
                 images: Default::default(),
                 preloads: Default::default(),
+                speculation: Default::default(),
                 refresh: Default::default(),
                 _owner_pin: None,
                 in_order_scripts: Default::default(),
@@ -1674,9 +1879,11 @@ impl Browser {
             popup: None,
             script_closable: false,
             opener_origin: None,
+            popup_creator: None,
             popup_sandbox: None,
             user_agent_override: None,
             max_touch_points: 0,
+            window_hidden: false,
             script_execution_disabled: false,
             bypass_csp: false,
             extra_http_headers: Default::default(),
@@ -1774,8 +1981,12 @@ impl Browser {
     /// requested browsing context name, and the opener's object reaches its
     /// documents. Without one (`noopener`) only the context is shared.
     pub fn adopt_popup(&mut self, page: PageId, opener: PageId, ticket: Option<Rc<pyro_webapi::PopupTicket>>) {
-        if let Some(p) = self.page_mut(page) { p.script_closable = true; }
+        if let Some(p) = self.page_mut(page) {
+            p.script_closable = true;
+            p.popup_creator = Some(opener);
+        }
         let Some(ticket) = ticket else { return };
+        let opener_isolation = self.page(opener).and_then(|p| p.main_frame.page_dom.as_ref().map(|d| d.document_isolation())).unwrap_or(0);
         let opener_state = self.page(opener).map(|p| {
             let frame = &p.main_frame;
             (Rc::downgrade(&p.frames), (frame.origin.clone(), frame.opaque_origin, frame.base_url.clone()))
@@ -1808,6 +2019,11 @@ impl Browser {
             if let Some(opener_host) = frames.upgrade() {
                 p.frames.cluster_group.set(opener_host.cluster_group.get());
                 p.frames.share_origin_keying(&opener_host);
+                // Cross-Origin-Opener-Policy: its initial about:blank document has its creator's
+                // policy (a popup made ahead, `FrameHost::prebuild_popup`, already does).
+                if !prebuilt {
+                    p.frames.set_coop(opener_host.coop_for_popup(origin.0.clone()));
+                }
             }
             *p.frames.opener.borrow_mut() = Some(frames);
             if let Some(child) = ticket.opener_child() {
@@ -1823,6 +2039,7 @@ impl Browser {
                     realm.realm.set_origin(Some(origin.0.clone()));
                 }
                 if let Some(dom) = &p.main_frame.page_dom {
+                    dom.set_document_isolation(opener_isolation);
                     dom.set_window_agent_cluster(p.frames.cluster_group.get(), frames::frame_origin_key(&p.main_frame));
                     dom.set_base_url(&origin.2);
                     let site = pyro_net::Url::parse(&origin.0).ok().and_then(|url| pyro_net::cookies::partition_key(&url));
@@ -1842,6 +2059,14 @@ impl Browser {
         }
         p.popup = Some(ticket);
         self.sync_root(page);
+    }
+
+    /// Whether the `window.open` that made popup `page` ran with a user activation (the popup's
+    /// first navigation then may invoke a URL text directive).
+    pub fn set_popup_user_gesture(&mut self, page: PageId, gesture: bool) {
+        if let Some(p) = self.page(page) {
+            p.nav.directive_gesture.set(Some(gesture));
+        }
     }
 
     /// The page `page` opened as a popup with its opener kept, if any.
@@ -1909,6 +2134,34 @@ impl Browser {
             bindings.set_max_touch_points(points);
         }
         self.refresh_frame_settings(page);
+        true
+    }
+
+    /// Minimizes (`hidden`) or restores the page's window: every document of the page, frames included, gets
+    /// `document.visibilityState` "hidden" and `visibilitychange` (or "visible" and the event again), and the
+    /// documents the page commits while it is minimized start hidden. Returns false if there is no such page.
+    pub fn set_window_hidden(&mut self, page: PageId, hidden: bool) -> bool {
+        let Some(state) = self.page_mut(page) else { return false };
+        if state.window_hidden == hidden {
+            return true;
+        }
+        state.window_hidden = hidden;
+        self.refresh_frame_settings(page);
+        let Some(host) = self.page(page).map(|p| p.frames.clone()) else { return false };
+        // The top document first, then its frames.
+        fn collect(b: &Browser, host: &frames::FrameHost, key: FrameKey, out: &mut Vec<Rc<pyro_webapi::PageDom>>) {
+            if let Some(dom) = b.doc(key).and_then(|d| d.main_frame.page_dom.clone()) {
+                out.push(dom);
+            }
+            for child in host.child_keys(key) {
+                collect(b, host, child, out);
+            }
+        }
+        let mut documents = Vec::new();
+        collect(self, &host, page.into(), &mut documents);
+        for dom in documents {
+            pyro_webapi::lifecycle::set_window_hidden(&dom, hidden);
+        }
         true
     }
 
@@ -2179,7 +2432,26 @@ impl Browser {
         let requirement = csp_embedded::requirement(self, page, &opts.url);
         let required_csp = requirement.map(|r| r.policy);
         self.prepare_required_csp(page, required_csp.clone(), None);
+        // HTML "determining navigation params policy container": the embedder policy (HTML § 7.1.4) of
+        // an about:blank document is its creator's (a parent frame's, a popup's opener's) or, for a
+        // top-level document that navigated itself, the one it leaves.
+        let embedder = match self.local_scheme_csp(page, &opts.url) {
+            Some(i) => Some((i.embedder_policy, i.embedder_reporting)),
+            None if page.child.is_none()
+                && opts.cdp_request_id.is_none()
+                && !matches!(opts.reason, NavigationReason::AddressBar | NavigationReason::History) =>
+            {
+                self.doc(page).and_then(|d| d.main_frame.page_dom.as_ref().map(|dom| (dom.embedder_policy(), dom.embedder_reporting())))
+            }
+            None => None,
+        };
         self.commit_document(page, &opts, loader_id.clone(), "null", history, None)?;
+        if let Some((policy, reporting)) = embedder {
+            if let Some(dom) = self.doc(page).and_then(|d| d.main_frame.page_dom.clone()) {
+                dom.set_embedder_policy(policy);
+                dom.set_embedder_reporting(reporting);
+            }
+        }
         if let Some(policy) = &required_csp {
             csp_embedded::enforce_on_document(self, page, policy);
         }
@@ -2260,7 +2532,9 @@ impl Browser {
         let csp_sandbox = self.doc_mut(page).and_then(|mut p| p.committing_csp_sandbox.take());
         // `pageswap` at the document being replaced, then it (and its frames) unloads.
         self.fire_page_swap(page, &opts.url, history, origin);
+        let unload_start = clock::now();
         self.unload_documents(page);
+        let unload_span = (unload_start, clock::now());
         let host = self.page(page.page).ok_or(JsError::ContextDestroyed)?.frames.clone();
         self.cancel_pending_document(page);
         host.invalidate_focus(page, false);
@@ -2297,6 +2571,7 @@ impl Browser {
                 flags.forms_blocked |= parent.sandbox.forms_blocked;
                 flags.propagates_to_popups |= parent.sandbox.propagates_to_popups;
                 flags.downloads_blocked |= parent.sandbox.downloads_blocked;
+                flags.storage_access_blocked |= parent.sandbox.storage_access_blocked;
             }
             flags
         } else {
@@ -2348,6 +2623,11 @@ impl Browser {
             }
         }
         let scripts = self.page(page.page).ok_or(JsError::ContextDestroyed)?.init_scripts.clone();
+        // The new document's Document-Isolation-Policy (a fetched one's was decided by the loader).
+        let new_isolation = match self.isolation_next.take() {
+            Some((key, policy)) if key == page => policy,
+            _ => self.creator_isolation(page).unwrap_or(0),
+        };
         let (frame_id, mut old, scripts, nav, old_dom, initial_same_origin) = {
             let mut p = self.doc_mut(page).ok_or(JsError::Type("no such page".into()))?;
             p.main_frame.network_idle = NetworkIdle::default();
@@ -2355,6 +2635,7 @@ impl Browser {
             // replaced by a document of its own origin.
             let blank_loaded = p.main_frame.loaded && p.main_frame.page_dom.as_ref().is_some_and(|d| d.blank_requested());
             let initial_same_origin = !blank_loaded
+                && p.main_frame.page_dom.as_ref().map_or(0, |d| d.document_isolation()) == new_isolation
                 && p.nav.is_initial_blank()
                 && previous_origin.as_deref() == Some(actual_origin.as_str())
                 && actual_origin != "null";
@@ -2369,6 +2650,7 @@ impl Browser {
             p.stylesheets = Default::default();
             p.images = Default::default();
             p.preloads = Default::default();
+            p.speculation = Default::default();
             p.refresh = Default::default();
             p.required_csp = required_csp;
             p.csp_sandbox = csp_sandbox;
@@ -2395,6 +2677,12 @@ impl Browser {
             p.main_frame.loader_id = loader_id.clone();
             p.main_frame.unreachable = unreachable.clone();
             let entry_url = unreachable.as_ref().map_or(opts.url.as_str(), |u| u.url.as_str());
+            // Navigation Timing: the unload event of the document this one replaces is exposed
+            // when both are same-origin (and no real previous document: not the initial blank).
+            p.nav.set_unload_span(
+                (!p.nav.is_first_blank() && previous_origin.as_deref() == Some(actual_origin.as_str()) && actual_origin != "null")
+                    .then_some(unload_span),
+            );
             p.nav.commit_document_at(&opts.url, entry_url, history, None);
             p.nav.set_document(Some((page_dom.dom.clone(), page_dom.document())));
             p.nav.set_page_dom(&page_dom);
@@ -2403,13 +2691,18 @@ impl Browser {
         if let Some(host) = self.page(page.page).map(|p| p.frames.clone()) {
             host.store_ancestor_origins(page);
         }
+        if page.child.is_none() {
+            // The document that asked for the speculation-rules prefetches is gone.
+            self.sweep_prefetches();
+        }
         let (old_dom, replaced) = old_dom;
         // A child frame's or popup's initial about:blank Window made reusable
         // (`FrameHost::reuse_realm`) becomes the new document's: it keeps its
         // realm, event target and what script put on it, as browsers keep
         // the Window object.
         let reused = match &old_dom {
-            Some(dom) if initial_same_origin && dom.reusable_window() => {
+            // (A frame whose `credentialless` changed gets a new Window: another storage partition's.)
+            Some(dom) if initial_same_origin && dom.reusable_window() && dom.is_credentialless() == page_dom.is_credentialless() => {
                 let at = old.iter().position(|r| {
                     r.world.is_none() && !r.realm.is_deferred() && !r.realm.is_disposed() && !r.realm.is_lingering()
                 });
@@ -2543,6 +2836,8 @@ impl Browser {
     fn dispose_page(&mut self, page: PageId) -> bool {
         let Some(pos) = self.page_index(page) else { return false };
         self.cancel_pending_document(page.into());
+        // Bounce Tracking Mitigations: a closing tab ends its extended navigation.
+        self.bounce_page_closed(page);
         let host = self.pages[pos].frames.clone();
         host.invalidate_focus(page.into(), false);
         host.retire_children(page.into());
@@ -2570,6 +2865,8 @@ impl Browser {
         }
         self.emit(page, PageEvent::FrameDestroyed { frame_id: p.main_frame.id.clone() });
         drop(p);
+        // The page's speculation-rules prefetches go with it.
+        self.sweep_prefetches();
         self.engine.release_closed();
         true
     }

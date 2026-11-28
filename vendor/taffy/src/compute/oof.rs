@@ -372,7 +372,23 @@ pub fn compute_oof_layout(tree: &mut impl LayoutContainingBlock, node_id: NodeId
     let style = tree.get_core_container_style(node_id);
     let direction = style.direction();
     let claims = style.is_containing_block();
+    // pyro: a scroll container's scrollable overflow size (its in-flow overflow plus the end padding),
+    // the extent of the scrollable containing block of an anchor-positioned box (css-position-4).
+    #[cfg(feature = "content_size")]
+    let scrollable = {
+        let overflow = style.overflow();
+        let padding = style.padding().resolve_or_zero(Some(area.size.width), |val, basis| tree.calc(val, basis));
+        let reversed = output.scrollable_overflow_rect.is_reversed();
+        let rect = output.scrollable_overflow_rect.rect();
+        (overflow.x.is_scroll_container() || overflow.y.is_scroll_container()).then(|| Size {
+            width: if reversed.x { area.size.width } else { f32_max(area.size.width, rect.right + padding.right) },
+            height: if reversed.y { area.size.height } else { f32_max(area.size.height, rect.bottom + padding.bottom) },
+        })
+    };
+    #[cfg(not(feature = "content_size"))]
+    let scrollable = None;
     drop(style);
+    tree.set_oof_scrollable_size(node_id, scrollable);
 
     let candidates = output.oof_candidates.take();
     #[cfg(feature = "content_size")]
@@ -388,6 +404,7 @@ pub fn compute_oof_layout(tree: &mut impl LayoutContainingBlock, node_id: NodeId
         claims,
         reversed,
     );
+    tree.set_oof_scrollable_size(node_id, None);
     // Always record the hoisted child list (even when empty) so that lists recorded by previous
     // layout runs do not persist
     tree.clear_hoisted_children(node_id);
@@ -565,6 +582,9 @@ fn solve_oof_box<Tree: LayoutContainingBlock>(
 ) -> Result<OofBoxLayout, (bool, Size<f32>)> {
     let anchor_container = anchor_container.filter(|_| tree.uses_anchor_queries(candidate.node));
     let child_style = tree.get_oof_item_style(candidate.node);
+
+    // pyro: the scrollable containing block of a box with a valid default anchor in a scroll container
+    let area_size = anchor_container.and_then(|container| tree.oof_scrollable_area(candidate.node, container, area_size)).unwrap_or(area_size);
 
     // If the current node is a grid container then the box is positioned relative to the
     // grid area determined by its grid-placement properties (which falls back to the passed
@@ -899,6 +919,47 @@ fn solve_oof_box<Tree: LayoutContainingBlock>(
         }
     }
 
+    // pyro: the `width` and `height` of an absolutely positioned table are minimums, as in flow: it is
+    // never narrower than its min-content width nor shorter than its rows at that width (CSS Tables 3
+    // § 3.9.2, § 3.9.4 and the abspos section; WPT css-tables `absolute-tables-002`, `-004`,
+    // `-height-quirks-001`, css-position `position-absolute-table-001`). A width or height the table
+    // takes from stretching is a minimum already (`min_size` above).
+    // (A table's min-content width also wins over `max-width` in Chrome: it is applied again after the
+    // final clamp below.)
+    let table_min_width = if is_table && (known_dimensions.width.is_some() || max_size.width.is_some()) {
+        Some(tree.measure_child_size(
+            candidate.node,
+            Size::NONE,
+            area_size.map(Some),
+            Size { width: AvailableSpace::MinContent, height: AvailableSpace::MaxContent },
+            SizingMode::ContentSize,
+            AbsoluteAxis::Horizontal,
+            Line::FALSE,
+        ))
+    } else {
+        None
+    };
+    if is_table {
+        if let (Some(width), Some(content)) = (known_dimensions.width, table_min_width) {
+            known_dimensions.width = Some(width.max(content));
+        }
+        // (the height is a minimum with or without a known width: without one the table is measured at its
+        // shrink-to-fit width)
+        if let Some(height) = known_dimensions.height {
+            let width = known_dimensions.width;
+            let content = tree.measure_child_size(
+                candidate.node,
+                Size { width, height: None },
+                area_size.map(Some),
+                Size { width: width.map_or(available_space.width, AvailableSpace::Definite), height: available_space.height },
+                SizingMode::ContentSize,
+                AbsoluteAxis::Vertical,
+                Line::FALSE,
+            );
+            known_dimensions.height = Some(height.max(content));
+        }
+    }
+
     // pyro: a height known before the box's content is measured (its `height`, both insets, a ratio)
     // is definite; one its content gives is not, so its children's percentage heights behave as
     // `auto` (CSS 2.1 § 10.5; WPT CSS2 `normal-flow/blocks-025`).
@@ -953,10 +1014,22 @@ fn solve_oof_box<Tree: LayoutContainingBlock>(
                 SizingMode::ContentSize,
                 Line::FALSE,
             );
-            known_dimensions.unwrap_or(measured_size)
+            if is_table {
+                // pyro: a table's `height` is a minimum (its rows make it taller; grid.rs lays it out so)
+                Size {
+                    width: known_dimensions.width.map_or(measured_size.width, |width| width.max(measured_size.width)),
+                    height: known_dimensions.height.map_or(measured_size.height, |height| height.max(measured_size.height)),
+                }
+            } else {
+                known_dimensions.unwrap_or(measured_size)
+            }
         }
     }
     .maybe_clamp(min_size, max_size);
+    let final_size = match table_min_width {
+        Some(min_width) => Size { width: final_size.width.max(min_width), ..final_size },
+        None => final_size,
+    };
 
     if trial || tree.checks_position_overflow(candidate.node) {
         let shift = anchor_container.map_or(Point::ZERO, |container| tree.position_try_scroll_offset(candidate.node, container));

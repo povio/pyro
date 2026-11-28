@@ -1059,6 +1059,21 @@ impl Animate for LengthPercentage {
                     }
                 }
 
+                // pyro: a zero length term of the mix drops out (`12.5%`, not `calc(12.5% + 0px)`;
+                // Chrome, WPT css/motion offset-path-interpolation-006).
+                fn without_zero_length(mut node: CalcNode) -> LengthPercentage {
+                    node.simplify_and_sort();
+                    if let CalcNode::Sum(terms) = &node {
+                        let is_zero_length =
+                            |t: &CalcNode| matches!(t, CalcNode::Leaf(ComputedLeaf::Length(l)) if l.px() == 0.0);
+                        if terms.iter().any(is_zero_length) && terms.iter().any(|t| !is_zero_length(t)) {
+                            let mut kept: Vec<CalcNode> = terms.iter().filter(|t| !is_zero_length(t)).cloned().collect();
+                            node = if kept.len() == 1 { kept.pop().expect("one term") } else { CalcNode::Sum(kept.into()) };
+                        }
+                    }
+                    LengthPercentage::new_calc(node, AllowedNumericType::All)
+                }
+
                 let (l, r) = procedure.weights();
                 let one = self.to_calc_node();
                 let other = other.to_calc_node();
@@ -1071,17 +1086,14 @@ impl Animate for LengthPercentage {
                             Ok::<_, ()>(CalcNode::Leaf(merged))
                         }).collect::<Result<Vec<_>, _>>();
                         if let Ok(terms) = terms {
-                            return Ok(Self::new_calc(CalcNode::Sum(terms.into()), AllowedNumericType::All));
+                            return Ok(without_zero_length(CalcNode::Sum(terms.into())));
                         }
                     }
                 }
                 let one = product_with(one, l as f32);
                 let other = product_with(other, r as f32);
 
-                Self::new_calc(
-                    CalcNode::Sum(vec![one, other].into()),
-                    AllowedNumericType::All,
-                )
+                without_zero_length(CalcNode::Sum(vec![one, other].into()))
             },
         })
     }

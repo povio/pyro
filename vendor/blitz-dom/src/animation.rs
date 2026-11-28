@@ -93,7 +93,7 @@ pub struct TextKeyframes {
 
 #[derive(Debug, PartialEq)]
 pub struct TextKeyframe {
-    /// The computed keyframe offset, 0 to 1.
+    /// The computed keyframe offset (0 to 1; outside it for a timeline range offset).
     pub offset: f64,
     /// The keyframe's easing (`None`: `linear`).
     pub easing: Option<String>,
@@ -393,9 +393,16 @@ struct ResolvedFrame {
 impl BaseDocument {
     /// Compute CSS animation declarations for script without changing playback.
     pub fn css_animation_frames(&self, id: NodeId, name: &str) -> Option<Vec<(f64, Option<String>, Option<String>, Vec<(String, String, String)>)>> {
-        use style_traits::ToCss;
         let node = self.nodes.get(id)?;
         let primary = node.primary_styles()?.clone();
+        self.animation_frames_in(node, primary, name, None, None)
+    }
+
+    pub(crate) fn animation_frames_in(
+        &self, node: &Node, primary: ServoArc<ComputedValues>, name: &str,
+        pseudo: Option<(&style::selector_parser::PseudoElement, &ServoArc<ComputedValues>)>, generated: Option<&str>,
+    ) -> Option<Vec<(f64, Option<String>, Option<String>, Vec<(String, String, String)>)>> {
+        use style_traits::ToCss;
         let _scope = crate::stylo::LayoutThreadScope::enter();
         let guard = self.guard.read();
         let shared = SharedStyleContext {
@@ -408,16 +415,16 @@ impl BaseDocument {
         let animation = match animation_name_scope(self, node) {
             Some(scope) => self.stylist.lookup_keyframes_scoped(&name, scope, node),
             None => self.stylist.lookup_keyframes(&name, node),
-        }?;
+        };
+        let generated = if animation.is_none() { generated } else { None };
+        if animation.is_none() && generated.is_none() { return None; }
         let mut thread = ThreadLocalStyleContext::new();
         let mut context = StyleContext { shared: &shared, thread_local: &mut thread };
         let tree = self.stylist.rule_tree();
         let base_rules = tree.remove_animation_rules(primary.rules());
-        let base = if base_rules == *primary.rules() { primary } else { cascade(node, &mut context, base_rules.clone(), &primary) };
+        let base = if base_rules == *primary.rules() { primary } else { cascade_for(node, pseudo, &mut context, base_rules.clone(), &primary) };
         let mut frames = Vec::new();
-        for step in &animation.steps {
-            let KeyframesStepValue::Declarations { block } = &step.value else { continue };
-            let specified = block.read_with(&guard);
+        let mut step = |offset: f64, specified: &PropertyDeclarationBlock| {
             let mut easing = None;
             let mut composite = None;
             for declaration in specified.normal_declaration_iter() {
@@ -429,16 +436,24 @@ impl BaseDocument {
             }
             let block = keyframe_block(specified, &base);
             let ids: Vec<_> = block.normal_declaration_iter().map(|d| d.id().to_owned()).collect();
-            if ids.is_empty() && easing.is_none() && composite.is_none() { continue; }
+            if ids.is_empty() && easing.is_none() && composite.is_none() { return; }
             let locked = ServoArc::new(self.guard.wrap(block));
             let rules = tree.update_rule_at_level(CascadeLevel::new(CascadeOrigin::Animations), LayerOrder::root(),
                 Some(locked.borrow_arc()), &base_rules, &shared.guards, &mut false).unwrap_or_else(|| base_rules.clone());
-            let computed = cascade(node, &mut context, rules, &base);
+            let computed = cascade_for(node, pseudo, &mut context, rules, &base);
             let values = ids.into_iter().map(|id| {
                 let id = id.as_borrowed();
                 (id.name().into_owned(), computed.computed_value_to_string(id), base.computed_value_to_string(id))
             }).collect();
-            frames.push((f64::from(step.start_offset.percentage.0), easing, composite, values));
+            frames.push((offset, easing, composite, values));
+        };
+        if let Some(animation) = &animation {
+            for keyframe in &animation.steps {
+                let KeyframesStepValue::Declarations { block } = &keyframe.value else { continue };
+                step(f64::from(keyframe.start_offset.percentage.0), block.read_with(&guard));
+            }
+        } else if let Some(css) = generated {
+            step(0.0, &parse_declarations_at(css, &self.url.url_extra_data()));
         }
         Some(frames)
     }
@@ -1437,11 +1452,15 @@ fn sample_property(
     if frames.is_empty() {
         return None;
     }
-    // Neutral keyframes: the underlying value.
-    if frames[0].offset != 0.0 {
+    // pyro: a keyframe at a timeline range offset (`cover 0%`) has a computed offset outside 0..1;
+    // the frames are in offset order (stable: equal offsets keep their order).
+    frames.sort_by(|a, b| a.offset.partial_cmp(&b.offset).unwrap_or(std::cmp::Ordering::Equal));
+    // Neutral keyframes: the underlying value, where no keyframe has offset 0 or 1.
+    if !frames.iter().any(|f| f.offset == 0.0) {
         let value = underlying?.clone();
+        let at = frames.partition_point(|f| f.offset < 0.0);
         frames.insert(
-            0,
+            at,
             Frame {
                 offset: 0.0,
                 easing: resolved.implicit_easing.as_ref(),
@@ -1449,13 +1468,17 @@ fn sample_property(
             },
         );
     }
-    if frames[frames.len() - 1].offset != 1.0 {
+    if !frames.iter().any(|f| f.offset == 1.0) {
         let value = underlying?.clone();
-        frames.push(Frame {
-            offset: 1.0,
-            easing: resolved.implicit_easing.as_ref(),
-            value,
-        });
+        let at = frames.partition_point(|f| f.offset <= 1.0);
+        frames.insert(
+            at,
+            Frame {
+                offset: 1.0,
+                easing: resolved.implicit_easing.as_ref(),
+                value,
+            },
+        );
     }
     let at = |offset: f64| frames.iter().filter(|f| f.offset == offset).count();
     if progress < 0.0 && at(0.0) > 1 {
@@ -1573,6 +1596,21 @@ pub(crate) fn cascade_sampled_pseudos<'a>(
 }
 
 /// pyro: `rules` cascaded as the `pseudo` of `node` (whose style is `primary`).
+/// `cascade` for the element itself or, with `pseudo` (and the pseudo-element's parent style), for one of its
+/// pseudo-elements.
+fn cascade_for<'a>(
+    node: &'a Node,
+    pseudo: Option<(&style::selector_parser::PseudoElement, &ServoArc<ComputedValues>)>,
+    context: &mut StyleContext<'_, &'a Node>,
+    rules: StrongRuleNode,
+    style: &ComputedValues,
+) -> ServoArc<ComputedValues> {
+    match pseudo {
+        Some((pseudo, parent)) => cascade_pseudo(node, context, rules, style, pseudo, parent),
+        None => cascade(node, context, rules, style),
+    }
+}
+
 fn cascade_pseudo<'a>(
     node: &'a Node,
     context: &mut StyleContext<'_, &'a Node>,

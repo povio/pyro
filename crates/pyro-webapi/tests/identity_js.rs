@@ -2,6 +2,11 @@ use crate::support;
 use pyro_webapi::*;
 use support::network::*;
 
+/// Whether the recorded request head has the header `name` (any case: hyper writes Title-Case names) with exactly `value`.
+fn has_header(head: &str, name: &str, value: &str) -> bool {
+    head.split("\r\n").filter_map(|line| line.split_once(": ")).any(|(n, v)| n.eq_ignore_ascii_case(name) && v == value)
+}
+
 #[test]
 fn identity_is_page_scoped_validated_atomically_and_snapshotted_per_request() {
     let server = Server::new();
@@ -65,12 +70,12 @@ fn identity_is_page_scoped_validated_atomically_and_snapshotted_per_request() {
     let requests = server.requests.lock().unwrap();
     assert_eq!(requests.len(), 5);
     for (_, headers, _) in &requests[..3] {
-        assert!(headers.contains("user-agent: Mozilla/5.0 UA-one\r\n"));
-        assert!(headers.contains("accept-language: sl-SI,en;q=0.8\r\n"));
+        assert!(has_header(headers, "user-agent", "Mozilla/5.0 UA-one"));
+        assert!(has_header(headers, "accept-language", "sl-SI,en;q=0.8"));
     }
-    assert!(requests[3].1.contains(&format!("user-agent: {default_ua}\r\n")));
-    assert!(requests[3].1.contains("accept-language: fr-FR\r\n"));
-    assert!(requests[4].1.contains(&format!("user-agent: {default_ua}\r\n")));
+    assert!(has_header(&requests[3].1, "user-agent", &default_ua));
+    assert!(has_header(&requests[3].1, "accept-language", "fr-FR"));
+    assert!(has_header(&requests[4].1, "user-agent", &default_ua));
     assert!(!requests[4].1.contains("fr-FR"));
     drop(requests);
     let mut starts = Vec::new();
@@ -108,6 +113,6 @@ fn browser_identity_defaults_do_not_turn_simple_cross_origin_requests_into_prefl
     let requests = remote.requests.lock().unwrap();
     assert_eq!(requests.len(), 1, "browser-generated UA must not cause an OPTIONS request");
     assert!(requests[0].0.starts_with("GET "));
-    assert!(requests[0].1.contains("user-agent: Page-agent\r\n"));
-    assert!(requests[0].1.contains("accept-language: de-DE\r\n"));
+    assert!(has_header(&requests[0].1, "user-agent", "Page-agent"));
+    assert!(has_header(&requests[0].1, "accept-language", "de-DE"));
 }

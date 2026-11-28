@@ -1,4 +1,5 @@
 use super::*;
+use crate::cenc::{Protection, SampleEnc, SeigEntry};
 
 struct Cursor<'a> {
     b: &'a [u8],
@@ -15,7 +16,9 @@ impl Cursor<'_> {
     }
 }
 
-pub(super) fn parse(data: &[u8], moof: u64, tracks: &BTreeMap<u32, TrackInfo>) -> Result<Vec<Span>> {
+/// `moof` is the stream offset of the movie fragment box, `payload` that of its first child
+/// (auxiliary sample information is addressed from the fragment, and lives in it).
+pub(super) fn parse(data: &[u8], moof: u64, payload: u64, tracks: &BTreeMap<u32, TrackInfo>) -> Result<Vec<Span>> {
     let mut spans = Vec::new();
     let mut previous_end = moof;
     for item in Boxes(data) {
@@ -46,6 +49,7 @@ pub(super) fn parse(data: &[u8], moof: u64, tracks: &BTreeMap<u32, TrackInfo>) -
             _ => return Err(Error::Unsupported),
         };
         let scale = f64::from(info.track.timescale);
+        let first = spans.len();
         let mut offset = base;
         for item in Boxes(traf) {
             let (kind, b) = item?;
@@ -85,10 +89,17 @@ pub(super) fn parse(data: &[u8], moof: u64, tracks: &BTreeMap<u32, TrackInfo>) -
                     duration: f64::from(delta) / scale,
                     key: sf & 0x10000 == 0,
                     data: Bytes::new(),
+                    enc: None,
                 };
                 spans.push(Span { offset, size: length as usize, sample });
                 offset = offset.checked_add(u64::from(length)).ok_or(Error::Invalid)?;
                 time = time.checked_add(u64::from(delta)).ok_or(Error::Invalid)?;
+            }
+        }
+        if let Some(protection) = &info.track.protection {
+            let encs = sample_encryption(traf, protection, spans.len() - first, base, payload, data)?;
+            for (span, enc) in spans[first..].iter_mut().zip(encs) {
+                span.sample.enc = enc;
             }
         }
         previous_end = offset;
@@ -105,4 +116,178 @@ pub(super) fn parse(data: &[u8], moof: u64, tracks: &BTreeMap<u32, TrackInfo>) -
         return Err(Error::Unsupported);
     }
     Ok(spans)
+}
+
+/// The Common Encryption parameters of the `count` samples of a `traf`: the sample group
+/// (`sbgp`/`sgpd` `seig`) each belongs to, and its initialization vector and subsample map from
+/// `senc` or from the auxiliary information (`saiz`/`saio`) when `senc` is absent.
+fn sample_encryption(
+    traf: &[u8],
+    protection: &Protection,
+    count: usize,
+    base: u64,
+    payload: u64,
+    moof: &[u8],
+) -> Result<Vec<Option<Box<SampleEnc>>>> {
+    let mut local: Vec<SeigEntry> = Vec::new();
+    let mut assigned: Vec<u32> = Vec::new();
+    let (mut senc, mut saiz, mut saio) = (None, None, None);
+    for item in Boxes(traf) {
+        let (kind, b) = item?;
+        match kind {
+            b"sgpd" => {
+                if let Some(groups) = super::init::seig_groups(b)? {
+                    local = groups;
+                }
+            }
+            b"sbgp" => {
+                if b.get(4..8) == Some(&b"seig"[..]) {
+                    let mut p = if b.first() == Some(&1) { 12 } else { 8 };
+                    let entries = u32at(b, p)? as usize;
+                    p += 4;
+                    for _ in 0..entries {
+                        let samples = u32at(b, p)? as usize;
+                        let index = u32at(b, p + 4)?;
+                        p += 8;
+                        let room = count.saturating_sub(assigned.len());
+                        assigned.resize(assigned.len() + samples.min(room), index);
+                    }
+                }
+            }
+            b"senc" => senc = Some(b),
+            b"saiz" => saiz = Some(b),
+            b"saio" => saio = Some(b),
+            _ => {}
+        }
+    }
+    // Where the per-sample records are: (bytes, whether `senc` says they carry subsamples,
+    // the per-sample record sizes of `saiz` when that gave the location).
+    let mut sizes: Option<(u8, &[u8])> = None;
+    // The record count disagrees with the fragment's samples: its protected samples cannot be decrypted
+    // (they get an undecryptable `SampleEnc`), the fragment's clear samples and the rest of the stream are fine.
+    let mut broken = false;
+    // `senc` flag 0x1 (ISO/IEC 23001-7:2011 7.2.1 override_TrackEncryptionBox_parameters): the box carries an
+    // IV size and key ID that replace the `tenc` ones for the samples of the default group. (Later editions
+    // dropped the flag; the IV size varies per sample only through `seig` sample groups, handled by `group_entry`.)
+    let mut overridden: Option<(u8, [u8; 16], bool)> = None;
+    let (aux, subsamples_flag): (Option<&[u8]>, Option<bool>) = if let Some(b) = senc {
+        let flags = u32at(b, 0)?;
+        let mut at = 4;
+        if flags & 1 != 0 {
+            // AlgorithmID (24 bits), IV_size (8 bits), KID (16 bytes).
+            let kid: [u8; 16] = b.get(8..24).and_then(|k| k.try_into().ok()).ok_or(Error::Invalid)?;
+            // AlgorithmID 0: the box's samples are not encrypted.
+            let unencrypted = b.get(4..7) == Some(&[0, 0, 0][..]);
+            overridden = Some((*b.get(7).ok_or(Error::Invalid)?, kid, unencrypted));
+            at = 24;
+        }
+        if u32at(b, at)? as usize != count {
+            broken = true;
+            (None, None)
+        } else {
+            (Some(b.get(at + 4..).ok_or(Error::Invalid)?), Some(flags & 2 != 0))
+        }
+    } else if let (Some(saiz), Some(saio)) = (saiz, saio) {
+        let skip = if u32at(saiz, 0)? & 1 != 0 { 8 } else { 0 };
+        let default = *saiz.get(4 + skip).ok_or(Error::Invalid)?;
+        if u32at(saiz, 5 + skip)? as usize != count {
+            broken = true;
+        }
+        sizes = Some((default, saiz.get(9 + skip..).ok_or(Error::Invalid)?));
+        let version = *saio.first().ok_or(Error::Invalid)?;
+        let skip = if u32at(saio, 0)? & 1 != 0 { 8 } else { 0 };
+        // One offset: the records of every run are contiguous.
+        if u32at(saio, 4 + skip)? != 1 {
+            return Err(Error::Unsupported);
+        }
+        let offset = if version == 0 { u64::from(u32at(saio, 8 + skip)?) } else { u64at(saio, 8 + skip)? };
+        let absolute = base.checked_add(offset).ok_or(Error::Invalid)?;
+        let at = usize::try_from(absolute.checked_sub(payload).ok_or(Error::Unsupported)?).map_err(|_| Error::Invalid)?;
+        // Auxiliary data in the media data box is not retained yet when the fragment is parsed.
+        (Some(moof.get(at..).ok_or(Error::Unsupported)?), None)
+    } else {
+        (None, None)
+    };
+    let aux = if broken { None } else { aux };
+    let mut out = Vec::with_capacity(count);
+    let mut p = 0;
+    for k in 0..count {
+        let entry = group_entry(k, &assigned, protection, &local)?;
+        // The `senc` override replaces the IV size and key ID of the samples of the default group.
+        let default_group = assigned.get(k).copied().unwrap_or(0) == 0;
+        let (iv_size, kid, protected) = match overridden {
+            Some((size, kid, unencrypted)) if default_group => (size, kid, entry.protected && !unencrypted),
+            _ => (entry.iv_size, entry.kid, entry.protected),
+        };
+        let mut iv = Vec::new();
+        let mut subsamples = Vec::new();
+        if let Some(aux) = aux {
+            let start = p;
+            let size = usize::from(iv_size);
+            iv = aux.get(p..p + size).ok_or(Error::Invalid)?.to_vec();
+            p += size;
+            let with_subsamples = match (subsamples_flag, &sizes) {
+                (Some(flag), _) => flag,
+                (None, Some((default, list))) => {
+                    let info = if *default != 0 { usize::from(*default) } else { usize::from(*list.get(k).ok_or(Error::Invalid)?) };
+                    info > size
+                }
+                _ => false,
+            };
+            if with_subsamples {
+                let n = usize::from(u16at(aux, p)?);
+                p += 2;
+                for _ in 0..n {
+                    subsamples.push((u16at(aux, p)?, u32at(aux, p + 2)?));
+                    p += 6;
+                }
+            }
+            if let Some((default, list)) = &sizes {
+                let info = if *default != 0 { usize::from(*default) } else { usize::from(*list.get(k).ok_or(Error::Invalid)?) };
+                p = start + info;
+            }
+        }
+        if !protected {
+            out.push(None);
+            continue;
+        }
+        if broken {
+            // No usable record for this sample: an empty IV never decrypts.
+            out.push(Some(Box::new(SampleEnc {
+                scheme: protection.scheme,
+                kid,
+                iv: Vec::new(),
+                subsamples: Vec::new(),
+                crypt_blocks: entry.crypt_blocks,
+                skip_blocks: entry.skip_blocks,
+            })));
+            continue;
+        }
+        if iv.is_empty() {
+            // `Per_Sample_IV_Size` 0: the track's constant IV (cbcs).
+            match &entry.constant_iv {
+                Some(constant) => iv = constant.clone(),
+                None => return Err(Error::Invalid),
+            }
+        }
+        out.push(Some(Box::new(SampleEnc {
+            scheme: protection.scheme,
+            kid,
+            iv,
+            subsamples,
+            crypt_blocks: entry.crypt_blocks,
+            skip_blocks: entry.skip_blocks,
+        })));
+    }
+    Ok(out)
+}
+
+/// The protection entry of sample `k`: its `seig` group (indices above 0x10000 name the
+/// fragment's own `sgpd`), else the `tenc` default.
+fn group_entry<'a>(k: usize, assigned: &[u32], protection: &'a Protection, local: &'a [SeigEntry]) -> Result<&'a SeigEntry> {
+    match assigned.get(k).copied().unwrap_or(0) {
+        0 => Ok(&protection.default),
+        i if i > 0x10000 => local.get((i - 0x10001) as usize).ok_or(Error::Invalid),
+        i => protection.groups.get(i as usize - 1).ok_or(Error::Invalid),
+    }
 }

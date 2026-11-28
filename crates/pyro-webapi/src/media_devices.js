@@ -1,7 +1,8 @@
 // navigator.mediaDevices for one realm (Media Capture and Streams, MediaDevices). pyro exposes no
-// capture device: enumerateDevices() resolves with an empty list and getUserMedia() rejects with
-// NotFoundError, as a browser on a machine without cameras or microphones does. `native.active()`
-// tells whether the realm's document is fully active.
+// capture device: without the embedder's fake devices enumerateDevices() resolves with an empty list
+// and getUserMedia() rejects with NotFoundError, as a browser on a machine without cameras or
+// microphones does (media_stream.js has the rest). `native.active()` tells whether the realm's
+// document is fully active.
 (function (native) {
   'use strict';
   const token = Symbol('pyro');
@@ -29,27 +30,22 @@
     enumerateDevices() {
       try {
         check(this, 'enumerateDevices');
-        return resolve(ArrayC.of());
+        return resolve(native.stream('enumerate'));
       } catch (e) {
         return reject(e);
       }
     }
     getSupportedConstraints() {
       if (!devices.has(this)) throw new TypeErrorC("Failed to execute 'getSupportedConstraints' on 'MediaDevices': Illegal invocation");
-      // No device, so no constraint is supported.
-      return {};
+      return native.stream('supportedConstraints');
     }
     getUserMedia(constraints = {}) {
       try {
         check(this, 'getUserMedia');
-        if (constraints === null || (typeof constraints !== 'object' && typeof constraints !== 'function')) {
-          throw new TypeErrorC("Failed to execute 'getUserMedia' on 'MediaDevices': The provided value is not of type 'MediaStreamConstraints'.");
-        }
-        const { audio = false, video = false } = constraints;
-        if (!audio && !video) {
-          throw new TypeErrorC("Failed to execute 'getUserMedia' on 'MediaDevices': At least one of audio and video must be requested");
-        }
-        return reject(new DOMExceptionC('Requested device not found', 'NotFoundError'));
+        // Constraint validation, the Permissions Policy check (camera/microphone, before any device lookup),
+        // the device choice and the stream are media_stream.js's; without the embedder's fake devices it
+        // rejects NotFoundError, as a machine without devices does.
+        return resolve(native.stream('getUserMedia', constraints));
       } catch (e) {
         return reject(e);
       }

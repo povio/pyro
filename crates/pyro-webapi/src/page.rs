@@ -118,6 +118,8 @@ pub struct PageDom {
     /// The sandboxed forms browsing context flag (no `allow-forms`): forms submit nothing.
     /// Set by the embedder.
     forms_sandboxed: Cell<bool>,
+    /// The sandboxed storage access browsing context flag (`Sandbox::storage_access_blocked`).
+    storage_access_sandboxed: Cell<bool>,
     /// The document's origin is opaque although its URL's is not (a sandboxed
     /// frame without `allow-same-origin`). Set by the embedder before the
     /// context services.
@@ -125,9 +127,24 @@ pub struct PageDom {
     /// The origin a sandboxed (opaque-origin) document would have without the sandbox (its
     /// "precursor origin"): what CSP's `'self'` matches in it, as Chrome.
     csp_precursor_origin: RefCell<Option<String>>,
+    /// The `Connection-Allowlist` headers of the document shown, with the document they belong
+    /// to (another document has none: [`PageDom::connection_allowlist`]).
+    connection_allowlist: RefCell<Option<(NodeId, std::sync::Arc<pyro_net::connection_allowlist::ConnectionPolicy>)>>,
     /// Schemeful site of this environment's top-level document at creation.
     cookie_partition_key: RefCell<Option<String>>,
     cookie_site_context: Cell<pyro_net::cookies::SiteContext>,
+    /// The document's `Document-Isolation-Policy` (0 none, 1 `isolate-and-require-corp`, 2
+    /// `isolate-and-credentialless`), which keys its agent cluster with its origin.
+    isolation: Cell<u8>,
+    /// The anonymous partition of a credentialless iframe tree this document belongs to
+    /// (`crate::credentialless`).
+    pub(crate) anonymous: RefCell<Option<crate::credentialless::Anonymous>>,
+    /// For a top-level document: the partition its credentialless frames share, made on first use.
+    pub(crate) credentialless_root: std::cell::OnceCell<Rc<crate::credentialless::CredentiallessPartition>>,
+    /// The document has storage access (Storage Access API): `requestStorageAccess()` was granted
+    /// to it, or a same-origin navigation of its own frame kept the previous document's. Its
+    /// unpartitioned cookies are then not blocked (`crate::storage_access`).
+    pub(crate) storage_access_granted: Cell<bool>,
     agent_cluster: RefCell<AgentCluster>,
     /// HTML "sticky activation": the user interacted with the document.
     sticky_activation: Cell<bool>,
@@ -157,6 +174,10 @@ pub struct PageDom {
     /// in one task agree. Cleared at each task checkpoint.
     timeline_time: Cell<Option<f64>>,
     current_script: Cell<Option<NodeId>>,
+    /// The document `current_script` belongs to: the script's node document when it started
+    /// (HTML "execute the script element" sets that Document's `currentScript`), which stays
+    /// the owner of the setting if the script is moved to another document meanwhile.
+    current_script_document: Cell<Option<NodeId>>,
     pub(crate) realms: RefCell<FxHashMap<RealmId, WeakRealm>>,
     /// The main-world realm (`main_world_realm`): of `realms`, the earliest
     /// without a world name, kept as realms register (`register_realm`) and
@@ -247,6 +268,8 @@ pub struct PageDom {
     pub net: RefCell<Option<pyro_net::NetClient>>,
     pub(crate) cookie_observers: RefCell<Vec<crate::cookie_store::events::WindowObserver>>,
     pub(crate) intersections: crate::intersection_observer::BindingState,
+    /// Performance timeline buffers and observer queues of the entry types in `perf/`.
+    timeline: crate::perf::timeline::TimelineBuffers,
     pub(crate) resizes: crate::resize_observer::BindingState,
     /// Scroll event targets awaiting the next rendering update, per document
     /// (None: the document itself), each fired once ("pending scroll event
@@ -254,6 +277,10 @@ pub struct PageDom {
     /// block the next document's events. The value: whether a `scrollend`
     /// follows (a scroll that ran to completion, not a layout clamp).
     pub(crate) pending_scrolls: RefCell<Vec<((NodeId, Option<NodeId>), bool, Rc<()>)>>,
+    /// pyro: the offset each scroller (document, None: the viewport) had when its last `scroll`
+    /// event fired: a layout adjustment that brings it back there before the next event is no
+    /// scroll to report (`layout_api::scroll_back_where_reported`).
+    pub(crate) scroll_reported: RefCell<std::collections::HashMap<(NodeId, Option<NodeId>), (i32, i32)>>,
     /// pyro: whether each `content-visibility: auto` element skipped its contents when its
     /// `contentvisibilityautostatechange` last fired (`layout_api::content_visibility_events`).
     pub(crate) cv_auto_states: RefCell<std::collections::HashMap<NodeId, bool>>,
@@ -306,6 +333,9 @@ pub struct PageDom {
     /// HTML "visibility state" of the document is "hidden": set as it is
     /// unloaded (`lifecycle::unload`).
     hidden: Cell<bool>,
+    /// The window the document is in is minimized (`Browser.setWindowBounds`): its visibility state is
+    /// "hidden" until the window is restored ([`crate::lifecycle::set_window_hidden`]).
+    window_hidden: Cell<bool>,
     pub(crate) transition_captures: RefCell<Option<Box<crate::view_transition::Captures>>>,
     pub(crate) transition_quota: RefCell<Option<std::sync::Arc<crate::view_transition::Quota>>>,
     /// The document's unload events (`pagehide` ...) have started: set before the first is
@@ -386,8 +416,12 @@ pub struct PageDom {
     /// A deferred hover update after the hovered element was removed is
     /// scheduled (`crate::input::update_hover_after_task`).
     pub(crate) hover_update_queued: Cell<bool>,
+    /// The hovered node's ancestor chain, for boundary events after it was removed.
+    pub(crate) hover_trail: RefCell<crate::input::HoverTrail>,
     press_target: Cell<Option<NodeId>>,
     pub(crate) pressed_pseudo: Cell<Option<pyro_dom::geometry::GeneratedHit>>,
+    /// The scrollbar thumb drag in progress ([`crate::scrollbar_drag`]).
+    pub(crate) scrollbar_drag: Cell<Option<crate::scrollbar_drag::Drag>>,
     /// The `pointerdown` of the press in progress was canceled: its
     /// compatibility mouse events (moves while down, `mouseup`) are not
     /// sent, as in Chromium; a canceled `pointerup` suppresses nothing.
@@ -404,6 +438,11 @@ pub struct PageDom {
     pub(crate) highlights: RefCell<Vec<crate::highlights::CustomHighlight>>,
     /// The ranges of the last fragment navigation's text directives (`::target-text`).
     pub(crate) target_text: RefCell<Vec<Rc<crate::range::RangeOwner>>>,
+    /// The fragment of a cross-document load still to be scrolled to (`crate::highlights`).
+    pub(crate) pending_fragment: RefCell<Option<crate::highlights::PendingFragment>>,
+    /// The node a text directive scrolled to: where the next Tab starts from when nothing is
+    /// focused (HTML "sequential focus navigation starting point").
+    pub(crate) sequential_start: Cell<Option<NodeId>>,
     /// Undo/redo steps of user edits (`crate::edit_commands`).
     pub(crate) undo: RefCell<crate::edit_commands::UndoHistory>,
     /// Values set by a formatting command on a collapsed selection.
@@ -433,6 +472,9 @@ pub struct PageDom {
     pub(crate) ignore_destructive_writes: Cell<u32>,
     /// Control activated by a Space keydown, clicked on the matching keyup.
     pub(crate) space_target: Cell<Option<NodeId>>,
+    /// Keys typed to search an option of an open picker or a base-appearance listbox by its label, and
+    /// the time (ms) of the last: the search restarts after a second (`input::option_typeahead`).
+    pub(crate) option_typeahead: RefCell<(String, f64)>,
     /// The last input that can move focus was a pointer press (a key press
     /// clears it): Chrome's `:focus-visible` modality.
     pub(crate) pointer_modality: Cell<bool>,
@@ -470,6 +512,10 @@ pub struct PageDom {
     /// pyro: the web faces canvas text last drew with, by the key of what made them
     /// (canvas.rs `canvas_web_faces`): their bytes are not copied or decompressed per draw.
     canvas_face_cache: RefCell<Option<(u64, Rc<Vec<pyro_canvas::text::WebFace>>)>>,
+    /// pyro: the computed layouts of this document's SVG `<text>` elements, valid for one key (the DOM
+    /// version, the viewport and the loaded faces: `svg_text::layout_of`), so repeated `getBBox` /
+    /// text queries do not lay the text out again.
+    pub(crate) svg_text_cache: RefCell<(u64, FxHashMap<NodeId, Rc<crate::svg_text::TextLayout>>)>,
     /// Tasks queued through [`PageDom::post_task`] so far.
     posted_tasks: Cell<u64>,
     pub(crate) web_tasks: crate::scheduler::PendingTasks,
@@ -482,8 +528,23 @@ pub struct PageDom {
     debugger_gesture: Cell<bool>,
     /// Fullscreen API: the document's fullscreen elements, the topmost last (`crate::fullscreen`).
     pub(crate) fullscreen_stack: RefCell<Vec<NodeId>>,
-    /// The document's permissions policy allows `fullscreen` (`crate::fullscreen::enabled`).
-    fullscreen_allowed: Cell<bool>,
+    /// An `exitFullscreen()` task is queued: a further call joins it (`crate::fullscreen::exit`).
+    pub(crate) fullscreen_exit_pending: Cell<bool>,
+    /// Pointer Lock API: the lock target and the frozen pointer position (`crate::pointer_lock`).
+    pub(crate) pointer_lock: RefCell<crate::pointer_lock::State>,
+    /// The document's permissions policy (`crate::permissions_policy`): the one source of every
+    /// feature gate (fullscreen, compute-pressure, media-playback-while-not-visible, ...).
+    pub(crate) permissions_policy: RefCell<crate::permissions_policy::PermissionsPolicy>,
+    /// Elements on `fullscreen_stack` that a descendant document's request pushed (a frame owner made
+    /// fullscreen for its content's sake): exiting that content takes them out, a directly requested one stays.
+    pub(crate) fullscreen_implicit: RefCell<Vec<NodeId>>,
+    /// For a document whose policy does not allow it: whether its frame was rendered at the last
+    /// checkpoint (`crate::media::refresh_frame_rendered`).
+    pub(crate) media_frame_rendered: Cell<bool>,
+    /// An audio context was interrupted (or made interrupted) by a lazy not-rendered check
+    /// before a checkpoint pass saw the frame not rendered: the pass owes it a resume once the
+    /// frame is rendered again.
+    pub(crate) media_audio_blocked: Cell<bool>,
     /// The paint worklet global (`crate::paint_worklet`), made on the first `addModule()`.
     pub(crate) paint_worklet: RefCell<Option<Rc<pyro_js::Realm>>>,
     /// That worklet's module map (every module of its graphs: entries and imports).
@@ -546,6 +607,12 @@ pub struct PageDom {
     frame_resize_queued: Cell<bool>,
     frame_resize_next: Cell<Option<std::time::Instant>>,
     frame_resize_wake: Cell<bool>,
+    /// pyro: the classic scrollbar gutters (horizontal and vertical totals, CSS px) the visual
+    /// viewport's size was last read with, and whether they changed since its `resize` fired.
+    visual_gutters: Cell<(f64, f64)>,
+    visual_resize_due: Cell<bool>,
+    /// A task for the visual viewport's due `resize` is queued ([`PageDom::visual_viewport_after_task`]).
+    visual_resize_queued: Cell<bool>,
     /// The emulated viewport is `mobile` (a top document): the layout
     /// follows the document's viewport `<meta>` ([`PageDom::layout`]), the
     /// Dom's viewport-`<meta>` version it last took, and the viewport metrics
@@ -665,6 +732,9 @@ pub struct NavigationRequest {
     /// The navigation replaces the document's history entry (HTML history
     /// handling "replace"): see [`PageDom::navigates_by_replacing`].
     pub replace: bool,
+    /// The navigation is the activation behavior of a trusted click (a followed link, a
+    /// submitted form): `NavigateEvent.userInitiated`.
+    pub user_initiated: bool,
 }
 
 /// Whether `url` parses as a `javascript:` URL (HTML "navigate to a javascript: URL").
@@ -774,6 +844,19 @@ pub trait PageHooks {
     fn frame_tree(&self) -> Vec<Rc<PageDom>> {
         Vec::new()
     }
+    /// The serialized origin of the top-level document of this document's frame tree (the
+    /// embedding origin of the Storage Access API); `None` when the embedder cannot tell.
+    fn top_level_origin(&self) -> Option<String> {
+        None
+    }
+    /// HTML-in-Canvas: gives the render snapshot of the top document the documents its frames show
+    /// now (each frame's markup, URL, sheets and scroll position), as a screenshot does before it
+    /// takes one: `drawElementImage` paints an element holding a frame (an `<iframe>`, `<object>`
+    /// or `<embed>` showing a document) from it. Called before the DOM is borrowed. Only the
+    /// frames the elements `owners` (the frame elements in the drawn subtree) hold, and the frames
+    /// in them, of this document's origin are rendered: a frame of another origin is not painted
+    /// (HTML-in-Canvas privacy), and rendering it would show how long it takes to a page.
+    fn refresh_frame_documents(&self, _owners: &[NodeId]) {}
     /// HTML "secure context" for this document, ancestors included (the embedder knows the frame
     /// chain); `None` when it cannot tell (the document's own URL decides then).
     fn is_secure_context(&self) -> Option<bool> {
@@ -856,6 +939,12 @@ pub trait PageHooks {
     /// `requestVideoFrameCallback` callbacks run with it,
     /// [`crate::media::run_video_frame_callbacks`]).
     fn request_animation_frame(&self) {}
+    /// Runs a rendering update of the document soon, for the entry types of
+    /// `perf/` (`perf::timeline::request_rendering`): a plain frame timer, not
+    /// one of the client-activity eager frames. Defaults to a frame.
+    fn request_rendering_frame(&self) {
+        self.request_animation_frame();
+    }
     /// Starts a navigation of the frame showing the document.
     fn navigate(&self, request: NavigationRequest);
     /// HTML "plan to navigate" (a submitted form): the navigation `navigate`
@@ -872,6 +961,24 @@ pub trait PageHooks {
     /// `window.close()`: the embedder closes the page if its top-level
     /// browsing context is script-closable (a popup). The default ignores it.
     fn close_window(&self) {}
+    /// `window.resizeTo()`/`resizeBy()` of a popup: the embedder gives its viewport this size (CSS
+    /// pixels) and the window a `resize` event. The default ignores it.
+    fn resize_window(&self, _width: u32, _height: u32) {}
+    /// The hovered element changed: `link` is the `<a>`/`<area>` with an `href` that is it or
+    /// its nearest flat-tree ancestor (`None`: the pointer is over no link). Speculation rules'
+    /// `moderate` and `eager` eagerness start on a hovered link. Runs inside the pointer event's
+    /// dispatch: it must not run script or borrow the DOM.
+    fn link_hover(&self, _link: Option<NodeId>) {}
+    /// Whether [`PageHooks::link_hover`] and [`PageHooks::link_pointer_down`] matter now (the document
+    /// has speculation rule sets that wait for a pointer): when false the page does not even look for
+    /// the link under the pointer.
+    fn wants_link_hover(&self) -> bool {
+        false
+    }
+    /// A mouse button or touch went down on `link` (as [`PageHooks::link_hover`] names it), before
+    /// `pointerdown` is dispatched. Speculation rules' `conservative` eagerness starts on it, even
+    /// when the page cancels the event.
+    fn link_pointer_down(&self, _link: NodeId) {}
     /// Thread-safe poster that runs a closure as a task on the page's
     /// browser thread (pyro-net sinks run on the I/O thread). `None` when the
     /// embedder cannot post across threads (network APIs then fail).
@@ -967,6 +1074,31 @@ pub trait PageHooks {
     fn opener_window<'s>(&self, scope: &pyro_js::Scope<'s>) -> pyro_js::JsResult<pyro_js::Value<'s>> {
         Ok(scope.null())
     }
+    /// Whether a popup this document creates must have no opener (HTML "obtain a browsing context
+    /// to use for a navigation response", Cross-Origin-Opener-Policy): the document is a frame
+    /// whose origin differs from its top-level document's, whose COOP is `same-origin` (or
+    /// `same-origin-plus-COEP`).
+    fn coop_forces_noopener(&self) -> bool {
+        false
+    }
+    /// COOP access reporting (HTML "cross-origin opener policy access reporting"): the script
+    /// of this document, running in `scope`'s realm, reached `property` (a CrossOriginProperties
+    /// name, `indexed` or `named`) of the window of document `target`, which is another window
+    /// (`target_side`: its `coop_side()`).
+    /// Called only while some document names a COOP reporting endpoint ([`crate::popup::note_window_access`]).
+    fn coop_access(
+        &self,
+        _scope: &pyro_js::Scope<'_>,
+        _target: &Rc<PageDom>,
+        _target_side: &dyn std::any::Any,
+        _property: &str,
+    ) {
+    }
+    /// What `coop_access` of another document needs to know of this one as the accessed window:
+    /// an embedder-defined value (`None`: it has none, nothing is reported).
+    fn coop_side(&self) -> Option<Rc<dyn std::any::Any>> {
+        None
+    }
     /// WindowProxy of the child browsing context in `scope`'s realm.
     fn frame_window<'s>(&self, _scope: &pyro_js::Scope<'s>, _iframe: NodeId) -> Option<pyro_js::Value<'s>> {
         None
@@ -1012,6 +1144,9 @@ impl PageDom {
             frame_resize_queued: Cell::new(false),
             frame_resize_next: Cell::new(None),
             frame_resize_wake: Cell::new(false),
+            visual_gutters: Cell::new((0.0, 0.0)),
+            visual_resize_due: Cell::new(false),
+            visual_resize_queued: Cell::new(false),
             mobile: Cell::new(false),
             viewport_meta_seen: Cell::new(None),
             meta_resize_from: Cell::new(None),
@@ -1028,14 +1163,20 @@ impl PageDom {
             popups_sandboxed: Cell::new(false),
             document_domain_sandboxed: Cell::new(false),
             forms_sandboxed: Cell::new(false),
+            storage_access_sandboxed: Cell::new(false),
             opaque_origin: Cell::new(false),
             csp_precursor_origin: RefCell::new(None),
+            connection_allowlist: RefCell::new(None),
             cookie_site_context: Cell::new(if cookie_partition_key.is_some() {
                 pyro_net::cookies::SiteContext::SameSite
             } else {
                 pyro_net::cookies::SiteContext::CrossSite
             }),
             cookie_partition_key: RefCell::new(cookie_partition_key),
+            isolation: Cell::new(0),
+            anonymous: RefCell::new(None),
+            credentialless_root: std::cell::OnceCell::new(),
+            storage_access_granted: Cell::new(false),
             agent_cluster: RefCell::new(AgentCluster { group: AgentClusterGroup::default(), origin: "".into() }),
             sticky_activation: Cell::new(false),
             flushing_iframes: Cell::new(false),
@@ -1050,6 +1191,7 @@ impl PageDom {
             after_task_stamp: Cell::new(None),
             timeline_time: Cell::new(None),
             current_script: Cell::new(None),
+            current_script_document: Cell::new(None),
             realms: RefCell::new(FxHashMap::default()),
             main_world: RefCell::new(None),
             encoding_helpers: RefCell::new(FxHashMap::default()),
@@ -1088,8 +1230,10 @@ impl PageDom {
             mutations: Default::default(),
             current_src: Default::default(),
             intersections: Default::default(),
+            timeline: Default::default(),
             resizes: Default::default(),
             pending_scrolls: Default::default(),
+            scroll_reported: Default::default(),
             cv_auto_states: Default::default(),
             cv_auto_check: Default::default(),
             scroll_clamp: Default::default(),
@@ -1108,6 +1252,7 @@ impl PageDom {
             hooks: RefCell::new(None),
             ready: RefCell::new(FxHashMap::default()),
             hidden: Cell::new(false),
+            window_hidden: Cell::new(false),
             transition_captures: RefCell::new(None),
             transition_quota: RefCell::new(None),
             unloading: Cell::new(false),
@@ -1141,8 +1286,10 @@ impl PageDom {
             media: Default::default(),
             pointer: RefCell::new(None),
             hover_update_queued: Cell::new(false),
+            hover_trail: RefCell::new(Default::default()),
             press_target: Cell::new(None),
             pressed_pseudo: Cell::new(None),
+            scrollbar_drag: Cell::new(None),
             compat_mouse_suppressed: Cell::new(false),
             drag_candidate: Cell::new(None),
             text_drag: Cell::new(None),
@@ -1151,6 +1298,8 @@ impl PageDom {
             selectionchange_pending: RefCell::new(FxHashSet::default()),
             highlights: RefCell::new(Vec::new()),
             target_text: RefCell::new(Vec::new()),
+            pending_fragment: RefCell::new(None),
+            sequential_start: Cell::new(None),
             undo: RefCell::new(Default::default()),
             typing_values: Default::default(),
             script_parser: RefCell::new(None),
@@ -1164,6 +1313,7 @@ impl PageDom {
             written_pending: Cell::new(None),
             ignore_destructive_writes: Cell::new(0),
             space_target: Cell::new(None),
+            option_typeahead: RefCell::new((String::new(), 0.0)),
             pointer_modality: Cell::new(false),
             mouse_capture: Cell::new(Default::default()),
             dialog_returns: RefCell::new(FxHashMap::default()),
@@ -1177,13 +1327,19 @@ impl PageDom {
             css_font_faces: RefCell::new(None),
             canvas_faces: RefCell::new((0, Rc::default())),
             canvas_face_cache: RefCell::new(None),
+            svg_text_cache: RefCell::new((0, FxHashMap::default())),
             posted_tasks: Cell::new(0),
             web_tasks: Default::default(),
             completely_loaded: Cell::new(false),
             input_activation: Cell::new(None),
             debugger_gesture: Cell::new(false),
             fullscreen_stack: RefCell::new(Vec::new()),
-            fullscreen_allowed: Cell::new(true),
+            fullscreen_exit_pending: Cell::new(false),
+            pointer_lock: RefCell::new(Default::default()),
+            permissions_policy: RefCell::default(),
+            fullscreen_implicit: RefCell::new(Vec::new()),
+            media_frame_rendered: Cell::new(true),
+            media_audio_blocked: Cell::new(false),
             paint_worklet: RefCell::new(None),
             paint_worklet_modules: Default::default(),
             audio_worklets: RefCell::new(Vec::new()),
@@ -1244,11 +1400,6 @@ impl PageDom {
     pub(crate) fn is_nested_frame(&self) -> bool {
         self.nested_frame.get()
     }
-    /// Whether the document's permissions policy allows `fullscreen`: true for a top-level
-    /// document; the browser sets a child frame's ([`crate::fullscreen::allowed_in_frame`]).
-    pub fn set_fullscreen_allowed(&self, allowed: bool) {
-        self.fullscreen_allowed.set(allowed);
-    }
     /// Install the origin identity committed by the frame loader, including its opaque token.
     pub fn set_window_agent_cluster(&self, group: AgentClusterGroup, origin: String) {
         *self.agent_cluster.borrow_mut() = AgentCluster { group, origin: origin.into() };
@@ -1282,8 +1433,17 @@ impl PageDom {
     pub fn is_dispatching_load(&self) -> bool {
         self.dispatching_load.get()
     }
+    /// Whether the document's permissions policy allows `fullscreen`.
     pub fn fullscreen_allowed(&self) -> bool {
-        self.fullscreen_allowed.get()
+        crate::permissions_policy::feature_allowed(self, "fullscreen")
+    }
+    /// Whether the document's permissions policy allows `compute-pressure`.
+    pub fn compute_pressure_allowed(&self) -> bool {
+        crate::permissions_policy::feature_allowed(self, "compute-pressure")
+    }
+    /// Whether the document's permissions policy allows `media-playback-while-not-visible`.
+    pub fn media_while_hidden_allowed(&self) -> bool {
+        crate::permissions_policy::feature_allowed(self, "media-playback-while-not-visible")
     }
     pub fn context_services(&self) -> Rc<crate::navigator_extras::ContextServices> {
         self.context_services.borrow().clone()
@@ -1311,6 +1471,11 @@ impl PageDom {
         self.id
     }
 
+    /// A weak handle to this page (for a registry a cross-thread task finds it in by `id`).
+    pub(crate) fn weak_self(&self) -> std::rc::Weak<PageDom> {
+        self.this.clone()
+    }
+
     /// Bytes and type registered for a live `URL.createObjectURL` URL.
     pub fn blob_url(&self, url: &str) -> Option<(bytes::Bytes, String)> {
         self.blob_urls.borrow().get(url).map(|entry| (entry.bytes.clone(), entry.mime.clone()))
@@ -1319,6 +1484,9 @@ impl PageDom {
     /// Number of live object URLs registered by the current document.
     pub fn blob_url_count(&self) -> usize {
         self.blob_urls.borrow().len()
+    }
+    pub(crate) fn window_chrome(&self) -> (bool, i32, i32) {
+        self.window_chrome.get()
     }
     pub fn set_window_chrome(&self, is_popup: bool, left: i32, top: i32) {
         self.window_chrome.set((is_popup, left, top));
@@ -1355,10 +1523,14 @@ impl PageDom {
         if self.disposed.replace(true) {
             return;
         }
+        // Reports the document queued in this task still go out (`reporting_store`).
+        crate::csp_report::flush_pending(self);
         if !self.detached.replace(true) {
             self.release_activity();
         }
         crate::custom::release_document(self);
+        crate::eme::release_document(self);
+        self.timeline.release_entries();
         self.realms.borrow_mut().clear();
         drop(self.main_world.take());
     }
@@ -1372,6 +1544,7 @@ impl PageDom {
     /// (`pyro_js::Realm::linger`) and go when nothing reaches them. DOM calls
     /// on it keep working. [`PageDom::dispose`] later finishes it.
     pub fn detach(&self) {
+        crate::csp_report::flush_pending(self);
         if self.disposed.get() || self.detached.replace(true) {
             return;
         }
@@ -1380,6 +1553,17 @@ impl PageDom {
 
     /// Marks the document as an initial about:blank one whose Window the
     /// next same-origin document may reuse; set before its realm is made.
+    /// The document's Document-Isolation-Policy: its own response's, or for a local-scheme document
+    /// its creator's. Same-origin documents of different policies are different agent clusters:
+    /// the embedder treats them as cross-origin for scripting access and Window reuse.
+    pub fn set_document_isolation(&self, policy: u8) {
+        self.isolation.set(policy);
+    }
+
+    pub fn document_isolation(&self) -> u8 {
+        self.isolation.get()
+    }
+
     pub fn set_reusable_window(&self, reusable: bool) {
         self.reusable_window.set(reusable);
     }
@@ -1461,6 +1645,8 @@ impl PageDom {
         // Highlights hold their ranges' nodes.
         drop(self.highlights.take());
         drop(self.target_text.take());
+        self.pending_fragment.take();
+        self.sequential_start.take();
         self.opaque_storage.clear();
         drop(self.blob_urls.take());
         drop(self.reflected_url_base.take());
@@ -1531,6 +1717,12 @@ impl PageDom {
         self.document_domain_sandboxed.get()
     }
     /// Browser-owned sandbox policy: the sandboxed forms browsing context flag.
+    pub fn set_storage_access_sandboxed(&self, sandboxed: bool) {
+        self.storage_access_sandboxed.set(sandboxed);
+    }
+    pub fn storage_access_sandboxed(&self) -> bool {
+        self.storage_access_sandboxed.get()
+    }
     pub fn set_forms_sandboxed(&self, sandboxed: bool) {
         self.forms_sandboxed.set(sandboxed);
     }
@@ -1550,6 +1742,18 @@ impl PageDom {
     }
     pub(crate) fn csp_precursor_origin(&self) -> Option<String> {
         self.csp_precursor_origin.borrow().clone()
+    }
+    /// The document shown has these `Connection-Allowlist` headers (`None`: none): its own
+    /// response's, or a local-scheme document's inherited from its creator. Every request the
+    /// document, and a worker that inherits them, makes is checked against them.
+    pub fn set_connection_allowlist(&self, policy: Option<std::sync::Arc<pyro_net::connection_allowlist::ConnectionPolicy>>) {
+        *self.connection_allowlist.borrow_mut() = policy.map(|p| (self.document(), p));
+    }
+    /// The `Connection-Allowlist` of the document shown, if it has one.
+    pub fn connection_allowlist(&self) -> Option<std::sync::Arc<pyro_net::connection_allowlist::ConnectionPolicy>> {
+        let held = self.connection_allowlist.borrow();
+        let (doc, policy) = held.as_ref()?;
+        (*doc == self.document()).then(|| policy.clone())
     }
     pub fn set_cookie_context(&self, key: Option<String>, site: pyro_net::cookies::SiteContext) {
         *self.cookie_partition_key.borrow_mut() = key;
@@ -1644,9 +1848,14 @@ impl PageDom {
         let now = Some(std::time::Instant::now());
         self.sticky_activation.set(true);
         self.input_activation.set(now);
+        // Bounce Tracking Mitigations: the top-level site now has the user's interaction.
+        crate::bounce_tracking::input_activated(self);
+        // History-action activation of the close watcher manager (`close_watcher.rs`).
+        self.popover.watchers.activate();
         for peer in self.hooks().map(|h| h.activation_peers()).unwrap_or_default() {
             peer.sticky_activation.set(true);
             peer.input_activation.set(now);
+            peer.popover.watchers.activate();
         }
     }
     /// HTML "transient activation": trusted input within the last five seconds.
@@ -1656,7 +1865,7 @@ impl PageDom {
     /// HTML "consume user activation": the transient activation ends (sticky activation stays), in
     /// every document of the top-level frame tree ([`PageHooks::frame_tree`]), so that another
     /// frame cannot spend the same activation again.
-    pub(crate) fn consume_transient_activation(&self) {
+    pub fn consume_transient_activation(&self) {
         self.input_activation.set(None);
         for other in self.hooks().map(|h| h.frame_tree()).unwrap_or_default() {
             other.input_activation.set(None);
@@ -1780,6 +1989,19 @@ impl PageDom {
                         hide();
                     }
                 }
+            }
+        }
+        // Fullscreen removing steps: elements a removal took out of fullscreen.
+        if self.dom.try_borrow().is_ok_and(|dom| dom.has_removed_fullscreen()) {
+            if let Some(page) = self.this.upgrade() {
+                let removed = self.dom.borrow_mut().take_removed_fullscreen(self.document());
+                crate::fullscreen::removed(&page, removed);
+            }
+        }
+        // Pointer Lock: a lock target a mutation took out of the document releases the lock.
+        if self.pointer_lock.try_borrow().is_ok_and(|state| state.held()) {
+            if let Some(page) = self.this.upgrade() {
+                crate::pointer_lock::check_removed(&page);
             }
         }
         // `<details>` toggles pyro-dom queued: one empty check otherwise.
@@ -2149,6 +2371,49 @@ impl PageDom {
         }
     }
 
+    /// pyro: lays the document out and notes whether the viewport's classic scrollbars appeared,
+    /// vanished or changed size since the last note: the visual viewport is the layout viewport
+    /// less them, so its `resize` is due (Chromium fires it when layout changes the scrollbars;
+    /// WPT visual-viewport `viewport-scrollbars-cause-resize`). Under mobile emulation the viewport
+    /// `<meta>` steps own the visual viewport's resizes.
+    pub(crate) fn note_visual_viewport(&self) {
+        if self.mobile.get() {
+            return;
+        }
+        let Some(layout) = self.try_layout() else { return };
+        let Ok(dom) = self.dom.try_borrow() else { return };
+        layout.synced_geometry_source(&dom);
+        let now = layout.viewport_gutter_totals();
+        if self.visual_gutters.replace(now) != now {
+            self.visual_resize_due.set(true);
+        }
+    }
+
+    /// pyro: the resize steps of a rendering update for the visual viewport: its `resize` when its
+    /// scrollbars changed ([`PageDom::note_visual_viewport`]). The gutters are noted even when no
+    /// `visualViewport` target exists yet.
+    pub fn fire_visual_viewport_resize(self: &Rc<Self>) {
+        if self.is_disposed() || self.mobile.get() {
+            return;
+        }
+        let targets = self.viewport_targets(crate::window::ViewportTarget::VisualViewport);
+        // The scrollbar gutters are tracked every frame, listener or not: a listener added later
+        // must not see the gutters laid out before it as a change (no spurious `resize`). Without
+        // a listener nothing forces a first layout for it.
+        if targets.is_empty() && !self.try_layout().is_some_and(|l| l.has_laid_out()) {
+            return;
+        }
+        self.note_visual_viewport();
+        if !self.visual_resize_due.replace(false) || targets.is_empty() {
+            return;
+        }
+        for target in targets {
+            let event =
+                crate::event::EventCore::trusted(self, crate::event::EventInterface::Event, "resize", false, false);
+            crate::target::fire(self, target, &event);
+        }
+    }
+
     /// The `resize` events of a viewport `<meta>` change: the window's if
     /// the layout viewport or the window changed size, the visual
     /// viewport's if its size or scale changed, then the media query lists
@@ -2304,6 +2569,29 @@ impl PageDom {
         }
     }
 
+    /// After a task: a document whose visual viewport has a listener lays out and notes whether
+    /// its classic scrollbars changed; a change queues the `resize` as a task, so a frame with no
+    /// animation frame callback of its own (an iframe whose script ran from its parent) fires it
+    /// too (Chromium queues it at the layout that changed the scrollbars; WPT visual-viewport
+    /// `viewport-scrollbars-cause-resize-in-iframe`). The rendering update's steps fire it first
+    /// when they come before the task.
+    fn visual_viewport_after_task(self: &Rc<Self>) {
+        if self.is_disposed() || self.mobile.get() || self.viewport_targets(crate::window::ViewportTarget::VisualViewport).is_empty() {
+            return;
+        }
+        self.note_visual_viewport();
+        if !self.visual_resize_due.get() || self.visual_resize_queued.replace(true) {
+            return;
+        }
+        let page = self.this.clone();
+        self.post_task(Box::new(move || {
+            if let Some(page) = page.upgrade() {
+                page.visual_resize_queued.set(false);
+                page.fire_visual_viewport_resize();
+            }
+        }));
+    }
+
     /// After a task: a child frame whose window listens for events re-reads
     /// its iframe's box, so a parent restyle fires `resize` without a read
     /// in the child. At most every max(16 ms, twice the re-read's cost), as
@@ -2394,10 +2682,19 @@ impl PageDom {
         let dom = self.dom.borrow();
         let in_shadow = dom.root_node(script, false).and_then(|root| dom.is_shadow_root(root)).unwrap_or(false);
         self.current_script.set((!in_shadow).then_some(script));
+        self.current_script_document.set(dom.node_document(script).ok());
     }
 
     pub fn set_current_script(&self, script: Option<NodeId>) {
         self.current_script.set(script);
+        let document = script.and_then(|s| self.dom.borrow().node_document(s).ok());
+        self.current_script_document.set(document);
+    }
+
+    /// `document.currentScript` of `document`: the script running for it, none for another
+    /// document of the page (one a script was moved to).
+    pub fn current_script_of(&self, document: NodeId) -> Option<NodeId> {
+        self.current_script.get().filter(|_| self.current_script_document.get().is_none_or(|d| d == document))
     }
 
     /// Lends the network parser for one script it reached: the script's
@@ -2689,8 +2986,10 @@ impl PageDom {
         self.sync_responsive_frames();
         crate::resize_observer::after_task(self);
         self.frame_resize_after_task();
+        self.visual_viewport_after_task();
         crate::layout_api::schedule_scroll_clamp(self);
         crate::animation_events::after_task(self);
+        crate::smil::after_task(self);
         crate::input::update_hover_after_task(self);
         self.url_params_helpers.borrow_mut().retain(|realm, _| {
             self.realms.borrow().get(realm).and_then(|r| r.upgrade()).is_some_and(|r| !r.is_disposed())
@@ -2733,6 +3032,7 @@ impl PageDom {
         }
         !dom.has_iframe_events()
             && !dom.has_changed_popovers()
+            && !dom.has_removed_fullscreen()
             && !dom.has_details_toggles()
             && !self.render_blocking_pending(&dom)
             && !dom.has_pending_mutations()
@@ -2758,6 +3058,10 @@ impl PageDom {
     }
     pub fn hooks_secure_context(&self) -> Option<bool> {
         self.hooks().and_then(|h| h.is_secure_context())
+    }
+    /// The document's performance timeline (`perf/timeline.rs`).
+    pub fn timeline(&self) -> &crate::perf::timeline::TimelineBuffers {
+        &self.timeline
     }
     pub(crate) fn hooks(&self) -> Option<Rc<dyn PageHooks>> {
         self.hooks.borrow().clone()
@@ -2908,6 +3212,16 @@ impl PageDom {
             h.popup_command(popup, command);
         }
     }
+    /// A popup (a top-level context a script opened with window features) may be resized and moved
+    /// by script; other windows ignore it (CSSOM View `resizeTo`, Chrome).
+    pub(crate) fn is_script_sizable_window(&self) -> bool {
+        self.window_chrome.get().0 && !self.nested_frame.get()
+    }
+    pub(crate) fn resize_window(&self, width: u32, height: u32) {
+        if let Some(h) = self.hooks() {
+            h.resize_window(width, height);
+        }
+    }
     pub(crate) fn close_window(&self) {
         if let Some(h) = self.hooks() {
             h.close_window();
@@ -3010,12 +3324,29 @@ impl PageDom {
         self.ready.borrow().get(&doc).copied().unwrap_or("complete")
     }
 
-    /// `document.visibilityState` is "hidden" (`document.hidden`).
+    /// `document.visibilityState` is "hidden" (`document.hidden`): the document was unloaded, or its window
+    /// is minimized.
     pub fn is_hidden(&self) -> bool {
+        self.hidden.get() || self.window_hidden.get()
+    }
+    /// The document was unloaded (`lifecycle::unload`), for good.
+    pub(crate) fn is_unloaded(&self) -> bool {
         self.hidden.get()
     }
+    /// Whether the window the document is in is minimized.
+    pub fn window_hidden(&self) -> bool {
+        self.window_hidden.get()
+    }
+    /// Records that the window is minimized or restored, firing nothing: for a document made in a window
+    /// that is already minimized. A change in a live document goes through [`crate::lifecycle::set_window_hidden`].
+    pub fn set_window_hidden_state(&self, hidden: bool) {
+        self.window_hidden.set(hidden);
+    }
     pub(crate) fn set_hidden(&self, hidden: bool) {
-        self.hidden.set(hidden);
+        if self.hidden.replace(hidden) != hidden {
+            // Sensor readings withheld from a hidden document are delivered when it is shown again.
+            crate::sensors::state_changed(self);
+        }
     }
     /// HTML "unload counter" above 0: the document's `beforeunload` listeners are running, or it
     /// is being unloaded (`pagehide`, `unload`, and after). History traversals it asks for are

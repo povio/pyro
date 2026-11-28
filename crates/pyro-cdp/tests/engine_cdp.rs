@@ -923,6 +923,30 @@ fn window_bounds_round_trip() {
     assert_eq!(w["result"]["bounds"]["left"], 0);
 }
 
+#[test]
+fn minimized_window_hides_its_documents_until_restored() {
+    let mut h = Harness::new();
+    load_html(&mut h, "<!doctype html><body><iframe srcdoc='<p>x</p>'></iframe>");
+    eval_value(
+        &mut h,
+        "window.log = []; document.addEventListener('visibilitychange', () => log.push(document.visibilityState));",
+    );
+    let window = h.page("Browser.getWindowForTarget", json!({}))["result"]["windowId"].clone();
+    assert_eq!(eval_value(&mut h, "[document.visibilityState, document.hidden]"), json!(["visible", false]));
+    // A rectangle cannot come with a state other than normal.
+    let r = h.page("Browser.setWindowBounds", json!({"windowId": window, "bounds": {"windowState": "minimized", "width": 500}}));
+    assert!(r.get("error").is_some(), "{r}");
+    h.page("Browser.setWindowBounds", json!({"windowId": window, "bounds": {"windowState": "minimized"}}));
+    assert_eq!(eval_value(&mut h, "[document.visibilityState, document.hidden]"), json!(["hidden", true]));
+    assert_eq!(eval_value(&mut h, "frames[0].document.visibilityState"), json!("hidden"));
+    assert_eq!(h.page("Browser.getWindowForTarget", json!({}))["result"]["bounds"]["windowState"], "minimized");
+    // Minimizing again changes nothing; restoring makes the documents visible with one more event.
+    h.page("Browser.setWindowBounds", json!({"windowId": window, "bounds": {"windowState": "minimized"}}));
+    h.page("Browser.setWindowBounds", json!({"windowId": window, "bounds": {"windowState": "normal"}}));
+    assert_eq!(eval_value(&mut h, "[document.visibilityState, frames[0].document.visibilityState]"), json!(["visible", "visible"]));
+    assert_eq!(eval_value(&mut h, "log"), json!(["hidden", "visible"]));
+}
+
 fn wait_for_network_finish(h: &mut Harness, events: &mut Vec<Value>) {
     let deadline = Instant::now() + Duration::from_secs(5);
     while !events.iter().any(|e| e["method"] == "Network.loadingFinished") {
@@ -1400,7 +1424,9 @@ fn input_validation_rejects_before_delivering_events() {
     for params in [
         json!({"type":"mousePressed","x":0,"y":0,"button":"invalid"}),
         json!({"type":"mousePressed","x":0,"y":0,"buttons":32}),
-        json!({"type":"mousePressed","x":0,"y":0,"pointerType":"pen"}),
+        json!({"type":"mousePressed","x":0,"y":0,"pointerType":"pen","tiltX":91}),
+        json!({"type":"mousePressed","x":0,"y":0,"pointerType":"pen","force":1.5}),
+        json!({"type":"mousePressed","x":0,"y":0,"pointerType":"touch"}),
         json!({"type":"mousePressed","x":0,"y":0,"force":0.8}),
     ] {
         assert!(h.page("Input.dispatchMouseEvent", params).get("error").is_some());
@@ -1712,6 +1738,43 @@ fn drag(h: &mut Harness, kind: &str, at: &Value, data: &Value) -> Value {
 }
 
 #[test]
+fn plain_mouse_events_start_and_drive_a_native_drag_like_chromium() {
+    // No Input.setInterceptDrags: the browser runs the drag loop itself (chromedriver's actions
+    // are plain mouse events). Chrome sends pointercancel at its start and no mouse event after;
+    // its target sees the source's effectAllowed, "uninitialized" while the source assigned none.
+    let mut h = Harness::new();
+    let (src, dst, _) = drag_page(&mut h);
+    let types = "text/plain+application/x-custom";
+    mouse(&mut h, "mousePressed", &src, 0.0, 1);
+    let events = mouse(&mut h, "mouseMoved", &src, 5.0, 1);
+    assert!(!events.iter().any(|e| e["method"] == "Input.dragIntercepted"), "{events:?}");
+    mouse(&mut h, "mouseMoved", &dst, 0.0, 1);
+    mouse(&mut h, "mouseReleased", &dst, 0.0, 0);
+    // (Recorded from /Applications/Google Chrome.app headless over CDP, no setInterceptDrags: the
+    // same events and values, with its dragenter/dragover reading dropEffect copy and effectAllowed
+    // all, and only the drop's target store reading what the source left unassigned.)
+    assert_eq!(
+        eval_value(&mut h, "[log.splice(0), moves]"),
+        json!([[
+            "dragstart@src[none,uninitialized,,] b1 c",
+            "pointercancel@src b0",
+            format!("drag@src[none,uninitialized,{types},] b1 c"),
+            format!("dragenter@src[copy,all,{types},] b1 c"),
+            format!("dragover@src[copy,all,{types},] b1 c"),
+            format!("drag@src[none,uninitialized,{types},] b1 c"),
+            format!("dragenter@dst[copy,all,{types},] b1 c"),
+            format!("dragleave@src[none,all,{types},] b1"),
+            format!("dragover@dst[copy,all,{types},] b1 c"),
+            format!("drop@dst[copy,uninitialized,{types},payload] b1 c"),
+            format!("dragend@src[copy,uninitialized,{types},] b0"),
+        ], 1])
+    );
+    // The drag is over: a later move is a plain one again.
+    mouse(&mut h, "mouseMoved", &dst, 0.0, 0);
+    assert_eq!(eval_value(&mut h, "moves"), json!(2));
+}
+
+#[test]
 fn input_set_intercept_drags_keeps_pointer_drags_on_mouse_events() {
     // Playwright 1.59 wraps every left-button mouse.move in
     // setInterceptDrags(true/false); pointer-driven drags (column resizing,
@@ -1734,12 +1797,6 @@ fn input_set_intercept_drags_keeps_pointer_drags_on_mouse_events() {
 fn input_intercepted_native_drag_matches_chromium_event_sequence() {
     let mut h = Harness::new();
     let (src, dst, _) = drag_page(&mut h);
-    // Without interception there is no OS drag loop: no dragstart.
-    mouse(&mut h, "mousePressed", &src, 0.0, 1);
-    mouse(&mut h, "mouseMoved", &src, 10.0, 1);
-    mouse(&mut h, "mouseReleased", &src, 10.0, 0);
-    assert_eq!(eval_value(&mut h, "log.splice(0).join('|')"), json!("mouseup@src b0 c|click@src b0 c"));
-
     // A move below the 3px threshold does not start a drag; past it,
     // dragstart fires and Input.dragIntercepted reports the data.
     mouse(&mut h, "mousePressed", &src, 0.0, 1);
@@ -1942,9 +1999,11 @@ fn input_boundary_events_carry_related_targets_and_follow_a_replaced_hovered_ele
     // events for the element now under the stationary pointer. A removed
     // hovered element gets no out/leave; over/enter name it as relatedTarget
     // and no move events fire, about 100 ms later (Chromium measured 110 ms
-    // in the @povio/ui QueryAutocomplete case). Expectations follow Blink's
-    // BoundaryEventDispatcher::SendBoundaryEvents; they were not recorded
-    // from Chromium.
+    // in the @povio/ui QueryAutocomplete case). The ancestors that survived
+    // the removal (the cell, BODY, HTML, the document) were already entered, so
+    // only the new element gets an enter (WPT pointerevents
+    // pointerevent_after_target_removed, which Chrome passes; Blink's
+    // BoundaryEventDispatcher keeps the last known ancestor chain).
     let mut h = Harness::new();
     eval_value(
         &mut h,
@@ -1986,7 +2045,7 @@ fn input_boundary_events_carry_related_targets_and_follow_a_replaced_hovered_ele
     assert_eq!(
         eval_value(&mut h, "log.splice(0).join(' ')"),
         json!(
-            "pointerover@live<static pointerenter@#document<static pointerenter@HTML<static pointerenter@BODY<static pointerenter@cell<static pointerenter@live<static mouseover@live<static mouseenter@#document<static mouseenter@HTML<static mouseenter@BODY<static mouseenter@cell<static mouseenter@live<static"
+            "pointerover@live<static pointerenter@live<static mouseover@live<static mouseenter@live<static"
         )
     );
     // (`#live:hover`, not a bare `:hover`: about:blank is in quirks mode since 6efaefdaf, as in
@@ -7173,7 +7232,10 @@ fn the_turn_after_an_action_that_does_not_settle_delivers_its_scroll_event() {
     );
     assert!(r.get("error").is_none(), "{r}");
     assert_eq!(r["result"]["reads"]["focused"], "scroll:true", "{r}");
-    assert_eq!(r["result"]["reads"]["pressed"], "scroll,open", "{r}");
+    // The focus's own `scroll` first, then the key's `keydown` (the point of the test), then the
+    // `scroll` of the arrow's default action: ArrowDown on a focused button scrolls the pane that holds
+    // it (the keyboard scrolling default action, 789285ebd; Chrome scrolls it too).
+    assert_eq!(r["result"]["reads"]["pressed"], "scroll,open,scroll", "{r}");
 }
 
 /// A settle waits for the requests its own action started, not for as many

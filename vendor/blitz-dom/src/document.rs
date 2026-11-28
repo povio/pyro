@@ -71,6 +71,12 @@ use style_dom::ElementState;
 use stylo_taffy::CopyStyleGetters;
 use thin_vec::ThinVec;
 use url::Url;
+
+/// pyro: whether a paint for a canvas a page can read back is running on this thread (blitz-paint
+/// `paint_element_subtree`, which holds [`crate::node::UnvisitedPaint`]).
+fn blitz_dom_privacy_paint() -> bool {
+    crate::node::UnvisitedPaint::active()
+}
 use web_time::Instant;
 
 #[cfg(feature = "parallel-construct")]
@@ -407,6 +413,10 @@ pub struct BaseDocument {
     pub svg_sprites: HashMap<String, crate::util::SvgSprite>,
     /// Fetched SVG image resources accessible to this document's href resolver.
     pub svg_images: crate::util::SvgResources,
+    /// pyro: HTML-in-Canvas privacy: [`Self::svg_images`] without the resources of an opaque
+    /// response, with the generation of the map it was taken from ([`Self::svg_images_for_paint`],
+    /// `SvgResourceMap::generation`).
+    pub(crate) privacy_svg_images: std::cell::RefCell<Option<(u64, crate::util::SvgResources)>>,
     /// Changes to the stylist [`Device`] that have been requested since the
     /// last [`resolve`](Self::resolve), to be applied (coalesced into a single
     /// device rebuild) at the start of the next resolve.
@@ -557,6 +567,12 @@ pub struct BaseDocument {
     /// added, replaced or removed), so that CSSOM wrappers can detect that
     /// their cached rule data is stale.
     pub(crate) stylesheet_generation: u64,
+    /// pyro: the `@font-face` faces with a `unicode-range` whose fetch waits for text in the range
+    /// ([`Self::start_pending_fonts`]).
+    pub(crate) pending_fonts: Vec<crate::net::PendingFont>,
+    /// pyro: [`BaseDocument::inherited_highlight_style`] results by (node, highlight pseudo), with the
+    /// stylesheet generation they were computed under; cleared whenever styles are resolved.
+    pub(crate) highlight_style_cache: RefCell<HashMap<(NodeId, style::selector_parser::PseudoElement), (u64, Option<ServoArc<ComputedValues>>, bool)>>,
     /// Map from form control node ID's to their associated forms node ID's
     pub(crate) controls_to_form: HashMap<NodeId, NodeId>,
     /// Nodes that contain sub documents
@@ -701,6 +717,12 @@ pub struct BaseDocument {
     /// pyro: the scroll pseudo-element boxes may be out of date: a style traversal ran or the
     /// tree changed since `resolve_scroll_markers` (`layout::scroll_markers`).
     pub(crate) scroll_markers_dirty: bool,
+    /// pyro: the scroll pseudo-element boxes the pointer is over (`:hover`), innermost first
+    /// (`layout::scroll_markers::hover_scroll_pseudos`).
+    pub(crate) scroll_pseudo_hover: Vec<NodeId>,
+    /// pyro: the scroll container whose marker group has the focus, and whether it shows the focus
+    /// ring (`set_focused_scroll_group`).
+    pub(crate) focused_scroll_group: Option<(NodeId, bool)>,
     pub(crate) named_anchor_nodes: HashMap<(Option<NodeId>, style::values::DashedIdent), HashSet<NodeId>>,
     pub(crate) popover_anchors: HashMap<NodeId, NodeId>,
     anchor_node_names: HashMap<NodeId, (Option<NodeId>, style::values::specified::position::AnchorNameIdent)>,
@@ -742,6 +764,16 @@ pub struct BaseDocument {
     /// pyro: each scroll container's current scroll target (CSS Overflow 5 § 2.1; the viewport's
     /// under the root element), as the embedder tracks them (`set_scroll_targets`).
     pub(crate) scroll_targets: std::collections::HashMap<NodeId, NodeId>,
+    /// pyro: the direction of each scroll container's last scroll on each axis (-1 towards the
+    /// start, 1 towards the end, 0 none yet), as the embedder tracks them
+    /// (`set_scroll_directions`): `scroll-state(scrolled)`.
+    pub(crate) scroll_directions: std::collections::HashMap<NodeId, (i8, i8)>,
+    /// pyro: the elements that are a scroll container's snap target, with the axes (x, y) they
+    /// are snapped on, as the embedder tracks them (`set_snapped`): `scroll-state(snapped)`.
+    pub(crate) snapped_targets: std::collections::HashMap<NodeId, (bool, bool)>,
+    /// pyro: the edges each sticky box is held at by its insets (bit 0 top, 1 right, 2 bottom,
+    /// 3 left), as the embedder tracks them (`set_stuck`): `scroll-state(stuck)`.
+    pub(crate) stuck_targets: std::collections::HashMap<NodeId, u8>,
     /// pyro: a style traversal kept a `::first-line` style for some element (sticky): inline
     /// roots look for the style of their first line (`layout::first_line`).
     pub(crate) first_line_styles: bool,
@@ -974,6 +1006,7 @@ impl BaseDocument {
             media_environment: config.media_environment,
             svg_sprites: HashMap::new(),
             svg_images: Default::default(),
+            privacy_svg_images: Default::default(),
             pending_device_changes: DeviceChanges::empty(),
             page_color_scheme: style::values::specified::color::ColorSchemeFlags::empty(),
             meta_nodes: Default::default(),
@@ -1000,6 +1033,8 @@ impl BaseDocument {
             shadow_sheet_hosts: HashMap::new(),
             linked_page_css: BTreeMap::new(),
             stylesheet_generation: 0,
+            pending_fonts: Vec::new(),
+            highlight_style_cache: RefCell::new(HashMap::new()),
             font_ctx,
             font_face_families: HashMap::new(),
             #[cfg(feature = "parallel-construct")]
@@ -1070,6 +1105,8 @@ impl BaseDocument {
             first_letter_changed: Vec::new(),
             marker_items_restyled: Vec::new(),
             scroll_markers_dirty: true,
+            scroll_pseudo_hover: Vec::new(),
+            focused_scroll_group: None,
             named_anchor_nodes: HashMap::new(),
             popover_anchors: HashMap::new(),
             anchor_node_names: HashMap::new(),
@@ -1100,6 +1137,9 @@ impl BaseDocument {
             transition_paint: None,
             scroll_target_groups: Vec::new(),
             scroll_targets: Default::default(),
+            scroll_directions: Default::default(),
+            snapped_targets: Default::default(),
+            stuck_targets: Default::default(),
             first_line_styles: false,
             first_line_changed: Vec::new(),
             dom_selection: None,
@@ -2300,9 +2340,25 @@ impl BaseDocument {
     /// The requests (URL and request options) of those images, not only their URLs: a variant of
     /// the same URL made otherwise is another request.
     pub fn referenced_images(&self) -> Vec<(String, blitz_traits::net::FetchOptions)> {
+        self.referenced_images_with(true)
+    }
+
+    /// pyro: [`Self::referenced_images`] without those of `loading=lazy` `<img>` elements
+    /// (`elements`: false): what the document's `load` waits for on the renderer's side. A lazy
+    /// image never delays `load` (HTML "lazy loading attributes"), whatever the renderer's request;
+    /// an eager one does, and the renderer must have it before `load` fires: a script that reads
+    /// the image's box in a `load` handler sees the loaded image's size, not a box without it.
+    pub fn referenced_images_with(&self, elements: bool) -> Vec<(String, blitz_traits::net::FetchOptions)> {
         let mut out = Vec::new();
         for element in self.image_owners() {
-            out.extend(element.source_image_request.as_deref().cloned());
+            // Lazy by its `loading` now, or by the image loader's mark (`lazy-image`: it was lazy and
+            // `loading` turned eager, or it is lazy: neither delays `load`).
+            let lazy_img = element.name.local == local_name!("img")
+                && (element.attr(LocalName::from("loading")).is_some_and(|value| value.trim().eq_ignore_ascii_case("lazy"))
+                    || element.attrs.state("lazy-image").is_some());
+            if elements || !lazy_img {
+                out.extend(element.source_image_request.as_deref().cloned());
+            }
             if element.name.ns == markup5ever::ns!(svg) && matches!(&*element.name.local, "image" | "feImage" | "use") {
                 for attr in element.attrs() {
                     if &*attr.name.local == "href" && !attr.value.trim().starts_with('#') {
@@ -2506,6 +2562,8 @@ impl BaseDocument {
     pub fn add_stylesheet_for_node(&mut self, stylesheet: DocumentStyleSheet, node_id: NodeId) {
         // pyro: the sheet of an element of a shadow tree is that shadow root's (`crate::shadow`).
         let host = self.nodes.get(node_id).and_then(|node| node.containing_shadow_host_id());
+        // pyro: the faces the sheet this one replaces left waiting are not this sheet's.
+        self.pending_fonts.retain(|face| face.node_id != Some(node_id));
         if let Some(old) = self.nodes_to_stylesheet.remove(&node_id) {
             self.stylist.remove_stylesheet(old, &self.guard.read());
             self.stylesheet_generation += 1;
@@ -2522,6 +2580,7 @@ impl BaseDocument {
                 &self.guard.read(),
                 self.abort_signal.as_ref(),
                 Some(self.stylist.device()),
+                Some(&mut self.pending_fonts),
             );
             let element = &mut self.nodes[node_id].element_data_mut().unwrap();
             element.special_data = SpecialElementData::Stylesheet(stylesheet.clone());
@@ -2546,6 +2605,7 @@ impl BaseDocument {
             &self.guard.read(),
             self.abort_signal.as_ref(),
             Some(self.stylist.device()),
+            Some(&mut self.pending_fonts),
         );
 
         // Store data on element
@@ -2667,8 +2727,67 @@ impl BaseDocument {
                 }
             }
         }
+        // pyro: `scroll-state()` containers read the offsets (`refresh_scroll_state_queries`).
+        // (And the active scroll marker follows the scroll position: `update_target_current`.)
+        let scroll_state_changed = self.tracks_scroll_states()
+            && self.timeline_scroll.as_ref().is_none_or(|(old, old_viewport)| *old != elements || *old_viewport != viewport);
         self.timeline_scroll = Some((elements, viewport));
+        if scroll_state_changed {
+            self.update_scroll_marker_states();
+            invalidated = true;
+        }
         invalidated
+    }
+
+    /// pyro: the direction of each scroll container's last scroll on each axis (`-1` towards the
+    /// start, `1` towards the end), which `scroll-state(scrolled)` queries. Whether it changed
+    /// (a container with such a query then styles again at the next resolve).
+    pub fn set_scroll_directions(&mut self, directions: std::collections::HashMap<NodeId, (i8, i8)>) -> bool {
+        if self.scroll_directions == directions {
+            return false;
+        }
+        self.scroll_directions = directions;
+        if self.nodes.scroll_state_queries.lock().unwrap().is_empty() {
+            return false;
+        }
+        self.update_scroll_marker_states();
+        true
+    }
+
+    /// pyro: the elements that are a scroll container's snap target, with the axes (x, y) they
+    /// are snapped on, which `scroll-state(snapped)` queries. Whether it changed (a container with
+    /// such a query then styles again at the next resolve).
+    pub fn set_snapped(&mut self, snapped: std::collections::HashMap<NodeId, (bool, bool)>) -> bool {
+        if self.snapped_targets == snapped {
+            return false;
+        }
+        self.snapped_targets = snapped;
+        if self.nodes.scroll_state_queries.lock().unwrap().is_empty() {
+            return false;
+        }
+        self.update_scroll_marker_states();
+        true
+    }
+
+    /// pyro: the sticky boxes held at an edge by their insets, with the edges (bit 0 top, 1 right,
+    /// 2 bottom, 3 left), which `scroll-state(stuck)` queries. Whether it changed (a container
+    /// with such a query then styles again at the next resolve).
+    pub fn set_stuck(&mut self, stuck: std::collections::HashMap<NodeId, u8>) -> bool {
+        if self.stuck_targets == stuck {
+            return false;
+        }
+        self.stuck_targets = stuck;
+        if self.nodes.scroll_state_queries.lock().unwrap().is_empty() {
+            return false;
+        }
+        self.update_scroll_marker_states();
+        true
+    }
+
+    /// pyro: whether a container was queried for `scroll-state()` (the embedder tells the
+    /// state that queries follow only then).
+    pub fn uses_scroll_state(&self) -> bool {
+        !self.nodes.scroll_state_queries.lock().unwrap().is_empty()
     }
 
     /// pyro: see [`Self::scroll_group_moves`].
@@ -2850,6 +2969,60 @@ impl BaseDocument {
         }
     }
 
+    /// pyro: starts the fetch of each pending `unicode-range` face ([`crate::net::PendingFont`]) some
+    /// text of the document has a code point in: a face no character of the document falls in is
+    /// never downloaded (CSS Fonts 4 § 4.5), and one whose text arrives later is fetched then. The
+    /// text is that of the document's text nodes, those of its generated content boxes included, less
+    /// the sources of `<style>`, `<script>` and `<title>`, and the values of text fields; white space counts as the code point it is drawn as (`U+0020` for an ASCII space); a node
+    /// removed from the tree and not yet dropped counts too (a face is then fetched that need not be).
+    pub fn start_pending_fonts(&mut self) {
+        if self.pending_fonts.is_empty() {
+            return;
+        }
+        let mut seen = std::collections::HashSet::<u32>::new();
+        let mut fresh: Vec<u32> = Vec::new();
+        // White space is a code point of the text too: `U+00A0` and the other non-ASCII spaces as they are,
+        // a collapsible ASCII space, tab or line feed as the `U+0020` it is drawn as (a node of only such
+        // white space may be drawn too, in `white-space: pre` or an inline-block, so it counts).
+        let note = |text: &str, seen: &mut std::collections::HashSet<u32>, fresh: &mut Vec<u32>| {
+            for c in text.chars() {
+                let c = if c.is_ascii_whitespace() { ' ' } else { c };
+                if seen.insert(c as u32) {
+                    fresh.push(c as u32);
+                }
+            }
+        };
+        for (_, node) in self.nodes.iter() {
+            if let Some(text) = node.text_data() {
+                let source = node.parent.is_some_and(|parent| {
+                    self.nodes.get(parent).is_some_and(|parent| {
+                        parent.element_data().is_some_and(|e| matches!(&*e.name.local, "style" | "script" | "title"))
+                    })
+                });
+                if !source {
+                    note(&text.content, &mut seen, &mut fresh);
+                }
+            } else if let Some(element) = node.element_data() {
+                if matches!(&*element.name.local, "input" | "textarea" | "option") {
+                    for name in ["value", "placeholder", "label"] {
+                        if let Some(value) = element.attr(LocalName::from(name)) {
+                            note(value, &mut seen, &mut fresh);
+                        }
+                    }
+                }
+            }
+        }
+        if fresh.is_empty() {
+            return;
+        }
+        let pending = std::mem::take(&mut self.pending_fonts);
+        let (needed, waiting): (Vec<_>, Vec<_>) = pending.into_iter().partition(|face| face.needed_by(&fresh));
+        self.pending_fonts = waiting;
+        for face in needed {
+            face.fetch(self.tx.clone(), self.id, &self.net_provider, &self.shell_provider, self.abort_signal.as_ref());
+        }
+    }
+
     /// Whether the Document has pending requests for "critical" resources (that should block rendering)
     pub fn has_pending_critical_resources(&self) -> bool {
         !self.pending_critical_resources.is_empty()
@@ -2954,7 +3127,7 @@ impl BaseDocument {
             }
             Resource::Image(_kind, width, height, image_data, orientation) => {
                 // Create the ImageData and cache it
-                let raster = RasterImageData { width, height, data: image_data, orientation };
+                let raster = RasterImageData { width, height, data: image_data, orientation, tainting: false };
                 let image = ImageData::Raster(raster);
 
                 let Some(url) = res.resolved_url.as_ref() else {
@@ -4036,7 +4209,7 @@ impl BaseDocument {
         let node = self.get_node(node_id)?;
         let (source, _) = node.svg_source_for_viewport(Some((width as f64, height as f64)));
         let source = self.with_cross_svg_references(self.with_svg_sprites(source));
-        let svg = crate::util::parse_svg_resources(source.as_bytes(), Some(&self.svg_images), &self.raster_budget).ok().map(|mut svg| {
+        let svg = crate::util::parse_svg_resources(source.as_bytes(), Some(&self.svg_images_for_paint()), &self.raster_budget).ok().map(|mut svg| {
             if svg.intrinsic_dimensions.view_box.is_none() {
                 svg.inline_source = crate::util::SvgSource::copy(&source, &self.raster_budget);
             }
@@ -4046,8 +4219,107 @@ impl BaseDocument {
         svg
     }
 
+    /// pyro: HTML-in-Canvas privacy: an inline `<svg>` painted for a canvas a page can read back
+    /// (`UnvisitedPaint` is active), serialised and parsed again for a content box of `width` x
+    /// `height` CSS px: with the colours of its elements as unvisited (the serialisation reads their
+    /// styles as painted), without the resources of other `<svg>`s or sprite files
+    /// ([`Self::with_cross_svg_references`], [`Self::with_svg_sprites`]) and without the images of
+    /// opaque responses ([`Self::svg_images_for_paint`]). Not kept (the `<svg>` built for the page
+    /// is). `None` when the source does not parse.
+    #[cfg(feature = "svg")]
+    pub fn inline_svg_for_privacy(&self, node_id: NodeId, width: f32, height: f32) -> Option<Arc<crate::node::SvgImageData>> {
+        let node = self.get_node(node_id)?;
+        let (mut source, _) = node.svg_source_for_viewport(Some((width as f64, height as f64)));
+        // A filter with the image of an opaque response is not applied (its `url(#id)` is `none`,
+        // which makes the whole `filter` value invalid).
+        for id in self.opaque_filter_ids(node_id) {
+            for quote in ["", "\"", "'"] {
+                source = source.replace(&format!("url({quote}#{id}{quote})"), "none");
+            }
+        }
+        let source = self.with_cross_svg_references(self.with_svg_sprites(source));
+        let resources = self.svg_images_for_paint();
+        crate::util::parse_svg_resources(source.as_bytes(), Some(&resources), &self.raster_budget).ok().map(|mut svg| {
+            if svg.intrinsic_dimensions.view_box.is_none() {
+                svg.inline_source = crate::util::SvgSource::copy(&source, &self.raster_budget);
+            }
+            Arc::new(svg)
+        })
+    }
+
+    /// pyro: HTML-in-Canvas privacy: whether the `<filter>` `filter` has an `feImage` whose image
+    /// came from an opaque response ([`Self::svg_images`]). A filter that does is not applied
+    /// to what is painted for a canvas a page can read back (Chromium ignores it, it does not
+    /// draw the element without its output).
+    pub fn filter_has_opaque_image(&self, filter: NodeId) -> bool {
+        let Ok(images) = self.svg_images.read() else { return true };
+        let mut stack = vec![filter];
+        while let Some(id) = stack.pop() {
+            let Some(node) = self.get_node(id) else { continue };
+            if let Some(element) = node.element_data() {
+                if element.name.ns == markup5ever::ns!(svg) && (&*element.name.local).eq_ignore_ascii_case("feImage") {
+                    let opaque = element.attrs().iter().any(|attr| {
+                        &*attr.name.local == "href" && images.get::<str>(&attr.value).is_some_and(|image| image.is_opaque())
+                    });
+                    if opaque {
+                        return true;
+                    }
+                }
+            }
+            stack.extend(node.children.iter().copied());
+        }
+        false
+    }
+
+    /// pyro: HTML-in-Canvas privacy: the ids of the `<filter>`s in the subtree of `root` that
+    /// [`Self::filter_has_opaque_image`] names.
+    #[cfg(feature = "svg")]
+    fn opaque_filter_ids(&self, root: NodeId) -> Vec<String> {
+        let mut ids = Vec::new();
+        let mut stack = vec![root];
+        while let Some(id) = stack.pop() {
+            let Some(node) = self.get_node(id) else { continue };
+            if let Some(element) = node.element_data() {
+                if element.name.ns == markup5ever::ns!(svg) && &*element.name.local == "filter" {
+                    let named = element.attrs().iter().find(|attr| &*attr.name.local == "id").map(|attr| attr.value.to_string());
+                    if let Some(named) = named.filter(|_| self.filter_has_opaque_image(id)) {
+                        ids.push(named);
+                    }
+                }
+            }
+            stack.extend(node.children.iter().copied());
+        }
+        ids
+    }
+
+    /// pyro: [`Self::svg_images`], as what is painted for a canvas a page can read back may use it
+    /// (`UnvisitedPaint` is active): without the resources of opaque responses (another origin
+    /// without CORS, a redirect through one), which usvg then finds no image for and leaves out
+    /// (an `<image>`, or an `feImage`, which is then empty). Kept until the map changes.
+    pub fn svg_images_for_paint(&self) -> crate::util::SvgResources {
+        if !blitz_dom_privacy_paint() {
+            return self.svg_images.clone();
+        }
+        let Ok(images) = self.svg_images.read() else { return Default::default() };
+        // (The map's generation, read under the read lock: a change after it is another one.)
+        let generation = self.svg_images.generation();
+        if let Some((known, kept)) = &*self.privacy_svg_images.borrow()
+            && *known == generation
+        {
+            return kept.clone();
+        }
+        let kept: crate::util::SvgResources = Arc::new(crate::util::SvgResourceMap::new(
+            images.iter().filter(|(_, image)| !image.is_opaque()).map(|(href, image)| (href.clone(), image.clone())).collect(),
+        ));
+        *self.privacy_svg_images.borrow_mut() = Some((generation, kept.clone()));
+        kept
+    }
+
     pub(crate) fn with_svg_sprites(&self, mut svg: String) -> String {
-        if self.svg_sprites.is_empty() {
+        // pyro: HTML-in-Canvas privacy: a sprite file is fetched without a record of its origin
+        // (`SvgResource::opaque` is false for all), so none is merged into what a canvas a page
+        // can read back is painted from: the `<use>` of one draws nothing there.
+        if self.svg_sprites.is_empty() || blitz_dom_privacy_paint() {
             return svg;
         }
         let mut defs = String::new();
@@ -4083,6 +4355,14 @@ impl BaseDocument {
     #[cfg(feature = "svg")]
     pub(crate) fn with_cross_svg_references(&self, mut svg: String) -> String {
         if !svg.contains("(#") && !svg.contains("href=\"#") {
+            return svg;
+        }
+        // pyro: HTML-in-Canvas privacy: a resource defined outside the painted subtree (a gradient,
+        // pattern, marker, filter, mask or clip path of another `<svg>`) is not read by it: its
+        // colours (`currentColor` of the link around it) and images are the page's, not the
+        // subtree's. The reference is then unresolved, and drawn as usvg draws one (none, or no
+        // paint).
+        if blitz_dom_privacy_paint() {
             return svg;
         }
         fn referenced(text: &str, out: &mut Vec<String>) {

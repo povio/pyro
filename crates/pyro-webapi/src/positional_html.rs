@@ -4,6 +4,7 @@ use pyro_dom::NodeType;
 use pyro_js::{Args, ClassDef, JsClass, JsError, JsResult, Scope, Value};
 
 use crate::node::NodeData;
+use crate::sanitizer_options::ParseMode;
 use crate::trusted_types;
 use crate::util::DomResultExt;
 
@@ -18,34 +19,54 @@ enum Position {
 
 pub(crate) fn define_sibling_methods<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     crate::streaming_html::siblings(def);
-    def.method("beforeHTMLUnsafe", 1, |s, n, a| insert(s, n, a, Position::Before));
-    def.method("afterHTMLUnsafe", 1, |s, n, a| insert(s, n, a, Position::After));
-    def.method("replaceWithHTMLUnsafe", 1, |s, n, a| insert(s, n, a, Position::Replace));
+    def.method("beforeHTMLUnsafe", 1, |s, n, a| insert(s, n, a, Position::Before, false));
+    def.method("afterHTMLUnsafe", 1, |s, n, a| insert(s, n, a, Position::After, false));
+    def.method("replaceWithHTMLUnsafe", 1, |s, n, a| insert(s, n, a, Position::Replace, false));
+    def.method("beforeHTML", 1, |s, n, a| insert(s, n, a, Position::Before, true));
+    def.method("afterHTML", 1, |s, n, a| insert(s, n, a, Position::After, true));
+    def.method("replaceWithHTML", 1, |s, n, a| insert(s, n, a, Position::Replace, true));
 }
 
 pub(crate) fn define_parent_methods<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     crate::streaming_html::parents(def);
-    def.method("appendHTMLUnsafe", 1, |s, n, a| insert(s, n, a, Position::Append));
-    def.method("prependHTMLUnsafe", 1, |s, n, a| insert(s, n, a, Position::Prepend));
+    def.method("appendHTMLUnsafe", 1, |s, n, a| insert(s, n, a, Position::Append, false));
+    def.method("prependHTMLUnsafe", 1, |s, n, a| insert(s, n, a, Position::Prepend, false));
+    def.method("appendHTML", 1, |s, n, a| insert(s, n, a, Position::Append, true));
+    def.method("prependHTML", 1, |s, n, a| insert(s, n, a, Position::Prepend, true));
 }
 
-fn insert<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, position: Position) -> JsResult<Value<'s>> {
+/// Whether `id` is an HTML or SVG `script` element (by local name: a prefixed one is too): the
+/// context in which the safe parsing methods do nothing.
+pub(crate) fn is_script_element(dom: &pyro_dom::Dom, id: pyro_dom::NodeId) -> bool {
+    dom.element(id).is_ok_and(|el| {
+        el.local_name() == &markup5ever::local_name!("script") && (el.is_html() || el.namespace() == &markup5ever::ns!(svg))
+    })
+}
+
+fn insert<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, position: Position, safe: bool) -> JsResult<Value<'s>> {
     let page = n.page();
     let shadow = page.dom.borrow().is_shadow_root(n.id).js()?;
-    let sink = match position {
-        Position::Before => "Node beforeHTMLUnsafe",
-        Position::After => "Node afterHTMLUnsafe",
-        Position::Replace => "Node replaceWithHTMLUnsafe",
-        Position::Append if shadow => "ShadowRoot appendHTMLUnsafe",
-        Position::Append => "Element appendHTMLUnsafe",
-        Position::Prepend if shadow => "ShadowRoot prependHTMLUnsafe",
-        Position::Prepend => "Element prependHTMLUnsafe",
+    let sink = match (position, safe) {
+        (Position::Before, false) => "Node beforeHTMLUnsafe",
+        (Position::After, false) => "Node afterHTMLUnsafe",
+        (Position::Replace, false) => "Node replaceWithHTMLUnsafe",
+        (Position::Append, false) if shadow => "ShadowRoot appendHTMLUnsafe",
+        (Position::Append, false) => "Element appendHTMLUnsafe",
+        (Position::Prepend, false) if shadow => "ShadowRoot prependHTMLUnsafe",
+        (Position::Prepend, false) => "Element prependHTMLUnsafe",
+        (Position::Before, true) => "Node beforeHTML",
+        (Position::After, true) => "Node afterHTML",
+        (Position::Replace, true) => "Node replaceWithHTML",
+        (Position::Append, true) if shadow => "ShadowRoot appendHTML",
+        (Position::Append, true) => "Element appendHTML",
+        (Position::Prepend, true) if shadow => "ShadowRoot prependHTML",
+        (Position::Prepend, true) => "Element prependHTML",
     };
     a.require(1, sink)?;
     // WebIDL converts the HTML union before it reads the options dictionary.
     // Applying the default policy is a separate step, after options vetting.
     let input = trusted_types::HtmlInput::convert(s, a.get(0))?;
-    let (html, options) = input.for_html_insertion(s, page, a.get(1), sink)?;
+    let (html, options) = input.for_html_insertion_as(s, page, a.get(1), sink, if safe { ParseMode::Safe } else { ParseMode::Unsafe })?;
     let (target, fragment, before) = {
         let mut dom = page.dom.borrow_mut();
         let target = match position {
@@ -63,6 +84,10 @@ fn insert<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, position: Position) -> J
                 let el = dom.element(target).js()?;
                 if el.is_html() && el.local_name() == &markup5ever::local_name!("html") {
                     return Err(JsError::dom("HierarchyRequestError", "The target is an html element."));
+                }
+                // The safe methods do nothing in a script element (HTML "HTML parsing methods", step 1).
+                if safe && is_script_element(&dom, target) {
+                    return Ok(s.undefined());
                 }
                 target
             }

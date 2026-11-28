@@ -49,7 +49,13 @@ fn config(s: &Scope<'_>, value: Value<'_>) -> JsResult<Option<PacketConfig>> {
     } else {
         Some(crate::encoding::buffer_source_bytes(s, description)?.ok_or_else(|| JsError::Type("Invalid codec description".into()))?)
     };
-    let config = PacketConfig::parse(&codec, bytes.as_deref());
+    // WebCodecs needs an unambiguous codec string: a level_idc outside the H.264 level table is not supported here,
+    // though Media Source accepts it as Chrome does (`avc1.4D4001`).
+    let known_level = match codec.strip_prefix("avc1.").or_else(|| codec.strip_prefix("avc3.")) {
+        Some(hex) => hex.get(4..6).and_then(|l| u8::from_str_radix(l, 16).ok()).is_some_and(|l| matches!(l, 10..=13 | 20..=22 | 30..=32 | 40..=42 | 50..=52)),
+        None => true,
+    };
+    let config = if known_level { PacketConfig::parse(&codec, bytes.as_deref()) } else { None };
     Ok(if limited_bt709 { config.and_then(PacketConfig::with_limited_bt709) } else { config })
 }
 

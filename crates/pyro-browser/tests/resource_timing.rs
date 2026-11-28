@@ -295,7 +295,7 @@ fn the_buffer_fills_fires_its_event_and_observers_see_every_entry() {
              [kept.length == 2 && new Set(kept).size == 2 && kept.every(n => seen.includes(n)), full > 0, fullEvent, \
               seen.sort().join(' '), late, buffered >= 4, PerformanceObserver.supportedEntryTypes.join(' ')].join()"
         ),
-        "true,true,resourcetimingbufferfull,false,true,n1 n2 n3 n4,2,true,mark measure navigation paint resource"
+        "true,true,resourcetimingbufferfull,false,true,n1 n2 n3 n4,2,true,element event first-input largest-contentful-paint layout-shift long-animation-frame longtask mark measure navigation paint resource"
     );
     // A handler that makes room keeps the waiting entries.
     eval(

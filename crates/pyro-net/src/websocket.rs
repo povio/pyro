@@ -572,7 +572,8 @@ impl Io {
             Some(origin) => site_context(Some(origin), http_url, false, true),
             None => SiteContext::CrossSite,
         };
-        let cookie = self.cookies.lock().unwrap().header_for_partition(http_url, context, crate::cookies::now_secs(), req.top_level_site.as_deref());
+        let blocked = req.defaults.cookie_blocking.as_ref().is_some_and(|b| b.blocks(http_url));
+        let cookie = if blocked { None } else { self.cookies.lock().unwrap().header_for_partition(http_url, context, crate::cookies::now_secs(), req.top_level_site.as_deref()) };
         if let Some(v) = cookie.and_then(|c| HeaderValue::from_str(&c).ok()) {
             h.insert(header::COOKIE, v);
         }

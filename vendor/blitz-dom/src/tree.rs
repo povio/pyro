@@ -32,6 +32,18 @@ pub(crate) struct ContainerQuerySize {
     pub size: euclid::default::Size2D<Option<app_units::Au>>,
 }
 
+/// pyro: what the scroll-state features of one query container read at its last layout
+/// (`resolve::refresh_scroll_state_queries`): `scrollable` (edges with room to scroll towards),
+/// `scrolled` (the edges of its last scroll) and `snapped` (the axes it is a snap target on) and `stuck` (the edges it is a stuck sticky box on).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct ScrollStateEntry {
+    pub(crate) scrollable: style::stylesheets::container_rule::ScrollableEdges,
+    pub(crate) scrolled: style::stylesheets::container_rule::ScrollableEdges,
+    pub(crate) snapped: style::stylesheets::container_rule::SnappedAxes,
+    /// The edges it is stuck to when it is a sticky box (`stuck`).
+    pub(crate) stuck: style::stylesheets::container_rule::ScrollableEdges,
+}
+
 /// The versioned map in which the nodes of the DOM tree are stored, backed by
 /// a [`slotmap::SlotMap`].
 ///
@@ -48,7 +60,7 @@ pub struct NodeTree {
     pub(crate) anchor_query_choices: Mutex<HashMap<NodeId, Option<style::values::specified::position::PositionTryFallbacksItem>>>,
     /// pyro: the scroll-state query containers Stylo queried, with the edges each could be
     /// scrolled towards when it last styled (`resolve::refresh_scroll_state_queries`).
-    pub(crate) scroll_state_queries: Mutex<HashMap<NodeId, style::stylesheets::container_rule::ScrollableEdges>>,
+    pub(crate) scroll_state_queries: Mutex<HashMap<NodeId, ScrollStateEntry>>,
     pub(crate) anchor_query_samples: AtomicU64,
     /// Bumped whenever box geometry may have moved (layout ran or a scroll
     /// offset changed). Values derived from `final_layout()` (e.g. hoisted

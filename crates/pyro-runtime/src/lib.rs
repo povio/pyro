@@ -351,6 +351,11 @@ pub trait LoopState {
     /// Called after every task (checkpoint for embedder work).
     fn after_task(&mut self) {}
 
+    /// Called after every task's own work (script and callbacks, not the
+    /// checkpoint of [`LoopState::after_task`]) with the wall-clock instants
+    /// it started and ended at: long task timing.
+    fn task_finished(&mut self, _start: Instant, _end: Instant) {}
+
     /// Called exactly once after every native run-loop pass (macOS, opted-in
     /// loops only): callbacks of that loop may have finalized objects or run
     /// host JavaScript, so this is the same safe point as
@@ -888,7 +893,9 @@ impl<S: LoopState + 'static> EventLoop<S> {
                     self.sched.inner.remove_timer(id);
                     let start = Instant::now();
                     begin_task();
+                    let task_start = Instant::now();
                     task(state);
+                    state.task_finished(task_start, Instant::now());
                     next_task();
                     state.after_task();
                     end_task();
@@ -916,7 +923,9 @@ impl<S: LoopState + 'static> EventLoop<S> {
             let task = self.sched.inner.web.borrow_mut().take_ready(ordinary);
             if let Some(task) = task {
                 begin_task();
+                let task_start = Instant::now();
                 task(state);
+                state.task_finished(task_start, Instant::now());
                 next_task();
                 state.after_task();
                 end_task();
@@ -928,7 +937,9 @@ impl<S: LoopState + 'static> EventLoop<S> {
                 let (_, task) = self.remote.pop_front().expect("remote front");
                 self.sched.inner.remote_pending.fetch_sub(1, Ordering::AcqRel);
                 begin_task();
+                let task_start = Instant::now();
                 task(state);
+                state.task_finished(task_start, Instant::now());
                 next_task();
                 state.after_task();
                 end_task();
@@ -944,7 +955,9 @@ impl<S: LoopState + 'static> EventLoop<S> {
             let next = self.sched.inner.tasks.borrow_mut().pop_front();
             if let Some((_, _, task)) = next {
                 begin_task();
+                let task_start = Instant::now();
                 task(state);
+                state.task_finished(task_start, Instant::now());
                 next_task();
                 state.after_task();
                 end_task();
@@ -962,7 +975,9 @@ impl<S: LoopState + 'static> EventLoop<S> {
             let Some(task) = task else { continue }; // cleared
             self.sched.inner.remove_timer(id);
             begin_task();
+            let task_start = Instant::now();
             task(state);
+            state.task_finished(task_start, Instant::now());
             next_task();
             state.after_task();
             end_task();
@@ -1023,7 +1038,9 @@ impl<S: LoopState + 'static> EventLoop<S> {
                 }
             }
             begin_task();
+            let task_start = Instant::now();
             task(state);
+            state.task_finished(task_start, Instant::now());
             next_task();
             state.after_task();
             end_task();
@@ -2391,6 +2408,16 @@ thread_local! {
 /// as a browser samples its timelines once per frame and not at each query.
 pub fn task_seq() -> Option<u64> {
     (TASK_DEPTH.with(Cell::get) > 0).then(|| TASK_SEQ.with(Cell::get))
+}
+
+/// How many tasks of this thread's loops are running now, the innermost
+/// included: 1 inside an ordinary task, more inside a task run by a nested
+/// event loop (a task that itself calls `run_until`/`run_one`, as a spin
+/// of the event loop does); 0 between tasks. Read from
+/// [`LoopState::task_finished`] (it runs before the task counts as ended),
+/// it is the depth of the task that finished.
+pub fn task_depth() -> u32 {
+    TASK_DEPTH.with(Cell::get)
 }
 
 fn next_task() {

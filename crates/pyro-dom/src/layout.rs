@@ -71,6 +71,16 @@ struct ListHit {
     key: Rc<[PaintEntry]>,
     el: NodeId,
     chain: Vec<NodeId>,
+    /// The plane's 3D rendering context and depth at the point ([`HitPlane::depth`]).
+    depth: Option<(u64, f64)>,
+}
+
+/// Whether the plane at depth `a` is nearer the viewer than the one at `b` (`Some`), when both
+/// are planes of one 3D rendering context and at different depths there: such planes are
+/// sorted by depth, not by paint order. `None`: paint order decides.
+fn depth_over(a: Option<(u64, f64)>, b: Option<(u64, f64)>) -> Option<bool> {
+    let ((ra, za), (rb, zb)) = (a?, b?);
+    (ra == rb && (za - zb).abs() > 1e-9 * (1.0 + za.abs() + zb.abs())).then_some(za > zb)
 }
 
 /// Whether paint order keys `a` and `b` are in one layer (one stacking context and paint
@@ -86,6 +96,9 @@ use crate::node::{DocumentKind, NodeId, NodeKind, NIL};
 use crate::style::{CheckVisibilityOptions, ComputedStyle, Display, Position, ScrollAxes, StyleEngine, UserSelect};
 use crate::viewport_meta::{MetaViewport, MobileMetrics, MobileViewport};
 use style::values::specified::box_::PositionProperty;
+
+mod scrollbar;
+pub use scrollbar::{ScrollbarHit, ScrollbarPart};
 
 /// A DOMRect's values.
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
@@ -187,7 +200,7 @@ fn snap_axes(axis: &str, mode: style::logical_geometry::WritingMode) -> (bool, b
         "y" => (false, true),
         "inline" => (mode.is_horizontal(), mode.is_vertical()),
         "block" => (mode.is_vertical(), mode.is_horizontal()),
-        "both" => (true, true),
+        "both" | "pair" => (true, true),
         _ => (false, false),
     }
 }
@@ -310,20 +323,45 @@ pub struct Layout {
     /// (page clock, ms) ([`Self::push_scroll`]).
     scroll_pushed: std::cell::Cell<Option<u64>>,
     scroll_pushed_at: std::cell::Cell<f64>,
+    /// The snapped elements last told to the geometry source ([`Self::snapped_keys`]).
+    snapped_pushed: std::cell::RefCell<Vec<(u64, (bool, bool))>>,
+    /// Counts the changes of `snapped`; `snapped_pushed_at` is the count `snapped_pushed` was built at.
+    snapped_generation: u64,
+    /// Snapping is held off for scroll writes ([`Self::set_snap_suspended`]): a scrollbar drag.
+    snap_suspended: bool,
+    snapped_pushed_at: std::cell::Cell<Option<u64>>,
+    /// The scroll targets last told to the geometry source ([`Self::scroll_target_keys`]), and the
+    /// count of changes to `scroll_targets` they were built at (`scroll_targets_generation`).
+    targets_pushed: std::cell::RefCell<Vec<(u64, u64)>>,
+    targets_pushed_at: std::cell::Cell<Option<u64>>,
+    scroll_targets_generation: u64,
+    /// The stuck sticky boxes last told to the geometry source ([`Self::stuck_keys`]), and the
+    /// observation stamp they were looked for at ([`Self::push_stuck`]).
+    stuck_pushed: std::cell::RefCell<Vec<(u64, u8)>>,
+    stuck_pushed_at: std::cell::Cell<Option<((u64, u64, u32, u32), u64)>>,
     /// Each scrolled element's `scrollLeft` and `scrollTop`: negative on an axis whose scroll
     /// origin is at its end (right-to-left, `row-reverse`, `column-reverse`, ...), as CSSOM View
     /// and Blitz's scroll offsets have them.
     element_scroll: FxHashMap<NodeId, (i32, i32)>,
+    /// The direction of each scroll container's last scroll on each axis (the viewport under
+    /// `None`): -1 when the offset decreased (towards the top or left), 1 when it increased, 0
+    /// before the first move on that axis. `scroll-state(scrolled)` queries it (CSS Conditional 5
+    /// § 7.3.2); an axis keeps its direction while the other scrolls.
+    scroll_directions: FxHashMap<Option<NodeId>, (i8, i8)>,
     /// CSS Overflow 5 § 2.1: each scroll container's current scroll target, the element a script
     /// scroll into view last revealed in it, until it scrolls otherwise (the viewport's under
     /// `None`). Scroll marker selection reads it (`scroll_targets`).
     scroll_targets: FxHashMap<Option<NodeId>, NodeId>,
     /// CSS Scroll Anchoring: the layout each vertically scrolled element
-    /// was last settled in, to select its anchor in when the layout next
+    /// (`None`: the viewport) was last settled in, to select its anchor in when the layout next
     /// changes.
     /// pyro: with the anchor selected in it and the suppression-trigger values of the anchor and
     /// its ancestors then (`anchor_fingerprint`).
-    scroll_anchors: FxHashMap<NodeId, (Rc<LayoutResult>, Option<(NodeId, String)>)>,
+    scroll_anchors: FxHashMap<Option<NodeId>, (Rc<LayoutResult>, Option<(NodeId, String)>)>,
+    /// pyro: the part of an anchoring adjustment each scroller (`None`: the viewport) has not
+    /// applied yet, as scroll offsets are whole CSS px here (Chromium keeps them fractional: WPT
+    /// `device-pixel-adjustment` adds 0.5px twice and reads 1px more). Dropped by a script's write.
+    scroll_anchor_carry: FxHashMap<Option<NodeId>, f64>,
     /// pyro: the box each scroller (`None`: the viewport) last snapped to on each axis (x, y), to
     /// snap to again after layout changes (CSS Scroll Snap 1 § 6.2.3).
     snapped: FxHashMap<Option<NodeId>, [Option<SnapBox>; 2]>,
@@ -633,11 +671,22 @@ impl Layout {
             window_scroll: (0, 0),
             scroll_generation: 0,
             scroll_pushed: std::cell::Cell::new(None),
+            snapped_pushed: Default::default(),
             scroll_pushed_at: std::cell::Cell::new(f64::NEG_INFINITY),
             element_scroll: FxHashMap::default(),
+            scroll_directions: FxHashMap::default(),
             scroll_targets: FxHashMap::default(),
             scroll_anchors: FxHashMap::default(),
+            scroll_anchor_carry: FxHashMap::default(),
             snapped: FxHashMap::default(),
+            snapped_generation: 0,
+            snap_suspended: false,
+            snapped_pushed_at: std::cell::Cell::new(None),
+            targets_pushed: Default::default(),
+            targets_pushed_at: std::cell::Cell::new(None),
+            scroll_targets_generation: 0,
+            stuck_pushed: Default::default(),
+            stuck_pushed_at: std::cell::Cell::new(None),
             smooth_targets: Default::default(),
             reported_snaps: FxHashMap::default(),
             unsnapped_checked: None,
@@ -680,6 +729,13 @@ impl Layout {
 
     /// The geometry source, brought up to the document (synced when
     /// anything it lays out changed since the last query).
+    /// pyro: tells the engine where the pointer is ([`GeometrySource::set_pointer`]).
+    pub fn set_pointer(&self, point: Option<(f64, f64)>) {
+        if let Some(source) = self.external.as_ref() {
+            source.set_pointer(point);
+        }
+    }
+
     pub fn synced_geometry_source(&self, dom: &Dom) -> Option<&Rc<dyn GeometrySource>> {
         let source = self.external.as_ref().filter(|s| s.active())?;
         let key = self.sync_key(dom);
@@ -690,14 +746,14 @@ impl Layout {
             let ((v1, g1, f1, h1), vp1) = key;
             if v0 != v1
                 && (g0, f0, h0, vp0) == (g1, f1, h1, vp1)
-                && !source.stale()
+                && !source.layout_stale()
                 && !self.style.animations_changed_for_layout()
                 && dom.only_detached_changes_since(v0)
             {
                 self.external_synced.set(Some(key));
             }
         }
-        if self.external_synced.get() != Some(key) || source.stale() || self.style.animations_changed_for_layout() {
+        if self.external_synced.get() != Some(key) || source.layout_stale() || self.style.animations_changed_for_layout() {
             self.style.before_recalc(dom);
             source.sync(dom, self);
             self.external_synced.set(Some(key));
@@ -753,6 +809,22 @@ impl Layout {
     pub fn fonts_pending(&self, dom: &Dom) -> bool {
         self.start_font_loads(dom);
         self.external.as_ref().is_some_and(|s| s.fonts_pending())
+    }
+
+    /// pyro: how many times the geometry engine laid the document out. Layout also changes when a
+    /// sub-resource it loads itself arrives (an SVG image's size comes from its own bytes), which
+    /// moves boxes without moving `observation_stamp`, and any query may be the one that lays out:
+    /// an observer of geometry compares this count with the one it saw.
+    pub fn sync_count(&self) -> u64 {
+        self.syncs.get()
+    }
+
+    /// pyro: whether the geometry engine's layout is out of date with what reached it (a
+    /// sub-resource it loads itself arrived, such as an SVG image whose size comes from its own
+    /// bytes) although neither the document nor its style changed: the next geometry query lays
+    /// out again and may move boxes, which `observation_stamp` does not say.
+    pub fn geometry_stale(&self) -> bool {
+        self.external.as_ref().is_some_and(|s| s.active() && s.layout_stale())
     }
 
     /// pyro: whether the CSS images the last completed layout asked for are still loading
@@ -1009,7 +1081,21 @@ impl Layout {
     pub fn visual_viewport(&self) -> (f64, f64, f64) {
         match self.mobile_metrics() {
             Some(m) => (m.visual.0, m.visual.1, m.scale),
-            None => (self.viewport().width as f64, self.viewport().height as f64, 1.0),
+            None => {
+                // Chrome: the layout viewport less its classic scrollbars (`documentElement.clientWidth`
+                // and `clientHeight`; `innerWidth` includes them), as of the last sync.
+                let (horizontal, vertical) = self.viewport_gutter_totals();
+                ((self.viewport().width as f64 - horizontal).max(0.0), (self.viewport().height as f64 - vertical).max(0.0), 1.0)
+            }
+        }
+    }
+
+    /// The space the viewport's classic scrollbars take as of the last sync: left plus right and
+    /// top plus bottom gutters (CSS px); zero without them.
+    pub fn viewport_gutter_totals(&self) -> (f64, f64) {
+        match self.external.as_ref().filter(|s| s.active()).and_then(|s| s.viewport_gutters()) {
+            Some([left, top, right, bottom]) => (left + right, top + bottom),
+            None => (0.0, 0.0),
         }
     }
 
@@ -1049,6 +1135,13 @@ impl Layout {
     /// `Element.checkVisibility(opts)` (Element.zig:1582-1589).
     pub fn check_visibility(&self, dom: &Dom, el: NodeId, opts: CheckVisibilityOptions) -> bool {
         !self.style.is_hidden(dom, el, opts)
+    }
+
+    /// pyro: whether `el` is in contents a `content-visibility: hidden` ancestor skips (display
+    /// locked: the engine displays them, but no one sees them). Speculation rules' document
+    /// rules take no link of such contents.
+    pub fn in_display_locked_contents(&self, dom: &Dom, el: NodeId) -> bool {
+        self.in_hidden_contents(dom, el)
     }
 
     // ----- boxes -------------------------------------------------------------
@@ -1220,6 +1313,65 @@ impl Layout {
         Some(crate::text_metrics::text_width(&value, size, weight) + b.padding[LEFT] + b.padding[RIGHT])
     }
 
+    /// The client rects of the UTF-16 range `[start, end)` of a text control's value (an
+    /// `OpaqueRange`'s geometry): one per line the range covers (the value's lines split at
+    /// `\n`; soft wraps are not modelled), laid out from the control's content box with the
+    /// engine's text metrics; a collapsed range gives its one caret rect (zero width). Empty
+    /// when the control is not rendered (`display: none`, disconnected).
+    pub fn value_range_rects(&self, dom: &Dom, el: NodeId, start: u32, end: u32) -> Vec<Rect> {
+        if !dom.is_connected(el).unwrap_or(false) {
+            return Vec::new();
+        }
+        let Some(rect) = self.client_rect(dom, el) else { return Vec::new() };
+        let Ok(value) = dom.value(el) else { return Vec::new() };
+        let Some(e) = dom.element(el).ok().filter(|e| e.is_html()) else { return Vec::new() };
+        let textarea = &*e.name.local == "textarea";
+        let (ox, oy) = self.content_offset(dom, el).unwrap_or((0.0, 0.0));
+        let size = self.style.computed_font_size(dom, Some(el));
+        let weight = self
+            .style
+            .stylo_style(dom, el)
+            .map(|s| s.get_font().font_weight.value())
+            .filter(|w| w.fract() == 0.0)
+            .map_or(400, |w| w as u16);
+        // A textarea's rows are its line-height (`normal` is about 1.2 em); an input's one row
+        // is its content box.
+        let line_height = if textarea {
+            self.computed_style_value(dom, el, "line-height").strip_suffix("px").and_then(|v| v.parse::<f64>().ok()).filter(|h| *h > 0.0).unwrap_or(size * 1.2)
+        } else {
+            self.content_size(dom, el).map(|(_, h)| h).filter(|h| *h > 0.0).unwrap_or(size * 1.2)
+        };
+        // The width of the first `units` UTF-16 code units of `line`.
+        let width_to = |line: &str, units: u32| {
+            let mut seen = 0u32;
+            let mut at = line.len();
+            for (i, c) in line.char_indices() {
+                if seen >= units {
+                    at = i;
+                    break;
+                }
+                seen += c.len_utf16() as u32;
+            }
+            crate::text_metrics::text_width(&line[..at], size, weight)
+        };
+        let mut rects = Vec::new();
+        let mut base = 0u32;
+        for (row, line) in value.split('\n').enumerate() {
+            let len: u32 = line.chars().map(|c| c.len_utf16() as u32).sum();
+            let (lo, hi) = (start.max(base), end.min(base + len));
+            let covers = if start == end { base <= start && start <= base + len } else { lo < hi };
+            if covers {
+                let (x0, x1) = (width_to(line, lo - base), width_to(line, hi.max(lo) - base));
+                rects.push(Rect { x: rect.x + ox + x0, y: rect.y + oy + row as f64 * line_height, width: x1 - x0, height: line_height });
+                if start == end || !textarea {
+                    break;
+                }
+            }
+            base += len + 1;
+        }
+        rects
+    }
+
     /// `scrollExtent` (Element.zig:1845-1858): how far `el` scrolls on
     /// `axis`; `None` for the root containers (the window scrolls).
     fn scroll_extent(&self, dom: &Dom, el: NodeId, axis: Axis) -> Option<f64> {
@@ -1324,6 +1476,31 @@ impl Layout {
     /// a fractional width). Offsets and offset dimensions round independently;
     /// client and scroll sizes snap at the padding edge.
     pub fn metric(&self, dom: &Dom, el: NodeId, metric: Metric) -> f64 {
+        self.metric_zoomed(dom, el, metric, 1.0)
+    }
+
+    /// [`Self::metric`] as script reads it: in the element's own CSS px, the layout sizes divided
+    /// by its effective `zoom` (CSSOM View: `clientWidth`, `scrollHeight`, `offsetTop` ... "remove
+    /// the zoom"; Chromium's `AdjustForAbsoluteZoom`), before they are snapped. The viewport's
+    /// metrics (the root element's, the body's in quirks mode) have none.
+    pub fn metric_css(&self, dom: &Dom, el: NodeId, metric: Metric) -> f64 {
+        let zoom = if self.is_root_container(dom, el) { 1.0 } else { self.effective_zoom(dom, el) };
+        self.metric_zoomed(dom, el, metric, zoom)
+    }
+
+    /// The effective CSS `zoom` of `el` (1 without a style or a box): `Element.currentCSSZoom`.
+    pub fn effective_zoom(&self, dom: &Dom, el: NodeId) -> f64 {
+        if !self.is_visible(dom, el) {
+            return 1.0;
+        }
+        self.style
+            .stylo_style(dom, el)
+            .map(|style| f64::from(style.effective_zoom.value()))
+            .filter(|zoom| zoom.is_finite() && *zoom > 0.0)
+            .unwrap_or(1.0)
+    }
+
+    fn metric_zoomed(&self, dom: &Dom, el: NodeId, metric: Metric, zoom: f64) -> f64 {
         let raw = match metric {
             Metric::ScrollWidth => self.scroll_width(dom, el),
             Metric::ScrollHeight => self.scroll_height(dom, el),
@@ -1337,14 +1514,15 @@ impl Layout {
         if raw == 0.0 {
             return raw;
         }
-        let border = |side: usize| self.layout_box(dom, el).map_or(0.0, |b| b.border[side]);
+        let raw = raw / zoom;
+        let border = |side: usize| self.layout_box(dom, el).map_or(0.0, |b| b.border[side] / zoom);
         match metric {
             Metric::OffsetTop | Metric::OffsetLeft | Metric::OffsetWidth | Metric::OffsetHeight => round_layout_unit(raw),
             Metric::ScrollWidth | Metric::ClientWidth => {
-                snap_size_to_pixel(raw, self.offset_left(dom, el) + border(LEFT))
+                snap_size_to_pixel(raw, self.offset_left(dom, el) / zoom + border(LEFT))
             }
             Metric::ScrollHeight | Metric::ClientHeight => {
-                snap_size_to_pixel(raw, self.offset_top(dom, el) + border(TOP))
+                snap_size_to_pixel(raw, self.offset_top(dom, el) / zoom + border(TOP))
             }
         }
     }
@@ -1371,7 +1549,9 @@ impl Layout {
         if !self.is_visible(dom, el) {
             return 0.0;
         }
-        self.layout_box(dom, el).map_or(0.0, |b| round_layout_unit(b.border[side]))
+        // (In the element's own CSS px: less its effective `zoom`.)
+        let zoom = if self.is_root_container(dom, el) { 1.0 } else { self.effective_zoom(dom, el) };
+        self.layout_box(dom, el).map_or(0.0, |b| round_layout_unit(b.border[side] / zoom))
     }
 
     /// `offsetParent`, including positioned ancestors styled through stylesheets.
@@ -1469,6 +1649,26 @@ impl Layout {
             return Rect::default();
         }
         self.bounding_client_rect_for_visible(dom, el)
+    }
+
+    /// pyro: [`Self::bounding_client_rect`] of what is laid out now: an element with no box (in
+    /// contents `content-visibility: auto` skips, a `display: none` subtree) is not rendered to
+    /// answer, and has an empty rect. For the engine's own scans (paint timing), which must not
+    /// change what a page shows by looking at it: a geometry query that renders skipped contents
+    /// changes their remembered size and what a scroll to them reaches (WPT css-contain
+    /// `content-visibility-075`).
+    pub fn laid_out_client_rect(&self, dom: &Dom, el: NodeId) -> Rect {
+        self.sync_before_rect_query(dom);
+        let has_box = self.synced_geometry_source(dom).is_some_and(|source| {
+            source.element_box(crate::snapshot::render_key(el)).is_some_and(|b| b.width > 0.0 || b.height > 0.0)
+        });
+        // (SVG content has no CSS box of its own and its geometry is its bbox: asked as usual.)
+        let svg = dom.element(el).is_ok_and(|e| e.name.ns == markup5ever::ns!(svg));
+        if has_box || svg {
+            self.bounding_client_rect(dom, el)
+        } else {
+            Rect::default()
+        }
     }
 
     /// A text node's line-box rect (the union of its words) in client
@@ -2112,7 +2312,11 @@ impl Layout {
         // out-of-flow box on the way up does not hold it (a `position:
         // absolute` box's needs a positioned one, a `position: fixed` box's
         // one that contains fixed boxes), and `overflow: clip` makes none.
-        let mut port = None;
+        // pyro: each axis has its own scrollport, the nearest scroll container on the chain that
+        // scrolls in THAT axis (`overflow: clip` in an axis makes none for it, so `overflow-x: scroll;
+        // overflow-y: clip` inside `overflow-y: scroll` is the scroller of `left` and the outer one
+        // that of `top`; css-position-3 § 3.4, WPT css-position `sticky/position-sticky-single-axis-*`).
+        let (mut port_x, mut port_y) = (None, None);
         let mut a = dom.parent_element(el).ok().flatten();
         // The out-of-flow position of the box whose containing block is looked for.
         let mut escaping = None;
@@ -2135,28 +2339,41 @@ impl Layout {
             }
             escaping = matches!(c.position, Position::Absolute | Position::Fixed).then_some(c.position);
             if c.scroll_container {
-                if let Some(pb) = box_of(p) {
-                    port = Some(Rect {
-                        x: pb.rect.x + pb.border[LEFT] + pb.padding[LEFT] + self.scroll_left(p) as f64,
-                        y: pb.rect.y + pb.border[TOP] + pb.padding[TOP] + self.scroll_top(p) as f64,
-                        width: (pb.client_width - pb.padding[LEFT] - pb.padding[RIGHT]).max(0.0),
-                        height: (pb.client_height - pb.padding[TOP] - pb.padding[BOTTOM]).max(0.0),
-                    });
+                let Some(pb) = box_of(p) else { break };
+                let scrolls = |axis: &str| {
+                    self.style.computed_value(dom, p, axis).is_some_and(|o| !matches!(o.as_str(), "visible" | "clip"))
+                };
+                let port = Rect {
+                    x: pb.rect.x + pb.border[LEFT] + pb.padding[LEFT] + self.scroll_left(p) as f64,
+                    y: pb.rect.y + pb.border[TOP] + pb.padding[TOP] + self.scroll_top(p) as f64,
+                    width: (pb.client_width - pb.padding[LEFT] - pb.padding[RIGHT]).max(0.0),
+                    height: (pb.client_height - pb.padding[TOP] - pb.padding[BOTTOM]).max(0.0),
+                };
+                if port_x.is_none() && scrolls("overflow-x") {
+                    port_x = Some(port);
                 }
-                break;
+                if port_y.is_none() && scrolls("overflow-y") {
+                    port_y = Some(port);
+                }
+                if port_x.is_some() && port_y.is_some() {
+                    break;
+                }
             }
             a = dom.parent_element(p).ok().flatten();
         }
         let fixed = b.fixed || escaping == Some(Position::Fixed);
         let (wx, wy) = if fixed { (0.0, 0.0) } else { (self.window_scroll.0 as f64, self.window_scroll.1 as f64) };
-        let port =
-            port.unwrap_or(Rect { x: wx, y: wy, width: self.inner_width() as f64, height: self.inner_height() as f64 });
+        let viewport = Rect { x: wx, y: wy, width: self.inner_width() as f64, height: self.inner_height() as f64 };
+        let (port_x, port_y) = (port_x.unwrap_or(viewport), port_y.unwrap_or(viewport));
         let limit =
             sticky.limit.map(|(x, y, width, height)| Rect { x: x + cb_shift.0, y: y + cb_shift.1, width, height });
         let inset = |side: usize, basis: f64| sticky.insets[side].map(|(px, fraction)| px + fraction * basis);
         let r = Rect { x: b.rect.x + box_shift.0, y: b.rect.y + box_shift.1, ..b.rect };
-        // One axis: start inset pulls forward, end inset pulls back, both
-        // bounded by the containing block (`lo`..`hi` along the axis).
+        // One axis: start inset pulls forward, end inset pulls back, both bounded by the containing
+        // block (`lo`..`hi` along the axis). When the box is taller than the port between the two insets
+        // the inset applied last wins and keeps its edge where it asks: the start one, or `end_wins` for
+        // the end one (`right` in a right-to-left containing block, whose inline start is its right edge);
+        // the other edge overflows (WPT css-position `sticky/position-sticky-*-overconstrained`).
         let axis = |start: Option<f64>,
                     end: Option<f64>,
                     pos: f64,
@@ -2164,28 +2381,46 @@ impl Layout {
                     port0: f64,
                     port_size: f64,
                     lo: f64,
-                    hi: f64| {
-            if let Some(s) = start {
-                let need = port0 + s - pos;
-                if need > 0.0 {
-                    return need.min(hi - (pos + size)).max(0.0);
+                    hi: f64,
+                    end_wins: bool| {
+            let push_forward = |offset: f64| match start {
+                Some(s) => {
+                    let need = port0 + s - (pos + offset);
+                    if need > 0.0 { (offset + need).min(hi - (pos + size)).max(offset) } else { offset }
                 }
-            }
-            if let Some(e) = end {
-                let need = port0 + port_size - e - (pos + size);
-                if need < 0.0 {
-                    return need.max(lo - pos).min(0.0);
+                None => offset,
+            };
+            let pull_back = |offset: f64| match end {
+                Some(e) => {
+                    let need = port0 + port_size - e - (pos + offset + size);
+                    if need < 0.0 { (offset + need).max(lo - pos).min(offset) } else { offset }
                 }
-            }
-            0.0
+                None => offset,
+            };
+            if end_wins { pull_back(push_forward(0.0)) } else { push_forward(pull_back(0.0)) }
         };
         let (lo_x, hi_x, lo_y, hi_y) = match limit {
             Some(l) => (l.x, l.x + l.width, l.y, l.y + l.height),
             None => (f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY),
         };
-        let dy =
-            axis(inset(TOP, port.height), inset(BOTTOM, port.height), r.y, r.height, port.y, port.height, lo_y, hi_y);
-        let dx = axis(inset(LEFT, port.width), inset(RIGHT, port.width), r.x, r.width, port.x, port.width, lo_x, hi_x);
+        // `left` and `right` are physical: in a right-to-left containing block (the nearest ancestor with a
+        // box) the inline start is the right edge, which wins.
+        let rtl = {
+            let mut parent = dom.parent_element(el).ok().flatten();
+            while let Some(p) = parent.filter(|&p| self.computed(dom, p).display_contents) {
+                parent = dom.parent_element(p).ok().flatten();
+            }
+            parent.is_some_and(|p| {
+                self.style.computed_value(dom, p, "direction").as_deref() == Some("rtl")
+                    && self.style.computed_value(dom, p, "writing-mode").is_none_or(|w| w.starts_with("horizontal"))
+            })
+        };
+        let dy = axis(
+            inset(TOP, port_y.height), inset(BOTTOM, port_y.height), r.y, r.height, port_y.y, port_y.height, lo_y, hi_y, false,
+        );
+        let dx = axis(
+            inset(LEFT, port_x.width), inset(RIGHT, port_x.width), r.x, r.width, port_x.x, port_x.width, lo_x, hi_x, rtl,
+        );
         (dx, dy)
     }
 
@@ -2276,9 +2511,8 @@ impl Layout {
                 break chain.clone();
             }
             pending.push(node);
-            // A shadow tree's top-level elements paint within their host.
-            cur =
-                dom.check(node).ok().and_then(|i| crate::style::flat_tree_parent_element(dom, i)).map(|i| dom.id_of(i));
+            // A shadow tree's top-level elements paint within their host; a slotted node within its slot.
+            cur = dom.check(node).ok().and_then(|i| paint_parent_element(dom, i)).map(|i| dom.id_of(i));
         };
         let reached_root = cur.is_none();
         for (i, &node) in pending.iter().enumerate().rev() {
@@ -2289,7 +2523,7 @@ impl Layout {
                 let in_items_phase = dom
                     .check(node)
                     .ok()
-                    .and_then(|i| crate::style::flat_tree_parent_element(dom, i))
+                    .and_then(|i| paint_parent_element(dom, i))
                     .map(|i| dom.id_of(i))
                     .and_then(|parent| result.get(parent))
                     .is_some_and(|parent| parent.items_in_phases);
@@ -2356,8 +2590,14 @@ impl Layout {
         state
     }
 
-    /// An inset clip-path clips the element and its descendants, including
-    /// positioned descendants that escape an ancestor's overflow clip.
+    /// A clip-path clips the element and its descendants, including positioned descendants that
+    /// escape an ancestor's overflow clip. An `inset()` of the border box is tested here; any
+    /// other clip path (`circle()`, `polygon()`, `path()`, an SVG `<clipPath>`, a rounded inset, a
+    /// geometry box), and the `border-shape` or the rounded and shaped (`corner-shape`) corners of
+    /// the element itself, and what the `border-shape` of an ancestor that clips its overflow
+    /// leaves, are asked of the engine ([`GeometrySource::hit_shape`]), which builds them as they
+    /// are painted. Only boxes with such a style ask it. `client_rect` gives a box's client rect
+    /// and how far that moved it from the engine's box (`hit_shape` takes the engine's points).
     fn outside_inset_clip_path(
         &self,
         dom: &Dom,
@@ -2365,37 +2605,86 @@ impl Layout {
         x: f64,
         y: f64,
         ignore_x: bool,
-        mut client_rect: impl FnMut(NodeId) -> Rect,
+        mut client_rect: impl FnMut(NodeId) -> (Rect, (f64, f64)),
     ) -> bool {
         use style::values::computed::basic_shape::{BasicShape, ClipPath};
         use style::values::computed::CSSPixelLength;
-        use style::values::generics::basic_shape::{ShapeBox, ShapeGeometryBox};
+        use style::values::generics::basic_shape::{GenericBorderShape, ShapeBox, ShapeGeometryBox};
 
+        let rounded = |radius: &style::values::computed::BorderCornerRadius| {
+            let hundred = CSSPixelLength::new(100.0);
+            radius.0.width.0.resolve(hundred).px() > 0.0 && radius.0.height.0.resolve(hundred).px() > 0.0
+        };
         let mut current = Some(el);
         while let Some(node) = current {
             if let Some(style) = self.style.stylo_style(dom, node) {
-                if let ClipPath::Shape(shape, reference) = style.slow_clone_clip_path() {
-                    // The default reference box for inset() is the border box.
-                    if matches!(
-                        reference,
-                        ShapeGeometryBox::ElementDependent | ShapeGeometryBox::ShapeBox(ShapeBox::BorderBox)
-                    ) {
-                        if let BasicShape::Rect(inset) = &*shape {
-                            let rect = client_rect(node);
-                            let horizontal = CSSPixelLength::new(rect.width as f32);
-                            let vertical = CSSPixelLength::new(rect.height as f32);
-                            let left = rect.x + inset.rect.3.resolve(horizontal).px() as f64;
-                            let right = rect.x + rect.width - inset.rect.1.resolve(horizontal).px() as f64;
-                            let top = rect.y + inset.rect.0.resolve(vertical).px() as f64;
-                            let bottom = rect.y + rect.height - inset.rect.2.resolve(vertical).px() as f64;
-                            if right <= left
-                                || bottom <= top
-                                || y < top
-                                || y > bottom
-                                || (!ignore_x && (x < left || x > right))
+                let mut clip_shape = false;
+                match style.slow_clone_clip_path() {
+                    ClipPath::None => {}
+                    ClipPath::Shape(shape, reference) => {
+                        // The default reference box for inset() is the border box.
+                        let inset = match &*shape {
+                            BasicShape::Rect(inset)
+                                if matches!(
+                                    reference,
+                                    ShapeGeometryBox::ElementDependent | ShapeGeometryBox::ShapeBox(ShapeBox::BorderBox)
+                                ) =>
                             {
-                                return true;
+                                Some(inset)
                             }
+                            _ => None,
+                        };
+                        match inset {
+                            Some(inset) => {
+                                let rect = client_rect(node).0;
+                                let horizontal = CSSPixelLength::new(rect.width as f32);
+                                let vertical = CSSPixelLength::new(rect.height as f32);
+                                let left = rect.x + inset.rect.3.resolve(horizontal).px() as f64;
+                                let right = rect.x + rect.width - inset.rect.1.resolve(horizontal).px() as f64;
+                                let top = rect.y + inset.rect.0.resolve(vertical).px() as f64;
+                                let bottom = rect.y + rect.height - inset.rect.2.resolve(vertical).px() as f64;
+                                if right <= left
+                                    || bottom <= top
+                                    || y < top
+                                    || y > bottom
+                                    || (!ignore_x && (x < left || x > right))
+                                {
+                                    return true;
+                                }
+                                let round = &inset.round;
+                                clip_shape = [&round.top_left, &round.top_right, &round.bottom_right, &round.bottom_left]
+                                    .into_iter()
+                                    .any(rounded);
+                            }
+                            None => clip_shape = true,
+                        }
+                    }
+                    ClipPath::Url(_) | ClipPath::Box(_) => clip_shape = true,
+                }
+                let border = style.get_border();
+                let border_shape = !matches!(border.border_shape, GenericBorderShape::None);
+                let own_shape = node == el
+                    && (border_shape
+                        || [
+                            &border.border_top_left_radius,
+                            &border.border_top_right_radius,
+                            &border.border_bottom_right_radius,
+                            &border.border_bottom_left_radius,
+                        ]
+                        .into_iter()
+                        .any(rounded));
+                let overflow_shape = node != el && border_shape;
+                if (clip_shape || own_shape || overflow_shape) && !ignore_x {
+                    if let Some(source) = self.external.as_ref() {
+                        use crate::geometry::HitShapeKind;
+                        let (_, (dx, dy)) = client_rect(node);
+                        let (px, py) = (x - dx, y - dy);
+                        let key = crate::snapshot::render_key(node);
+                        if (clip_shape && !source.hit_shape(key, HitShapeKind::ClipPath, px, py))
+                            || (own_shape && !source.hit_shape(key, HitShapeKind::Own, px, py))
+                            || (overflow_shape && !source.hit_shape(key, HitShapeKind::Overflow, px, py))
+                        {
+                            return true;
                         }
                     }
                 }
@@ -2788,6 +3077,7 @@ impl Layout {
     ) -> Option<NodeId> {
         let inside = |r: &Rect| (ignore_x || (x >= r.x && x < r.x + r.width)) && y >= r.y && y < r.y + r.height;
         let mut best: Option<(Rc<[PaintEntry]>, NodeId)> = None;
+        let mut best_depth: Option<(u64, f64)> = None;
         for el in candidates {
             let Some(b) = result.get(el) else { continue };
             if b.rect.width <= 0.0 && b.rect.height <= 0.0 {
@@ -2837,20 +3127,46 @@ impl Layout {
             if self.is_table_row_box(dom, el) {
                 continue;
             }
+            // pyro: a box under a transform (`layout_origin`: it or a box it is laid out in has
+            // one, or is a plane of a 3D rendering context; nothing else asks the engine) holds
+            // the points that map back into it through the inverse of its transforms, not those
+            // of the bounds of the transformed box: a rotated box is not hit in the corners of
+            // its bounds. A box a 3D transform hides (its back face with `backface-visibility:
+            // hidden`) is not hit; the planes of a 3D rendering context are ordered by their
+            // depth at the point below.
+            let mut plane_depth = None;
+            if !ignore_x && b.layout_origin.is_some() && b.rect.width > 0.0 && b.rect.height > 0.0 {
+                if let Some(plane) = self.external.as_ref().and_then(|source| {
+                    source.hit_plane(crate::snapshot::render_key(el), x - (r.x - b.rect.x), y - (r.y - b.rect.y))
+                }) {
+                    if !plane.inside {
+                        continue;
+                    }
+                    plane_depth = plane.depth;
+                }
+            }
             if self.outside_inset_clip_path(dom, el, x, y, ignore_x, |node| {
-                self.hit_test_client_rect(dom, result, node, geometry)
+                let rect = self.hit_test_client_rect(dom, result, node, geometry);
+                let moved = result.get(node).map_or((0.0, 0.0), |b| (rect.x - b.rect.x, rect.y - b.rect.y));
+                (rect, moved)
             }) {
                 continue;
             }
             let key = self.paint_key(dom, result, el);
             if let (None, Some((top_key, top_node))) = (&all, &best) {
-                let same_layer = same_paint_layer(&key, top_key);
-                // Shadow-including: a host's shadow content paints over it.
-                if same_layer && dom.shadow_including_contains(el, *top_node) {
-                    continue;
-                }
-                if *top_key > key && !(same_layer && dom.shadow_including_contains(*top_node, el)) {
-                    continue;
+                match depth_over(plane_depth, best_depth) {
+                    Some(true) => {}
+                    Some(false) => continue,
+                    None => {
+                        let same_layer = same_paint_layer(&key, top_key);
+                        // Shadow-including: a host's shadow content paints over it.
+                        if same_layer && dom.shadow_including_contains(el, *top_node) {
+                            continue;
+                        }
+                        if *top_key > key && !(same_layer && dom.shadow_including_contains(*top_node, el)) {
+                            continue;
+                        }
+                    }
                 }
             }
             let clipped = self.hit_test_clips(dom, result, el).iter().any(|&(a, clips)| {
@@ -2897,16 +3213,20 @@ impl Layout {
                         let at = list
                             .iter()
                             .position(|e| {
+                                if let Some(over) = depth_over(plane_depth, e.depth) {
+                                    return over;
+                                }
                                 let same_layer = same_paint_layer(&key, &e.key);
                                 !(same_layer && dom.shadow_including_contains(el, e.el))
                                     && (key >= e.key || (same_layer && dom.shadow_including_contains(e.el, el)))
                             })
                             .unwrap_or(list.len());
-                        list.insert(at, ListHit { key: key.clone(), el, chain });
+                        list.insert(at, ListHit { key: key.clone(), el, chain, depth: plane_depth });
                     }
                 }
                 if let Some(target) = target.or_else(|| self_hit.then_some(el)) {
                     best = Some((key, target));
+                    best_depth = plane_depth;
                 }
             }
         }
@@ -2929,7 +3249,7 @@ impl Layout {
         });
         if let (Some(list), Some(modal)) = (all, hit) {
             if list.is_empty() {
-                list.push(ListHit { key: Rc::from(Vec::<PaintEntry>::new()), el: modal, chain: vec![modal] });
+                list.push(ListHit { key: Rc::from(Vec::<PaintEntry>::new()), el: modal, chain: vec![modal], depth: None });
             }
         }
         hit
@@ -3073,7 +3393,7 @@ impl Layout {
         }
         // (As `synced_geometry_source` decides it would sync.)
         let synced = self.external_synced.get() == Some(self.sync_key(dom))
-            && !source.stale()
+            && !source.layout_stale()
             && !self.style.animations_changed_for_layout();
         source.record_remembered_sizes(synced);
     }
@@ -3147,7 +3467,14 @@ impl Layout {
     /// per-axis delta, makes the snap directional ([`Self::snap_positions`]).
     fn window_scroll_write(&mut self, dom: &Dom, left: Option<i32>, top: Option<i32>, dir: Option<[i64; 2]>) -> bool {
         // A scroll without a target (CSS Overflow 5 § 2.1).
-        self.scroll_targets.remove(&None);
+        self.clear_scroll_target(None);
+        // pyro: a write past the origin lays out first, which adjusts for what changed since the
+        // anchor was selected (the offset it then replaces is the adjusted one) and selects the
+        // anchor again below, whether or not the offset moves (WPT `position-change-heuristic`
+        // writes the same `scrollTop` after changing the content).
+        if top.is_some_and(|t| t != 0) || left.is_some_and(|l| l != 0) || dir.is_some() {
+            self.apply_scroll_anchors(dom, &mut Vec::new());
+        }
         // pyro: the viewport's snap positions (CSS Scroll Snap 1 § 6.2).
         let current = self.window_scroll;
         let (left, top) = {
@@ -3167,10 +3494,15 @@ impl Layout {
         let new_x = left.map_or(self.window_scroll.0, |l| l.clamp(rx.0, rx.1));
         let new_y = top.map_or(self.window_scroll.1, |t| t.clamp(ry.0, ry.1));
         if (new_x, new_y) == self.window_scroll {
+            self.capture_scroll_anchor(dom, None);
             return false;
         }
+        let from = self.window_scroll;
         self.window_scroll = (new_x, new_y);
+        self.note_scroll_direction(None, from, (new_x, new_y));
+        self.scroll_anchor_carry.remove(&None);
         self.scroll_generation = self.scroll_generation.wrapping_add(1);
+        self.capture_scroll_anchor(dom, None);
         true
     }
 
@@ -3197,15 +3529,148 @@ impl Layout {
     /// scroll timelines at the next frame, as in browsers (their times hold still until then).
     /// `true`: told.
     pub fn push_scroll(&self) -> bool {
-        if self.scroll_pushed.get() == Some(self.scroll_generation as u64) {
+        // (A snap target changes without a scroll when layout does: `scroll-state(snapped)`.)
+        // (Nothing changed since the last push: the keys are not even built.)
+        if self.scroll_pushed.get() == Some(self.scroll_generation as u64)
+            && self.snapped_pushed_at.get() == Some(self.snapped_generation)
+            && self.targets_pushed_at.get() == Some(self.scroll_targets_generation)
+        {
+            return false;
+        }
+        let snapped = self.snapped_keys();
+        self.snapped_pushed_at.set(Some(self.snapped_generation));
+        // (The scroll targets, which scroll marker selection follows: a scrolled-into-view element's
+        // marker is the active one though the scroll position says another.)
+        let targets = self.scroll_target_keys();
+        self.targets_pushed_at.set(Some(self.scroll_targets_generation));
+        if self.scroll_pushed.get() == Some(self.scroll_generation as u64)
+            && *self.snapped_pushed.borrow() == snapped
+            && *self.targets_pushed.borrow() == targets
+        {
             return false;
         }
         self.scroll_pushed.set(Some(self.scroll_generation as u64));
         if let Some(source) = self.external.as_ref() {
             let window = (self.window_scroll.0 as f64, self.window_scroll.1 as f64);
             source.set_scroll(self.scrolled_elements(), window);
+            source.set_scroll_directions(self.scroll_direction_keys());
+            if *self.snapped_pushed.borrow() != snapped {
+                source.set_snapped(snapped.clone());
+            }
+            if *self.targets_pushed.borrow() != targets {
+                source.set_scroll_targets(targets.clone());
+            }
         }
+        *self.snapped_pushed.borrow_mut() = snapped;
+        *self.targets_pushed.borrow_mut() = targets;
         true
+    }
+
+    /// Tells the geometry source the sticky boxes held at an edge now, when they changed since it
+    /// was last told: `scroll-state(stuck)` follows them (CSS Conditional 5 § 7.3.4). Looked for
+    /// only in a document with a `scroll-state()` container, and again only after a scroll, a
+    /// layout or style change (the observation stamp). `true`: told.
+    pub fn push_stuck(&self, dom: &Dom) -> bool {
+        let Some(source) = self.external.as_ref().filter(|s| s.active() && s.uses_scroll_state()) else {
+            return false;
+        };
+        let stamp = self.observation_stamp(dom);
+        if self.stuck_pushed_at.replace(Some(stamp)) == Some(stamp) {
+            return false;
+        }
+        let stuck = self.stuck_keys(dom);
+        if *self.stuck_pushed.borrow() == stuck {
+            return false;
+        }
+        source.set_stuck(stuck.clone());
+        *self.stuck_pushed.borrow_mut() = stuck;
+        true
+    }
+
+    /// The sticky boxes held away from where they are laid out, by render key, with the edges
+    /// their insets hold them at (bit 0 top, 1 right, 2 bottom, 3 left): a box pushed down is
+    /// stuck to the top, one pushed up to the bottom, and likewise sideways.
+    pub fn stuck_keys(&self, dom: &Dom) -> Vec<(u64, u8)> {
+        // (Within a hundredth of a pixel of where it is laid out is not held.)
+        const EPSILON: f64 = 0.01;
+        self.sticky_offsets(dom)
+            .into_iter()
+            .filter_map(|(key, (dx, dy))| {
+                let mut edges = 0u8;
+                if dy > EPSILON {
+                    edges |= 1;
+                } else if dy < -EPSILON {
+                    edges |= 4;
+                }
+                if dx > EPSILON {
+                    edges |= 8;
+                } else if dx < -EPSILON {
+                    edges |= 2;
+                }
+                (edges != 0).then_some((key, edges))
+            })
+            .collect()
+    }
+
+    /// The elements that are the snap target of a scroll container now, by render key, with the
+    /// axes (x, y) they are snapped on (`scroll-state(snapped)`; CSS Conditional 5 § 7.3.3).
+    pub fn snapped_keys(&self) -> Vec<(u64, (bool, bool))> {
+        let mut axes: FxHashMap<NodeId, (bool, bool)> = FxHashMap::default();
+        for boxes in self.snapped.values() {
+            for (axis, snap_box) in boxes.iter().enumerate() {
+                if let Some((el, _)) = snap_box {
+                    let entry = axes.entry(*el).or_default();
+                    if axis == 0 {
+                        entry.0 = true;
+                    } else {
+                        entry.1 = true;
+                    }
+                }
+            }
+        }
+        let mut out: Vec<(u64, (bool, bool))> =
+            axes.into_iter().map(|(el, axes)| (crate::snapshot::render_key(el), axes)).collect();
+        out.sort_unstable();
+        out
+    }
+
+    /// Sets (`Some`) or clears the snap targets of `scroller`, counting the change
+    /// (`snapped_generation`: [`Self::push_scroll`] rebuilds [`Self::snapped_keys`] only after one).
+    fn store_snap(&mut self, scroller: Option<NodeId>, chosen: Option<[Option<SnapBox>; 2]>) {
+        let changed = match chosen {
+            Some(chosen) => self.snapped.insert(scroller, chosen) != Some(chosen),
+            None => self.snapped.remove(&scroller).is_some(),
+        };
+        if changed {
+            self.snapped_generation += 1;
+        }
+    }
+
+    /// Records that `target` (`None`: the viewport) scrolled from `from` to `to`: the direction
+    /// of each axis that moved (`scroll-state(scrolled)`).
+    fn note_scroll_direction(&mut self, target: Option<NodeId>, from: (i32, i32), to: (i32, i32)) {
+        if from == to {
+            return;
+        }
+        let entry = self.scroll_directions.entry(target).or_insert((0, 0));
+        if to.0 != from.0 {
+            entry.0 = if to.0 < from.0 { -1 } else { 1 };
+        }
+        if to.1 != from.1 {
+            entry.1 = if to.1 < from.1 { -1 } else { 1 };
+        }
+    }
+
+    /// The directions of the last scrolls ([`Self::note_scroll_direction`]) by render key
+    /// (`u64::MAX`: the viewport), for the geometry source.
+    pub fn scroll_direction_keys(&self) -> Vec<(u64, (i8, i8))> {
+        let mut out: Vec<(u64, (i8, i8))> = self
+            .scroll_directions
+            .iter()
+            .map(|(&target, &dirs)| (target.map_or(u64::MAX, crate::snapshot::render_key), dirs))
+            .collect();
+        out.sort_unstable();
+        out
     }
 
     /// [`Self::push_scroll`] when `now_ms` (the page clock) is a frame (16 ms) or more past the last
@@ -3331,7 +3796,8 @@ impl Layout {
     /// § 4.1 "perform a smooth scroll"): neither snapped nor clamped, as its ends are offsets a
     /// scroll write chose (snapped and clamped there). Whether it moved.
     pub fn set_scroll_position(&mut self, dom: &Dom, target: Option<NodeId>, pos: (i32, i32)) -> bool {
-        if self.scroll_position(target) == pos {
+        let from = self.scroll_position(target);
+        if from == pos {
             return false;
         }
         match target {
@@ -3343,10 +3809,10 @@ impl Layout {
             }
             None => self.window_scroll = pos,
         }
+        self.note_scroll_direction(target, from, pos);
+        self.scroll_anchor_carry.remove(&target);
         self.scroll_generation = self.scroll_generation.wrapping_add(1);
-        if let Some(el) = target {
-            self.capture_scroll_anchor(dom, el);
-        }
+        self.capture_scroll_anchor(dom, target);
         true
     }
 
@@ -3367,7 +3833,12 @@ impl Layout {
             return false;
         }
         // A scroll without a target (CSS Overflow 5 § 2.1).
-        self.scroll_targets.remove(&Some(el));
+        self.clear_scroll_target(Some(el));
+        // (As `window_scroll_write`: what changed since the anchor was selected is adjusted for
+        // before the offset is compared and the anchor selected again.)
+        if !matches!(write, ScrollWrite::To { left: None | Some(0), top: None | Some(0) }) {
+            self.apply_scroll_anchors(dom, &mut Vec::new());
+        }
         let current = self.element_scroll.get(&el).copied().unwrap_or((0, 0));
         let mut x = current.0;
         let mut y = current.1;
@@ -3383,11 +3854,14 @@ impl Layout {
             y = self.clamp_scroll(dom, el, Axis::Height, t);
         }
         if (x, y) == current {
+            self.capture_scroll_anchor(dom, Some(el));
             return false;
         }
         self.element_scroll.insert(el, (x, y));
+        self.note_scroll_direction(Some(el), current, (x, y));
+        self.scroll_anchor_carry.remove(&Some(el));
         self.scroll_generation = self.scroll_generation.wrapping_add(1);
-        self.capture_scroll_anchor(dom, el);
+        self.capture_scroll_anchor(dom, Some(el));
         true
     }
 
@@ -3408,6 +3882,9 @@ impl Layout {
         ty: Option<i64>,
         dir: Option<[i64; 2]>,
     ) -> (Option<i64>, Option<i64>) {
+        if self.snap_suspended {
+            return (tx, ty);
+        }
         let (x, y, mut chosen) = self.snap_positions(dom, scroller, current, tx, ty, None, dir);
         if let Some(d) = dir {
             let prior = self.snapped.get(&scroller).copied().unwrap_or([None, None]);
@@ -3417,11 +3894,7 @@ impl Layout {
                 }
             }
         }
-        if chosen.iter().any(Option::is_some) {
-            self.snapped.insert(scroller, chosen);
-        } else {
-            self.snapped.remove(&scroller);
-        }
+        self.store_snap(scroller, chosen.iter().any(Option::is_some).then_some(chosen));
         (x, y)
     }
 
@@ -3461,6 +3934,8 @@ impl Layout {
         let mode = self.style.stylo_style(dom, styled).map_or_else(style::logical_geometry::WritingMode::horizontal_tb, |style| style.writing_mode);
         let (snap_x, snap_y) = snap_axes(words.first().copied().unwrap_or("none"), mode);
         let mandatory = words.get(1).copied() == Some("mandatory");
+        // `pair` (CSS Scroll Snap 2): both axes snap to ONE area aligned on both.
+        let pair = words.first().copied() == Some("pair");
         // The scroller's padding box in client coordinates and its size.
         let px = |v: &str, basis: f64| -> f64 {
             let v = v.trim();
@@ -3525,12 +4000,57 @@ impl Layout {
         let mut stops: [Vec<(f64, SnapBox)>; 2] = [Vec::new(), Vec::new()];
         let mut areas = Vec::new();
         let Ok(nodes) = dom.descendants(scroller.unwrap_or(doc)) else { return unchanged };
+        // One snap area: its box `r` (client coordinates) grown by its `scroll-margin`s `margins`
+        // (top, right, bottom, left) and aligned as `align` says.
+        let mut push_area = |id: NodeId, r: Rect, margins: [f64; 4], align: &str, always: bool| {
+            let [margin_top, margin_right, margin_bottom, margin_left] = margins;
+            let (top, bottom) = (r.y - origin_y - margin_top, r.y + r.height - origin_y + margin_bottom);
+            let (left, right) = (r.x - origin_x - margin_left, r.x + r.width - origin_x + margin_right);
+            let [align_x, align_y] = snap_alignment(align, mode);
+            let position = |a: &str, start: f64, end: f64, pad_start: f64, pad_end: f64, size: f64| match a {
+                "start" => Some(start - pad_start),
+                "end" => Some(end - (size - pad_end)),
+                "center" => Some((start + end) / 2.0 - (pad_start + (size - pad_start - pad_end) / 2.0)),
+                _ => None,
+            };
+            let candidates = [
+                snap_x.then(|| position(align_x, left, right, pl, pr, width)).flatten(),
+                snap_y.then(|| position(align_y, top, bottom, pt, pb, height)).flatten(),
+            ];
+            // A snap area larger than the snapport on an axis can be scrolled within: any target
+            // that keeps the snapport inside it is a snap position (CSS Scroll Snap 1 § 6.2.1).
+            let covering = [
+                snap_x && right - left > width - pl - pr,
+                snap_y && bottom - top > height - pt - pb,
+            ];
+            let spans = [(left - pl, right - (width - pr)), (top - pt, bottom - (height - pb))];
+            areas.push((id, candidates, covering, spans, [(left, right), (top, bottom)], [align_x, align_y], always));
+        };
+        let source = self.external.as_ref().filter(|s| s.active());
+        let may_have_pseudo_boxes = self.style.may_have_generated_before_after(dom);
         for id in nodes {
-            if dom.element(id).is_err() || Some(id) == scroller {
+            if dom.element(id).is_err() {
                 continue;
             }
-            let align = value(id, "scroll-snap-align");
-            if align.is_empty() || align == "none" {
+            let is_scroller = Some(id) == scroller;
+            let align = if is_scroller { String::new() } else { value(id, "scroll-snap-align") };
+            let element_area = !(align.is_empty() || align == "none");
+            // pyro: its `::before` and `::after` boxes (1, 2) are snap areas of their own with their own
+            // `scroll-snap-align` (a snap event reports the element as their target; WPT css-scroll-snap
+            // `snap-to-visible-areas-both-pseudo`).
+            let pseudo_boxes = [(1u8, style::selector_parser::PseudoElement::Before), (2, style::selector_parser::PseudoElement::After)]
+                .into_iter()
+                .filter_map(|(n, pseudo)| {
+                    // (Neither lookup below runs for a pseudo-element no rule generates a box for.)
+                    if !may_have_pseudo_boxes || self.style.stylo_pseudo_style(dom, id, &pseudo, true).is_none() {
+                        return None;
+                    }
+                    let b = source?.element_box(crate::snapshot::pseudo_render_key(id, n))?;
+                    let align = self.computed_pseudo_style_value(dom, id, &pseudo, "scroll-snap-align");
+                    (!(align.is_empty() || align == "none")).then_some((b, pseudo, align))
+                })
+                .collect::<Vec<_>>();
+            if !element_area && pseudo_boxes.is_empty() {
                 continue;
             }
             // Its nearest scroll container: as user scrolls find it (which handles the root and
@@ -3544,7 +4064,8 @@ impl Layout {
                 (ScrollTarget::Viewport, None) => true,
                 _ => false,
             };
-            let owned = by_user || {
+            // (The scroller's own pseudo-elements are its snap areas.)
+            let owned = is_scroller || by_user || {
                 let mut cur = dom.parent_element(id).ok().flatten();
                 loop {
                     match cur {
@@ -3564,30 +4085,22 @@ impl Layout {
             if !owned {
                 continue;
             }
-            let r = self.bounding_client_rect(dom, id);
-            let margin = |side: &str| px(&value(id, &format!("scroll-margin-{side}")), 0.0);
-            let (top, bottom) = (r.y - origin_y - margin("top"), r.y + r.height - origin_y + margin("bottom"));
-            let (left, right) = (r.x - origin_x - margin("left"), r.x + r.width - origin_x + margin("right"));
-            let [align_x, align_y] = snap_alignment(&align, mode);
-            let position = |a: &str, start: f64, end: f64, pad_start: f64, pad_end: f64, size: f64| match a {
-                "start" => Some(start - pad_start),
-                "end" => Some(end - (size - pad_end)),
-                "center" => Some((start + end) / 2.0 - (pad_start + (size - pad_start - pad_end) / 2.0)),
-                _ => None,
-            };
-            let candidates = [
-                snap_x.then(|| position(align_x, left, right, pl, pr, width)).flatten(),
-                snap_y.then(|| position(align_y, top, bottom, pt, pb, height)).flatten(),
-            ];
-            // A snap area larger than the snapport on an axis can be scrolled within: any target
-            // that keeps the snapport inside it is a snap position (CSS Scroll Snap 1 § 6.2.1).
-            let covering = [
-                snap_x && right - left > width - pl - pr,
-                snap_y && bottom - top > height - pt - pb,
-            ];
-            let spans = [(left - pl, right - (width - pr)), (top - pt, bottom - (height - pb))];
-            let always = dir.is_some() && value(id, "scroll-snap-stop") == "always";
-            areas.push((id, candidates, covering, spans, [(left, right), (top, bottom)], [align_x, align_y], always));
+            if element_area {
+                let r = self.bounding_client_rect(dom, id);
+                let margin = |side: &str| px(&value(id, &format!("scroll-margin-{side}")), 0.0);
+                let always = dir.is_some() && value(id, "scroll-snap-stop") == "always";
+                push_area(id, r, [margin("top"), margin("right"), margin("bottom"), margin("left")], &align, always);
+            }
+            for (b, pseudo, align) in pseudo_boxes {
+                let (dx, dy) = self.ancestor_scroll_offset(dom, id);
+                // (A scroller's own pseudo-element is scrolled by its offset too.)
+                let (dx, dy) = if is_scroller { (dx + current.0 as f64, dy + current.1 as f64) } else { (dx, dy) };
+                let (sx, sy) = if b.fixed { (0.0, 0.0) } else { (self.window_scroll.0 as f64, self.window_scroll.1 as f64) };
+                let r = Rect { x: b.x - sx - dx, y: b.y - sy - dy, width: b.width, height: b.height };
+                let margin = |side: &str| px(&self.computed_pseudo_style_value(dom, id, &pseudo, &format!("scroll-margin-{side}")), 0.0);
+                let always = dir.is_some() && self.computed_pseudo_style_value(dom, id, &pseudo, "scroll-snap-stop") == "always";
+                push_area(id, r, [margin("top"), margin("right"), margin("bottom"), margin("left")], &align, always);
+            }
         }
         for &(id, candidates, covering, spans, bounds, align, always) in &areas {
             let mut mine = [None, None];
@@ -3596,6 +4109,18 @@ impl Layout {
                     continue;
                 }
                 let (Some(mut c), Some(t)) = (candidates[axis], target[axis]) else { continue };
+                // A scroller that snaps one axis snaps to the areas visible on the other at the scroll
+                // offset it ends at, not to a nearer one out of sight (CSS Scroll Snap 1 § 6.1; WPT
+                // css-scroll-snap `snap-to-visible-areas-x-axis`, `-y-axis`). An area touching the
+                // snapport counts as visible.
+                if snap_x != snap_y && only.is_none() {
+                    let other = 1 - axis;
+                    let cross = target[other].unwrap_or(from[other]);
+                    let (pad_start, pad_end, size) = if other == 0 { (pl, pr, width) } else { (pt, pb, height) };
+                    if bounds[other].1 < cross + pad_start || bounds[other].0 > cross + size - pad_end {
+                        continue;
+                    }
+                }
                 if covering[axis] && t >= spans[axis].0 && t <= spans[axis].1 {
                     let other = 1 - axis;
                     let (start, end) = bounds[axis];
@@ -3689,7 +4214,44 @@ impl Layout {
                 }
             }
         }
-        if dir.is_some() {
+        // `scroll-snap-type: pair`: one area aligned on both axes (the others are ignored): the one
+        // nearest the end position, or for a directional scroll the one whose direction from the
+        // scroll offset is nearest the scroll's (the greatest cosine; WPT css-scroll-snap
+        // `scroll-snap-type-pair-001`..`-007`).
+        if pair {
+            let only_box = only.and_then(|o| o[0].or(o[1]));
+            let goal = [target[0].unwrap_or(from[0]), target[1].unwrap_or(from[1])];
+            let mut by_direction: Option<(f64, [f64; 2], SnapBox)> = None;
+            let mut nearest: Option<(f64, [f64; 2], SnapBox)> = None;
+            for &(id, candidates, _, _, _, _, _) in &areas {
+                let (Some(c0), Some(c1)) = (candidates[0], candidates[1]) else { continue };
+                if only_box.is_some_and(|b| b != (id, None)) {
+                    continue;
+                }
+                let point = [reachable(0, c0), reachable(1, c1)];
+                let distance = (point[0] - goal[0]).hypot(point[1] - goal[1]);
+                if nearest.is_none_or(|(d, _, _)| distance < d) {
+                    nearest = Some((distance, point, (id, None)));
+                }
+                if let Some(d) = dir {
+                    let (vx, vy) = (point[0] - from[0], point[1] - from[1]);
+                    let (dx, dy) = (d[0] as f64, d[1] as f64);
+                    let (length, scroll_length) = (vx.hypot(vy), dx.hypot(dy));
+                    if length > 0.0 && scroll_length > 0.0 {
+                        let cosine = (vx * dx + vy * dy) / (length * scroll_length);
+                        if cosine > 0.0 && by_direction.is_none_or(|(c, _, _)| cosine > c) {
+                            by_direction = Some((cosine, point, (id, None)));
+                        }
+                    }
+                }
+            }
+            let picked = if dir.is_some() { by_direction.or(if mandatory { nearest } else { None }) } else { nearest };
+            best = match picked {
+                Some((_, point, id)) => [Some((point[0], id)), Some((point[1], id))],
+                None => [None, None],
+            };
+        }
+        if dir.is_some() && !pair {
             for axis in 0..2 {
                 // (Only `mandatory` must rest on a snap position: `proximity` with nothing ahead
                 // lands where it was sent, not back where it was.)
@@ -3706,12 +4268,88 @@ impl Layout {
                 }
             }
         }
+        // A scroller snapping both axes ends on a visible area: when the nearest position of each axis
+        // together show none, the axis nearer its target snaps as it is and the other snaps among the
+        // areas visible there (WPT css-scroll-snap `snap-to-visible-areas-both`).
+        if snap_x && snap_y && !pair && dir.is_none() && only.is_none() {
+            if let ([Some((bx, _)), Some((by, _))], [Some(target_x), Some(target_y)]) = (best, target) {
+                let visible = |px: f64, py: f64, bounds: &[(f64, f64); 2]| {
+                    bounds[0].1 >= px + pl && bounds[0].0 <= px + width - pr && bounds[1].1 >= py + pt && bounds[1].0 <= py + height - pb
+                };
+                let any_visible = areas.iter().any(|(_, points, _, _, bounds, _, _)| points[0].is_some() && points[1].is_some() && visible(bx, by, bounds));
+                if !any_visible && !areas.is_empty() {
+                    let first = if (bx - target_x).abs() <= (by - target_y).abs() { 0 } else { 1 };
+                    let second = 1 - first;
+                    let (fixed, aim) = if first == 0 { (bx, target_y) } else { (by, target_x) };
+                    let (pad_start, pad_end, size) = if first == 0 { (pl, pr, width) } else { (pt, pb, height) };
+                    let mut pick: Option<(f64, SnapBox)> = None;
+                    for &(id, points, _, _, bounds, _, _) in &areas {
+                        let Some(point) = points[second] else { continue };
+                        if bounds[first].1 < fixed + pad_start || bounds[first].0 > fixed + size - pad_end {
+                            continue;
+                        }
+                        let point = reachable(second, point);
+                        if pick.is_none_or(|(p, _)| (point - aim).abs() < (p - aim).abs()) {
+                            pick = Some((point, (id, None)));
+                        }
+                    }
+                    if pick.is_some() {
+                        best[second] = pick;
+                    }
+                }
+            }
+        }
         // Several boxes at the same position on an axis: the box at the snap position on both axes
         // wins (Chromium picks a box aligned on both before one aligned on a single axis).
         let picked = [best[0].map(|b| b.0), best[1].map(|b| b.0)];
+        // pyro: of the areas aligned at the chosen position on an axis, the one that holds the
+        // focused element, then the one holding the `:target`, then an innermost one (no other
+        // candidate inside it), then one aligned on both axes, then the first in tree order (CSS
+        // Scroll Snap 1 § 6.2.3; WPT css-scroll-snap `snap-after-relayout/multiple-aligned-targets`).
+        // The focused and the targeted must be in the snapport.
+        if only.is_none() && !pair {
+            let focused = dom.focused(doc).ok().flatten();
+            let url_target = dom.url_target_element(doc);
+            let contains = |outer: NodeId, inner: NodeId| dom.contains(outer, inner).unwrap_or(false);
+            for axis in 0..2 {
+                let other = 1 - axis;
+                let Some(p) = picked[axis] else { continue };
+                if best[axis].is_some_and(|(_, (_, column))| column.is_some()) {
+                    continue;
+                }
+                let close = |a: Option<f64>, b: f64| a.is_some_and(|a| (a - b).abs() < 0.5);
+                let aligned: Vec<NodeId> = all.iter().filter(|(_, c)| close(c[axis], p)).map(|(id, _)| *id).collect();
+                if aligned.len() < 2 {
+                    continue;
+                }
+                let cross = picked[other].or(target[other]).unwrap_or(from[other]);
+                let (pad_start, pad_end, size) = if other == 0 { (pl, pr, width) } else { (pt, pb, height) };
+                let in_view = |id: NodeId| {
+                    areas.iter().find(|area| area.0 == id).is_some_and(|area| area.4[other].1 >= cross + pad_start && area.4[other].0 <= cross + size - pad_end)
+                };
+                let mut chosen: Option<((bool, bool, bool, bool), NodeId)> = None;
+                for &id in &aligned {
+                    let key = (
+                        focused.is_some_and(|f| contains(id, f)) && in_view(id),
+                        url_target.is_some_and(|t| contains(id, t)) && in_view(id),
+                        !aligned.iter().any(|&inner| inner != id && contains(id, inner)),
+                        picked[other].is_some_and(|q| all.iter().any(|(a, c)| *a == id && close(c[other], q))),
+                    );
+                    if chosen.is_none_or(|(best_key, _)| key > best_key) {
+                        chosen = Some((key, id));
+                    }
+                }
+                if let Some((_, id)) = chosen {
+                    best[axis] = Some((p, (id, None)));
+                }
+            }
+        }
         for axis in 0..2 {
             let other = 1 - axis;
             let (Some(p), Some(q)) = (picked[axis], picked[other]) else { continue };
+            if only.is_none() {
+                continue;
+            }
             let close = |a: Option<f64>, b: f64| a.is_some_and(|a| (a - b).abs() < 0.5);
             if let Some((id, _)) = all.iter().find(|(_, c)| close(c[axis], p) && close(c[other], q)) {
                 best[axis] = Some((p, (*id, None)));
@@ -3743,7 +4381,7 @@ impl Layout {
             }
             if let Some(el) = scroller {
                 if !dom.is_connected(el).unwrap_or(false) || !self.is_visible(dom, el) {
-                    self.snapped.remove(&scroller);
+                    self.store_snap(scroller, None);
                     continue;
                 }
             }
@@ -3759,10 +4397,10 @@ impl Layout {
                 (x, y, chosen) = self.snap_positions(dom, scroller, current, tx, ty, None, None);
             }
             if chosen.iter().all(Option::is_none) {
-                self.snapped.remove(&scroller);
+                self.store_snap(scroller, None);
                 continue;
             }
-            self.snapped.insert(scroller, chosen);
+            self.store_snap(scroller, Some(chosen));
             let (x, y) = (x.unwrap_or(current.0 as i64), y.unwrap_or(current.1 as i64));
             match scroller {
                 Some(el) => {
@@ -3859,6 +4497,7 @@ impl Layout {
                     }
                 } else if let Some(target) = target {
                     self.scroll_targets.insert(None, target);
+                    self.scroll_targets_generation += 1;
                 }
             }
         }
@@ -3907,10 +4546,13 @@ impl Layout {
         changes
     }
 
-    /// Whether any element or the window is scrolled away from the origin.
-    /// Records the layout `scroller` is settled in (nothing at the top).
-    fn capture_scroll_anchor(&mut self, dom: &Dom, scroller: NodeId) {
-        if self.scroll_top(scroller) <= 0 {
+    /// Records the layout `scroller` (`None`: the viewport) is settled in (nothing at the top).
+    fn capture_scroll_anchor(&mut self, dom: &Dom, scroller: Option<NodeId>) {
+        let top = match scroller {
+            Some(el) => self.scroll_top(el),
+            None => self.window_scroll.1,
+        };
+        if top <= 0 {
             self.scroll_anchors.remove(&scroller);
             return;
         }
@@ -3926,7 +4568,7 @@ impl Layout {
     /// and its ancestors up to `scroller`. A change between selecting the anchor and adjusting for
     /// it suppresses the adjustment (WPT scroll-animations `view-timeline-subject-bounds-update`:
     /// the anchor's own height and margin change).
-    fn anchor_fingerprint(&self, dom: &Dom, scroller: NodeId, anchor: NodeId) -> String {
+    fn anchor_fingerprint(&self, dom: &Dom, scroller: Option<NodeId>, anchor: NodeId) -> String {
         const PROPERTIES: &[&str] = &[
             "position", "top", "right", "bottom", "left", "margin-top", "margin-right", "margin-bottom",
             "margin-left", "padding-top", "padding-right", "padding-bottom", "padding-left", "width", "height",
@@ -3934,9 +4576,16 @@ impl Layout {
         ];
         let mut out = String::new();
         let mut current = Some(anchor);
-        while let Some(el) = current.filter(|&el| el != scroller) {
+        while let Some(el) = current.filter(|&el| Some(el) != scroller) {
             for property in PROPERTIES {
-                out.push_str(&self.style.computed_value(dom, el, property).unwrap_or_default());
+                let value = self.style.computed_value(dom, el, property).unwrap_or_default();
+                if *property == "position" {
+                    // Only a change between in-flow (static, relative, sticky) and out-of-flow
+                    // (absolute, fixed) positioning is a trigger (WPT `position-change-heuristic`).
+                    out.push_str(if matches!(value.trim(), "absolute" | "fixed") { "out-of-flow" } else { "in-flow" });
+                } else {
+                    out.push_str(&value);
+                }
                 out.push('|');
             }
             current = dom.parent_element(el).ok().flatten();
@@ -3957,25 +4606,101 @@ impl Layout {
         &self,
         dom: &Dom,
         flow: &LayoutResult,
-        scroller: NodeId,
+        scroller: Option<NodeId>,
         keep: &dyn Fn(NodeId) -> bool,
     ) -> Option<NodeId> {
+        let Some(scroller) = scroller else {
+            // pyro: the viewport (CSS Scroll Anchoring 1 § 2.2: the document scroller): the
+            // scrollport is the viewport rect in document coordinates, the search starts at the
+            // document element, and `overflow-anchor: none` on it or on `<body>` (the element the
+            // viewport's overflow propagates from) opts the document out (WPT `opt-out`).
+            let root = dom.document_element(self.document()).ok().flatten()?;
+            if self.overflow_anchor_none(dom, root) || self.viewport_style_element(dom).is_some_and(|el| self.overflow_anchor_none(dom, el)) {
+                return None;
+            }
+            let (left, top) = (self.window_scroll.0 as f64, self.window_scroll.1 as f64);
+            let (width, height) = self.without_scrollbars(dom, self.window_size());
+            // (An absolute box's containing block is inside the document: `positioned`.)
+            let (pad_top, pad_bottom) = self.scroll_padding_vertical(dom, root, height);
+            let port = [left, top + pad_top, left + width, (top + height - pad_bottom).max(top + pad_top)];
+            return self
+                .focused_anchor(dom, flow, None, port, keep)
+                .or_else(|| self.anchor_in(dom, flow, self.document(), port, true, keep));
+        };
         if self.overflow_anchor_none(dom, scroller) {
             return None;
         }
         let sb = flow.get(scroller)?;
-        let top = sb.rect.y + self.scroll_top(scroller) as f64;
-        self.anchor_in(dom, flow, scroller, top, top + sb.client_height, keep)
+        let top = sb.rect.y + sb.border[TOP] + self.scroll_top(scroller) as f64;
+        let left = sb.rect.x + sb.border[LEFT] + self.scroll_left(scroller) as f64;
+        let positioned = self.forms_containing_block(dom, scroller, sb);
+        let (pad_top, pad_bottom) = self.scroll_padding_vertical(dom, scroller, sb.client_height);
+        let port = [left, top + pad_top, left + sb.client_width, (top + sb.client_height - pad_bottom).max(top + pad_top)];
+        self.focused_anchor(dom, flow, Some(scroller), port, keep)
+            .or_else(|| self.anchor_in(dom, flow, scroller, port, positioned, keep))
     }
 
-    #[allow(clippy::too_many_arguments)]
+    /// The focused element when it is editable (a text control or an element with
+    /// `contenteditable`), inside `scroller` (`None`: the document) and in `port`: it is chosen
+    /// before the tree order's first candidate, so the caret stays where it is (CSS Scroll
+    /// Anchoring 1 § 2.2: "priority candidate"; WPT `focus-prioritized`).
+    fn focused_anchor(&self, dom: &Dom, flow: &LayoutResult, scroller: Option<NodeId>, port: [f64; 4], keep: &dyn Fn(NodeId) -> bool) -> Option<NodeId> {
+        let focused = dom.focused(self.document()).ok().flatten()?;
+        let editable = dom.element(focused).is_ok_and(|e| matches!(&*e.name.local, "input" | "textarea"))
+            || dom.get_attribute(focused, "contenteditable").ok().flatten().is_some_and(|v| !v.eq_ignore_ascii_case("false"));
+        if !editable || self.overflow_anchor_none(dom, focused) {
+            return None;
+        }
+        if let Some(scroller) = scroller {
+            let mut cur = dom.parent_element(focused).ok().flatten();
+            while cur != Some(scroller) {
+                cur = dom.parent_element(cur?).ok().flatten();
+            }
+        }
+        let b = flow.get(focused)?;
+        let [left, top, right, bottom] = port;
+        let visible = b.rect.height > 0.0
+            && b.rect.width > 0.0
+            && b.rect.y + b.rect.height > top
+            && b.rect.y < bottom
+            && b.rect.x + b.rect.width > left
+            && b.rect.x < right;
+        (keep(focused) && b.position != crate::geometry::BoxPosition::Fixed && visible).then_some(focused)
+    }
+
+    /// `scroll-padding-top` and `-bottom` of `el` (CSS px) against a scrollport `height` tall: the
+    /// optimal viewing region the anchor must be inside (CSS Scroll Anchoring 1 § 2.2 refers to
+    /// CSS Scroll Snap 1; WPT `scroll-padding-affects-anchoring`).
+    fn scroll_padding_vertical(&self, dom: &Dom, el: NodeId, height: f64) -> (f64, f64) {
+        use app_units::Au;
+        let Some(style) = self.style.stylo_style(dom, el) else { return (0.0, 0.0) };
+        let padding = style.get_padding();
+        let basis = Au::from_f64_px(height);
+        let [top, bottom] = [&padding.scroll_padding_top, &padding.scroll_padding_bottom]
+            .map(|value| value.to_used_value(basis).map_or(0.0, Au::to_f64_px));
+        (top, bottom)
+    }
+
+    /// Whether `el` (laid out as `b`) is a containing block for absolutely positioned
+    /// descendants: positioned or transformed (CSS Position 3 § 3.1; the other triggers, such as
+    /// `contain` and `filter`, are not considered).
+    fn forms_containing_block(&self, dom: &Dom, el: NodeId, b: &LayoutBox) -> bool {
+        b.position != crate::geometry::BoxPosition::Static
+            || self.style.computed_value(dom, el, "transform").is_some_and(|v| !v.trim().eq_ignore_ascii_case("none"))
+    }
+
+    /// `port`: the scrollport in document coordinates (left, top, right, bottom). `positioned`: an
+    /// absolutely positioned box among `parent`'s descendants has its containing block inside the
+    /// scroller (`parent` or an ancestor up to the scroller forms one), so it moves with the
+    /// scroller's content and may be the anchor (CSS Scroll Anchoring 1 § 2.2; WPT
+    /// `abspos-containing-block-outside-scroller`). The viewport always is.
     fn anchor_in(
         &self,
         dom: &Dom,
         flow: &LayoutResult,
         parent: NodeId,
-        top: f64,
-        bottom: f64,
+        port: [f64; 4],
+        positioned: bool,
         keep: &dyn Fn(NodeId) -> bool,
     ) -> Option<NodeId> {
         for child in dom.children(parent).ok()? {
@@ -3985,33 +4710,106 @@ impl Layout {
             let Some(b) = flow.get(child) else {
                 // No box then (display: contents, or added since): its
                 // children may have one.
-                if let Some(a) = self.anchor_in(dom, flow, child, top, bottom, keep) {
+                if let Some(a) = self.anchor_in(dom, flow, child, port, positioned, keep) {
                     return Some(a);
                 }
                 continue;
             };
-            // Absolute and fixed boxes are skipped themselves; `b.fixed` also
-            // marks every box inside a fixed ancestor, which anchors normally
-            // when the scroller is inside it too (a scroller in a fixed drawer).
-            if !keep(child) || self.style.computed(dom, child).is_some_and(|c| c.absolutely_positioned) {
+            // Fixed boxes are skipped themselves, absolute ones unless their containing block is
+            // inside the scroller (`b.fixed` also marks every box inside a fixed ancestor, which
+            // anchors normally when the scroller is inside it too: a scroller in a fixed drawer).
+            let fixed = self.style.computed_value(dom, child, "position").is_some_and(|v| v.trim().eq_ignore_ascii_case("fixed"));
+            if !keep(child) || fixed || (!positioned && self.style.computed(dom, child).is_some_and(|c| c.absolutely_positioned)) {
                 continue;
             }
-            let (y0, y1) = (b.rect.y, b.rect.y + b.rect.height);
-            if y1 <= top || y0 >= bottom {
+            // CSS Scroll Anchoring 1 § 2.2: sticky-positioned boxes are not candidates either
+            // (WPT `exclude-sticky`).
+            if self.style.computed_value(dom, child, "position").is_some_and(|v| v.trim().eq_ignore_ascii_case("sticky")) {
                 continue;
             }
-            if y0 >= top && y1 <= bottom {
+            // (The root's and `<body>`'s overflow is the viewport's, which does not clip them.)
+            let clips = self.style.overflow_clip_axes(dom, child);
+            let propagated = dom.element(child).is_ok_and(|e| matches!(&*e.name.local, "html" | "body"));
+            let clipped = !propagated && (clips.x || clips.y || self.contains_paint(dom, child));
+            // The bounds of a box that does not clip include the layout overflow of its
+            // descendants (floats, positioned ones, the children of a zero-height container: WPT
+            // `descend-into-container-with-overflow`, `-with-float`); the root's and `<body>`'s
+            // are the document's.
+            let [left, top, right, bottom] = port;
+            let (x0, y0) = (b.rect.x, b.rect.y);
+            let (mut x1, mut y1) = (b.rect.x + b.rect.width, b.rect.y + b.rect.height);
+            if propagated {
+                (x1, y1) = (x1.max(flow.document_width), y1.max(flow.document_height));
+            } else if !clipped {
+                x1 = x1.max(b.rect.x + b.border[LEFT] + b.scroll_width);
+                y1 = y1.max(b.rect.y + b.border[TOP] + b.scroll_height);
+            }
+            // Chromium: a candidate must occupy space and intersect the scrollport on both axes
+            // (WPT `negative-layout-overflow-on-anchor`: an anchor's child left of the viewport is
+            // not the anchor). A zero-height container may still hold out-of-flow content that
+            // is visible (WPT `abspos-contributes-to-static-parent-bounds`).
+            let intersects = y1 > top && y0 < bottom && x1 > left && x0 < right && y1 > y0 && x1 > x0;
+            if !intersects {
+                if !clipped && b.rect.height == 0.0 {
+                    let inside = positioned || self.forms_containing_block(dom, child, b);
+                    if let Some(a) = self.anchor_in(dom, flow, child, port, inside, keep) {
+                        return Some(a);
+                    }
+                }
+                continue;
+            }
+            if y0 >= top && y1 <= bottom && x0 >= left && x1 <= right {
                 return Some(child);
             }
-            let clips = self.style.overflow_clip_axes(dom, child);
-            if !(clips.x || clips.y) {
-                if let Some(a) = self.anchor_in(dom, flow, child, top, bottom, keep) {
+            if !clipped {
+                let inside = positioned || self.forms_containing_block(dom, child, b);
+                if let Some(a) = self.anchor_in(dom, flow, child, port, inside, keep) {
                     return Some(a);
                 }
             }
             return Some(child);
         }
         None
+    }
+
+    /// Whether a box inside `scroller` (`None`: any) changed between in-flow and out-of-flow
+    /// positioning (absolute or fixed) from `old` to `flow`: Chromium suppresses the adjustment
+    /// then, whichever box it is (CSS Scroll Anchoring 1 § 2.4; WPT `position-change-heuristic`).
+    fn out_of_flow_changed(&self, dom: &Dom, old: &LayoutResult, flow: &LayoutResult, scroller: Option<NodeId>) -> bool {
+        use crate::geometry::BoxPosition;
+        let out_of_flow = |p: BoxPosition| matches!(p, BoxPosition::Absolute | BoxPosition::Fixed);
+        old.boxes.iter().any(|(&id, before)| {
+            let Some(now) = flow.get(id) else { return false };
+            if out_of_flow(before.position) == out_of_flow(now.position) {
+                return false;
+            }
+            let Some(scroller) = scroller else { return true };
+            let mut cur = dom.parent_element(id).ok().flatten();
+            while let Some(el) = cur {
+                if el == scroller {
+                    return true;
+                }
+                cur = dom.parent_element(el).ok().flatten();
+            }
+            false
+        })
+    }
+
+    /// pyro: whether a scroller's anchor was selected in a layout that is not the current one: a
+    /// geometry read then owes the adjustment (Chromium adjusts during layout, before the read).
+    pub fn scroll_anchors_owed(&self, dom: &Dom) -> bool {
+        if self.scroll_anchors.is_empty() {
+            return false;
+        }
+        let flow = self.layout_result(dom);
+        self.scroll_anchors.values().any(|(old, _)| !Rc::ptr_eq(old, &flow))
+    }
+
+    /// `contain: paint` (also `strict`, `content`): the box clips its descendants' overflow.
+    fn contains_paint(&self, dom: &Dom, el: NodeId) -> bool {
+        self.style
+            .computed_value(dom, el, "contain")
+            .is_some_and(|v| v.split_ascii_whitespace().any(|t| matches!(t, "paint" | "strict" | "content")))
     }
 
     fn overflow_anchor_none(&self, dom: &Dom, el: NodeId) -> bool {
@@ -4027,37 +4825,71 @@ impl Layout {
             return;
         }
         let flow = self.layout_result(dom);
-        let mut anchors: Vec<(NodeId, Rc<LayoutResult>, Option<(NodeId, String)>)> =
+        let mut anchors: Vec<(Option<NodeId>, Rc<LayoutResult>, Option<(NodeId, String)>)> =
             self.scroll_anchors.iter().map(|(&k, (v, a))| (k, v.clone(), a.clone())).collect();
-        anchors.sort_by_key(|(k, _, _)| (k.idx, k.gen));
-        for (el, old, captured) in anchors {
+        anchors.sort_by_key(|(k, _, _)| k.map(|k| (k.idx, k.gen)));
+        for (scroller, old, captured) in anchors {
             if Rc::ptr_eq(&old, &flow) {
                 continue;
             }
-            let Some(&(x, y)) = self.element_scroll.get(&el) else { continue };
-            if y <= 0 || !dom.is_connected(el).unwrap_or(false) {
+            let (x, y) = match scroller {
+                Some(el) => {
+                    let Some(&offset) = self.element_scroll.get(&el) else { continue };
+                    if !dom.is_connected(el).unwrap_or(false) || self.contents_skipped(dom, el) {
+                        continue;
+                    }
+                    offset
+                }
+                None => self.window_scroll,
+            };
+            if y <= 0 {
                 continue;
             }
+            let el = scroller;
             let keep = |n: NodeId| flow.get(n).is_some();
             let Some(anchor) = self.scroll_anchor(dom, &old, el, &keep) else { continue };
             // A suppression trigger on the anchor or an ancestor since: no adjustment.
             let suppressed = captured.as_ref().is_some_and(|(captured, fingerprint)| {
                 *captured == anchor && self.anchor_fingerprint(dom, el, anchor) != *fingerprint
             });
-            if suppressed {
+            if suppressed || self.out_of_flow_changed(dom, &old, &flow, el) {
                 continue;
             }
-            let (Some(sb), Some(ab), Some(osb), Some(oab)) =
-                (flow.get(el), flow.get(anchor), old.get(el), old.get(anchor))
-            else {
-                continue;
+            let (Some(ab), Some(oab)) = (flow.get(anchor), old.get(anchor)) else { continue };
+            let delta = match el {
+                Some(el) => {
+                    let (Some(sb), Some(osb)) = (flow.get(el), old.get(el)) else { continue };
+                    (ab.rect.y - sb.rect.y) - (oab.rect.y - osb.rect.y)
+                }
+                // The viewport has no box: document coordinates.
+                None => ab.rect.y - oab.rect.y,
             };
-            let delta = (ab.rect.y - sb.rect.y) - (oab.rect.y - osb.rect.y);
-            let ny = (y as f64 + delta).round().clamp(0.0, i32::MAX as f64) as i32;
+            let total = y as f64 + self.scroll_anchor_carry.get(&el).copied().unwrap_or(0.0) + delta;
+            let ny = total.round().clamp(0.0, i32::MAX as f64) as i32;
+            let rest = if delta != 0.0 { (total - ny as f64).clamp(-0.5, 0.5) } else { 0.0 };
+            if rest != 0.0 {
+                self.scroll_anchor_carry.insert(el, rest);
+            } else {
+                self.scroll_anchor_carry.remove(&el);
+            }
             if ny != y {
-                self.element_scroll.insert(el, (x, ny));
+                match el {
+                    Some(el) => {
+                        self.element_scroll.insert(el, (x, ny));
+                        moved.push(ScrollTarget::Container(el));
+                    }
+                    None => {
+                        // Within the new scroll range (WPT `anchoring-with-bounds-clamping`: the
+                        // anchor's move is applied before the range clamps the offset).
+                        let (_, ry) = self.viewport_scroll_range(dom);
+                        self.window_scroll = (x, ny.clamp(ry.0, ry.1));
+                        if self.window_scroll == (x, y) {
+                            continue;
+                        }
+                        moved.push(ScrollTarget::Viewport);
+                    }
+                }
                 self.scroll_generation = self.scroll_generation.wrapping_add(1);
-                moved.push(ScrollTarget::Container(el));
             }
         }
     }
@@ -4283,7 +5115,7 @@ impl Layout {
             self.element_scroll.iter().filter(|(_, &o)| o != (0, 0)).map(|(&k, &v)| (k, v)).collect();
         scrolled.sort_by_key(|(k, _)| (k.idx, k.gen));
         for (el, (x, y)) in scrolled {
-            if !dom.is_connected(el).unwrap_or(false) || !self.is_visible(dom, el) {
+            if !dom.is_connected(el).unwrap_or(false) || !self.is_visible(dom, el) || self.contents_skipped(dom, el) {
                 continue;
             }
             let limit = |layout: &Self, axis: Axis, v: i32| {
@@ -4301,9 +5133,15 @@ impl Layout {
                 }
             }
         }
-        let anchored: Vec<NodeId> = self.element_scroll.iter().filter(|(_, &(_, y))| y > 0).map(|(&k, _)| k).collect();
+        let mut anchored: Vec<Option<NodeId>> =
+            self.element_scroll.iter().filter(|(_, &(_, y))| y > 0).map(|(&k, _)| Some(k)).collect();
+        // (The viewport last: after its offset is clamped below.)
+        if self.window_scroll.1 > 0 {
+            anchored.push(None);
+        }
         self.scroll_anchors.retain(|k, _| anchored.contains(k));
-        for el in anchored {
+        self.scroll_anchor_carry.retain(|k, _| anchored.contains(k));
+        for el in anchored.iter().copied().filter(Option::is_some) {
             self.capture_scroll_anchor(dom, el);
         }
         if self.window_scroll != (0, 0) {
@@ -4314,6 +5152,9 @@ impl Layout {
                 self.scroll_generation = self.scroll_generation.wrapping_add(1);
                 moved.push(ScrollTarget::Viewport);
             }
+        }
+        if anchored.contains(&None) {
+            self.capture_scroll_anchor(dom, None);
         }
         moved
     }
@@ -4613,6 +5454,54 @@ impl Layout {
 
     /// `scrollIntoView` keeps the existing vertical start alignment for the
     /// viewport, after revealing clipped overflow ancestors inside-out.
+    /// pyro: the activation of a `::scroll-marker` scrolls the scroll container holding its target
+    /// (not the container's own ancestors, nor the viewport past it) to bring the target's scroll
+    /// snap area to its `scroll-snap-align` position, `start` where it has none (CSS Overflow 5
+    /// § 3.2; WPT css-overflow `scroll-marker-activation-scroll`, `-default-direction-position`,
+    /// `-specified-direction-position`). A target in the viewport scrolls it as `scrollIntoView`.
+    fn scroll_marker_target_into_view(&mut self, dom: &Dom, el: NodeId) -> Vec<ScrollTarget> {
+        if self.in_hidden_contents(dom, el) {
+            return Vec::new();
+        }
+        self.force_content_visibility(dom, el);
+        if !self.is_visible(dom, el) {
+            return Vec::new();
+        }
+        let mut cur = flat_parent_element(dom, el);
+        while let Some(node) = cur {
+            if self.is_root_container(dom, node) || self.is_scroll_container(dom, node) {
+                break;
+            }
+            cur = flat_parent_element(dom, node);
+        }
+        let Some(node) = cur.filter(|&node| !self.is_root_container(dom, node)) else {
+            return self.scroll_into_view_targets(dom, el);
+        };
+        let mode = self.style.stylo_style(dom, node).map_or_else(style::logical_geometry::WritingMode::horizontal_tb, |style| style.writing_mode);
+        let align = self.style.computed_value(dom, el, "scroll-snap-align").unwrap_or_default();
+        let [align_x, align_y] = snap_alignment(&align, mode);
+        let pick = |keyword: &str| -> ScrollOffsetFn {
+            match keyword {
+                "center" => ScrollAlign::Center,
+                "end" => ScrollAlign::End,
+                _ => ScrollAlign::Start,
+            }
+            .offset_fn()
+        };
+        let target = self.scroll_margin_rect(dom, el);
+        let (x, width, y, height) = self.rect_in_scrollport(dom, node, target);
+        let (port_width, port_height) = (self.client_width(dom, node), self.client_height(dom, node));
+        let alignment = RevealAlignment::Logical { block: ScrollAlign::Start, inline: ScrollAlign::Start };
+        let [pl, pt, pr, pb] = self.reveal_scroll_padding(dom, alignment, Some(node), port_width, port_height);
+        let left = pick(align_x)(x - pl, width, (port_width - pl - pr).max(0.0), self.scroll_left(node) as i64);
+        let top = pick(align_y)(y - pt, height, (port_height - pt - pb).max(0.0), self.scroll_top(node) as i64);
+        if self.element_scroll_to(dom, node, left, top) {
+            vec![ScrollTarget::Container(node)]
+        } else {
+            Vec::new()
+        }
+    }
+
     /// pyro: a click's default action on a `::scroll-marker` at the client point: scrolls to its
     /// target (CSS Overflow 5 § 3.2). A column's container scrolls the column into its
     /// scrollport as its `::column`'s `scroll-snap-align` aligns it (start without one); an
@@ -4622,9 +5511,67 @@ impl Layout {
         let Some(source) = self.synced_geometry_source(dom).cloned() else { return Vec::new() };
         let doc_point = (point.0 + self.window_scroll.0 as f64, point.1 + self.window_scroll.1 as f64);
         let Some((key, column)) = source.scroll_marker_at(doc_point.0, doc_point.1) else { return Vec::new() };
+        self.activate_marker_target(dom, &source, key, column)
+    }
+
+    /// pyro: the scroll container whose `::scroll-marker-group` holds the marker at the client point
+    /// (the group the press on it focuses), and whether the group is in tabs mode (its markers
+    /// take the focus: CSS Overflow 5 § 3.1, `scroll-marker-group: tabs`).
+    pub fn scroll_marker_group_at(&self, dom: &Dom, point: (f64, f64)) -> Option<(NodeId, bool)> {
+        let source = self.synced_geometry_source(dom)?;
+        let doc_point = (point.0 + self.window_scroll.0 as f64, point.1 + self.window_scroll.1 as f64);
+        let owner = crate::geometry::node_of(dom, source.scroll_marker_group_at(doc_point.0, doc_point.1)?)?;
+        Some((owner, self.scroll_marker_group_is_tabs(dom, owner)))
+    }
+
+    /// Whether the `scroll-marker-group` of `owner` is in `tabs` mode.
+    pub fn scroll_marker_group_is_tabs(&self, dom: &Dom, owner: NodeId) -> bool {
+        self.style.computed_value(dom, owner, "scroll-marker-group").is_some_and(|v| v.split_whitespace().any(|w| w == "tabs"))
+    }
+
+    /// pyro: an arrow key at the focused marker group of `owner` (tabs mode) moves to the next
+    /// marker (the arrow points to the end of the container's inline or block axis) or the previous
+    /// one (to its start), cycling, and activates it: scrolls to its target (CSS Overflow 5 § 3.2;
+    /// WPT css-overflow `scroll-marker-navigation-cycles`). `arrow` is the physical direction the key points to
+    /// (`(dx, dy)`). Returns the scrollers that moved; `None` when the group has no markers.
+    pub fn step_scroll_marker(
+        &mut self,
+        dom: &Dom,
+        owner: NodeId,
+        arrow: (i8, i8),
+    ) -> Option<Vec<ScrollTarget>> {
+        use style::logical_geometry::PhysicalSide;
+        let side = match arrow {
+            (0, -1) => PhysicalSide::Top,
+            (0, 1) => PhysicalSide::Bottom,
+            (-1, 0) => PhysicalSide::Left,
+            (1, 0) => PhysicalSide::Right,
+            _ => return None,
+        };
+        let source = self.synced_geometry_source(dom).cloned()?;
+        let (targets, active) = source.scroll_marker_group_targets(crate::snapshot::render_key(owner))?;
+        let count = targets.len();
+        if count == 0 {
+            return None;
+        }
+        let mode = self.style.stylo_style(dom, owner).map_or_else(style::logical_geometry::WritingMode::horizontal_tb, |style| style.writing_mode);
+        let forward = side == mode.inline_end_physical_side() || side == mode.block_end_physical_side();
+        let next = match (active, forward) {
+            (Some(i), true) => (i + 1) % count,
+            (Some(i), false) => (i + count - 1) % count,
+            (None, true) => 0,
+            (None, false) => count - 1,
+        };
+        let (key, column) = targets[next]?;
+        Some(self.activate_marker_target(dom, &source, key, column))
+    }
+
+    /// The default action of activating the marker that targets the element `key` (or its column
+    /// `column`): scrolls to it.
+    fn activate_marker_target(&mut self, dom: &Dom, source: &Rc<dyn GeometrySource>, key: u64, column: Option<u32>) -> Vec<ScrollTarget> {
         let Some(target) = crate::geometry::node_of(dom, key) else { return Vec::new() };
         let Some(index) = column else {
-            return self.scroll_into_view_targets(dom, target);
+            return self.scroll_marker_target_into_view(dom, target);
         };
         let Some(&[cx, _cy, cw, _ch]) = source.column_boxes(key).get(index as usize) else { return Vec::new() };
         let value = |name: &str| self.style.computed_value(dom, target, name).unwrap_or_default();
@@ -4784,6 +5731,28 @@ impl Layout {
             cur = dom.parent_element(node).ok().flatten();
         }
         self.scroll_targets.insert(None, el);
+        self.scroll_targets_generation += 1;
+    }
+
+    /// [`Self::scroll_targets`] without the check that the nodes are alive (the engine drops a key
+    /// it has no node for).
+    fn scroll_target_keys(&self) -> Vec<(u64, u64)> {
+        let mut out: Vec<(u64, u64)> = self
+            .scroll_targets
+            .iter()
+            .map(|(scroller, &target)| {
+                (scroller.map_or(u64::MAX, crate::snapshot::render_key), crate::snapshot::render_key(target))
+            })
+            .collect();
+        out.sort_unstable();
+        out
+    }
+
+    /// Forgets the scroll target of `scroller` (`None`: the viewport): a scroll without one.
+    fn clear_scroll_target(&mut self, scroller: Option<NodeId>) {
+        if self.scroll_targets.remove(&scroller).is_some() {
+            self.scroll_targets_generation += 1;
+        }
     }
 
     /// The current scroll targets (CSS Overflow 5 § 2.1) by render key: each scroll container's
@@ -4885,6 +5854,17 @@ impl Layout {
     /// (CSS Contain 2 § 4.1; WPT css-contain `content-visibility-056`, `-083`, `-084`).
     /// (Read from the engine's styles up the flat tree, deriving nothing: an action's reveal
     /// asks it at every click.)
+    /// Whether `el`'s contents are skipped by `content-visibility: hidden` on it or on an
+    /// ancestor: it has no scrollable overflow then, though it keeps the scroll offset it had
+    /// (CSS Contain 2 § 4.1; WPT css-contain `content-visibility-081`).
+    fn contents_skipped(&self, dom: &Dom, el: NodeId) -> bool {
+        use style::values::specified::box_::ContentVisibility;
+        self.style
+            .stylo_style(dom, el)
+            .is_some_and(|s| s.get_box().slow_clone_content_visibility() == ContentVisibility::Hidden)
+            || self.in_hidden_contents(dom, el)
+    }
+
     fn in_hidden_contents(&self, dom: &Dom, el: NodeId) -> bool {
         use style::values::specified::box_::ContentVisibility;
         let mut cur = flat_parent_element(dom, el);
@@ -5021,6 +6001,15 @@ impl Layout {
         if self.owned(dom, el).is_none() || !dom.is_connected(el).unwrap_or(false) {
             return String::new();
         }
+        // A select has a `::picker(select)` only when it renders as a drop-down box (not `multiple`,
+        // display size 1): the picker follows the `size` and `multiple` attributes.
+        if *pseudo == style::selector_parser::PseudoElement::PickerSelect {
+            let select = dom.element(el).is_ok_and(|e| e.is_html() && &*e.name.local == "select");
+            let size = dom.get_attribute(el, "size").ok().flatten().and_then(|s| s.trim().parse::<u32>().ok());
+            if !select || dom.has_attribute(el, "multiple").unwrap_or(false) || size.is_some_and(|s| s > 1) {
+                return String::new();
+            }
+        }
         let Some(style) = self.style.stylo_pseudo_style(dom, el, pseudo, false) else { return String::new() };
         let name = resolved_property_name(name);
         // The animation and transition properties of a `::before`/`::after`, from the page's own
@@ -5045,6 +6034,19 @@ impl Layout {
             }
         }
         let value = crate::stylo::serialize(&style, &name).unwrap_or_default();
+        // An `anchor()` / `anchor-size()` of a `::before` / `::after` resolves like the element's does
+        // (`resolved_value`): the used value from its box in the layout engine (render key: pseudo 1 / 2).
+        if value.contains("anchor(") || value.contains("anchor-size(") {
+            let key = match pseudo {
+                style::selector_parser::PseudoElement::Before => Some(crate::snapshot::pseudo_render_key(el, 1)),
+                style::selector_parser::PseudoElement::After => Some(crate::snapshot::pseudo_render_key(el, 2)),
+                _ => None,
+            };
+            let used = key.zip(self.synced_geometry_source(dom)).and_then(|(key, source)| source.resolved_style_value(key, &name));
+            if let Some(used) = used.filter(|used| !used.is_empty() && !used.contains("anchor")) {
+                return used;
+            }
+        }
         if name == "content" && pseudo.is_before_or_after() && value == "normal" {
             return "none".into();
         }
@@ -5057,7 +6059,15 @@ impl Layout {
                 // A unitless line-height stays a number in Typed OM.
                 return self.style.used_value(dom, el, name);
             }
-            let css = self.style.computed_value(dom, el, name)?;
+            let mut css = self.style.computed_value(dom, el, name)?;
+            // `anchor()` / `anchor-size()` compute to pixels (css-anchor-position-1 § anchor-pos): the
+            // used value of the layout engine, as getComputedStyle reports it.
+            if css.contains("anchor(") || css.contains("anchor-size(") || (matches!(name, "top" | "left" | "right" | "bottom") && self.has_position_try_fallbacks(dom, el)) {
+                let used = self.computed_style_value(dom, el, name);
+                if used.ends_with("px") && !used.contains("anchor") {
+                    css = used;
+                }
+            }
             if css.starts_with(|c: char| c.is_ascii_digit() || c == '-' || c == '.') {
                 if let Some(value) = self.style.stylo_style(dom, el)
                     .and_then(|style| crate::stylo::precise_typed_numeric(&style, name, &css)) {
@@ -5227,6 +6237,18 @@ impl Layout {
                     return format!("{}px", crate::computed::fmt_num(f64::from(size)));
                 }
             }
+            // A non-replaced inline box has no used width or height: the computed value stands (CSSOM
+            // resolved value: the property does not apply; WPT cssom `getComputedStyle-resolved-min-max-clamping`).
+            if self.style.computed_display(dom, el).as_deref() == Some("inline") {
+                let atomic = dom.element(el).ok().is_some_and(|e| {
+                    !e.is_html() || !matches!(&*e.name.local, "span" | "a" | "b" | "i" | "em" | "strong" | "code" | "small" | "label" | "font" | "u" | "s" | "sub" | "sup" | "abbr" | "cite" | "q" | "mark" | "bdi" | "bdo" | "kbd" | "samp" | "var" | "time" | "data" | "dfn" | "ins" | "del" | "wbr" | "slot")
+                });
+                if !atomic {
+                    if let Some(declared) = declared.clone() {
+                        return declared;
+                    }
+                }
+            }
             // A declared absolute length is the used size the renderless layout cannot derive,
             // unless the box is flexed or a `min-*`/`max-*` of the axis may override it (a
             // fieldset's `min-inline-size: min-content`): the renderer's used size then.
@@ -5259,6 +6281,15 @@ impl Layout {
         // reports the used margin then; WPT css-flexbox `auto-margins-001`)
         if let (Some(side), Some(value)) = (margin_side(name), declared.as_deref()) {
             if value == "auto" || value.contains('%') || value.contains('(') {
+                // An `auto` margin of a position-area / anchor-center box with a valid anchor is 0.
+                if value == "auto" && matches!(self.position_of(dom, el), Position::Absolute | Position::Fixed) {
+                    let zero = self.synced_geometry_source(dom)
+                        .and_then(|source| source.resolved_style_value(crate::snapshot::render_key(el), name))
+                        .filter(|used| used == "0px");
+                    if let Some(zero) = zero {
+                        return zero;
+                    }
+                }
                 if let Some(q) = self.box_quads(dom, el) {
                     return format!("{}px", crate::computed::fmt_num(q.margin[side]));
                 }
@@ -5383,7 +6414,7 @@ impl Layout {
                 }
                 (!item || out_of_flow || unrendered).then(|| "0px".into())
             }
-            "top" | "bottom" | "left" | "right" if value == "auto" || value.contains('%') || value.contains("anchor(") || value.contains("anchor-size(") => {
+            "top" | "bottom" | "left" | "right" if value == "auto" || value.contains('%') || value.contains("anchor(") || value.contains("anchor-size(") || self.has_position_try_fallbacks(dom, el) => {
                 self.resolved_inset(dom, el, name, value, position()).or_else(|| clamp_layout_units(value))
             }
             "top" | "bottom" | "left" | "right"
@@ -5392,6 +6423,11 @@ impl Layout {
             }
             _ => clamp_layout_units(value),
         }
+    }
+
+    /// Whether `el` has a `position-try-fallbacks` list (its insets may come from a fallback option).
+    fn has_position_try_fallbacks(&self, dom: &Dom, el: NodeId) -> bool {
+        self.style.stylo_style(dom, el).is_some_and(|s| !s.get_position().position_try_fallbacks.value.0.is_empty())
     }
 
     /// The resolved value of an inset property that is `auto` or has a
@@ -5422,13 +6458,15 @@ impl Layout {
                     parent = dom.parent_element(parent).ok().flatten()?;
                 }
                 // A sticky box's percentages resolve against the content box of its
-                // nearest scroll container, if it has one (as Chrome does).
+                // nearest scroll container in the inset's axis, if it has one (as Chrome does).
                 let mut scroller = None;
                 if position == Position::Sticky {
                     let mut a = Some(parent);
                     while let Some(e) = a {
-                        let scrolls = style.computed_value(dom, e, "overflow-x").is_some_and(|o| !matches!(o.as_str(), "visible" | "clip"))
-                            || style.computed_value(dom, e, "overflow-y").is_some_and(|o| !matches!(o.as_str(), "visible" | "clip"));
+                        // (the one that scrolls in this inset's axis: `overflow: clip` in it makes none)
+                        let scrolls = style
+                            .computed_value(dom, e, if horizontal { "overflow-x" } else { "overflow-y" })
+                            .is_some_and(|o| !matches!(o.as_str(), "visible" | "clip"));
                         if scrolls {
                             scroller = Some(e);
                             break;
@@ -5492,6 +6530,16 @@ impl Layout {
                         Rect { x: 0.0, y: 0.0, width: self.inner_width() as f64, height: self.inner_height() as f64 }
                     }
                 };
+                // A box with `position-try-fallbacks` may be laid out with a fallback option's insets in
+                // place of its own: the layout engine reports the ones in use.
+                if self.has_position_try_fallbacks(dom, el) {
+                    let used = self.synced_geometry_source(dom)
+                        .and_then(|source| source.resolved_style_value(crate::snapshot::render_key(el), name))
+                        .filter(|used| used.ends_with("px"));
+                    if used.is_some() {
+                        return used;
+                    }
+                }
                 // A specified inset (percentage or calc()) is the computed value
                 // absolutized against the containing block, also when the box is
                 // over-constrained; only `auto` reports the box's used position.
@@ -5500,6 +6548,24 @@ impl Layout {
                     let (len, percent) =
                         crate::computed::resolve_len(value, &crate::computed::LengthContext::fonts(16.0, 16.0))?;
                     return px(len + percent / 100.0 * basis);
+                }
+                // An `auto` inset of a box placed by position-area / anchor-center (valid anchor) is
+                // 0px: the layout engine says so (css-anchor-position-1 § position-area).
+                if value == "auto" {
+                    let zero = self.synced_geometry_source(dom)
+                        .and_then(|source| source.resolved_style_value(crate::snapshot::render_key(el), name))
+                        .filter(|used| used == "0px");
+                    if zero.is_some() {
+                        return zero;
+                    }
+                } else if value.contains("anchor(") && style.stylo_style(dom, el).is_some_and(|s| !s.get_position().position_area.is_none()) {
+                    // An `anchor()` inset of a box placed by a position-area measures from the area.
+                    let used = self.synced_geometry_source(dom)
+                        .and_then(|source| source.resolved_style_value(crate::snapshot::render_key(el), name))
+                        .filter(|used| used.ends_with("px"));
+                    if used.is_some() {
+                        return used;
+                    }
                 }
                 let r = self.bounding_client_rect(dom, el);
                 px(match name {
@@ -5624,6 +6690,13 @@ impl ScrollAlign {
             ScrollAlign::Nearest => nearest_scroll_offset,
         }
     }
+}
+
+/// The element whose box `idx` paints within: its slot when it is assigned to one (a slotted node is
+/// laid out and painted in its slot's place, so in the stacking context of the shadow tree's boxes
+/// around it, not its host's), else its flat tree parent.
+fn paint_parent_element(dom: &Dom, idx: u32) -> Option<u32> {
+    dom.find_slot(idx, false).or_else(|| crate::style::flat_tree_parent_element(dom, idx))
 }
 
 /// pyro: the parent of `node` in the flat tree: its slot when slotted (a closed shadow root's

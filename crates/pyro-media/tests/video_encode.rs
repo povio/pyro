@@ -14,6 +14,7 @@ fn config(format: &str) -> EncoderConfig {
         framerate: Some(30.0),
         bitrate_mode: "variable".into(),
         format: format.into(),
+        temporal_layers: 0,
     }
 }
 
@@ -74,6 +75,11 @@ fn rejects_unimplemented_modes_and_out_of_level_picture_rates() {
     assert!(!PacketEncoder::supports(&c));
     c.framerate = Some(30.0);
     c.bitrate_mode = "constant".into();
+    assert!(PacketEncoder::supports(&c));
+    c.bitrate_mode = "quantizer".into();
+    assert!(!PacketEncoder::supports(&c));
+    c.bitrate_mode = "variable".into();
+    c.temporal_layers = 4;
     assert!(!PacketEncoder::supports(&c));
 }
 

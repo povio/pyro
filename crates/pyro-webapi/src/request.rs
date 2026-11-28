@@ -678,7 +678,7 @@ fn consume<'s>(s: &Scope<'s>, data: &RequestData, kind: ReadKind) -> JsResult<Va
             ReadKind::FormData | ReadKind::Blob => "package",
             ReadKind::Text => "text",
             ReadKind::Json => "json",
-            ReadKind::ArrayBuffer | ReadKind::Chunks => "arrayBuffer",
+            ReadKind::ArrayBuffer | ReadKind::Chunks | ReadKind::Internal => "arrayBuffer",
             ReadKind::Bytes => "bytes",
         };
         data.used.set(true);

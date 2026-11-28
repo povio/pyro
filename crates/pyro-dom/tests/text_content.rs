@@ -50,27 +50,27 @@ fn observe_all(dom: &mut Dom, target: NodeId) -> pyro_dom::mutation::ObserverId 
     obs
 }
 
-/// `textContent = <the text its one text child holds>` does nothing (as in
-/// Chrome): no version bump, no records, the child stays the same node.
+/// `textContent = <the text its one text child holds>` replaces the child with an equal one and
+/// records it (DOM "string replace all"; the same in Chrome).
 #[test]
-fn set_text_content_to_the_same_single_text_is_a_no_op() {
+fn set_text_content_to_the_same_single_text_replaces_the_child() {
     let (dom, d) = active_doc("<!doctype html><body><div id=c>same text</div><p id=e></p><p id=m>a<b></b></p></body>");
     let mut dom = dom.borrow_mut();
     let one = |dom: &Dom, css: &str| dom.query_first(d, &parse_query(css).unwrap()).unwrap().unwrap();
     let (c, e, m) = (one(&dom, "#c"), one(&dom, "#e"), one(&dom, "#m"));
     let obs = observe_all(&mut dom, d);
     let child = dom.first_child(c).unwrap().unwrap();
-    let (version, tree_version) = (dom.version(), dom.tree_version());
+    let version = dom.version();
     dom.set_text_content(c, "same text").unwrap();
-    assert_eq!(dom.version(), version);
-    assert_eq!(dom.tree_version(), tree_version);
-    assert_eq!(dom.first_child(c).unwrap(), Some(child));
-    assert!(dom.take_records(obs).is_empty());
-    // A different text, an empty text, an empty element or several children
-    // still replace all.
-    dom.set_text_content(c, "other").unwrap();
     assert!(dom.version() > version);
     assert_ne!(dom.first_child(c).unwrap(), Some(child));
+    assert_eq!(dom.text_content(c).unwrap().unwrap(), "same text");
+    let records = dom.take_records(obs);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].removed, [child]);
+    // A different text, an empty text, an empty element or several children
+    // replace all too.
+    dom.set_text_content(c, "other").unwrap();
     assert_eq!(dom.take_records(obs).len(), 1);
     let v = dom.version();
     dom.set_text_content(e, "").unwrap();
@@ -81,9 +81,6 @@ fn set_text_content_to_the_same_single_text_is_a_no_op() {
     dom.set_text_content(m, "a").unwrap();
     assert!(dom.version() > v, "two children are replaced by one");
     assert_eq!(dom.text_content(m).unwrap().unwrap(), "a");
-    let v = dom.version();
-    dom.set_text_content(m, "a").unwrap();
-    assert_eq!(dom.version(), v);
     assert_eq!(dom.take_records(obs).len(), 2, "one for `e`, one for `m`");
 }
 

@@ -275,6 +275,26 @@ impl<'a, 'b: 'a> StyleAdjuster<'a, 'b> {
         }
     }
 
+    /// pyro: MathML Core § 2.1: `float` does not apply to a MathML element nor to a child of one
+    /// (an HTML element in an `mi` or an `annotation-xml`): layout positions them, as Chromium's
+    /// `display: math` boxes ignore it (WPT mathml `not-floating-001`, `ignored-properties-001`).
+    #[cfg(feature = "servo")]
+    fn adjust_for_math_float<E>(&mut self, element: Option<E>)
+    where
+        E: TElement,
+    {
+        if !self.style.is_floating() {
+            return;
+        }
+        let Some(element) = element else { return };
+        if element.implemented_pseudo_element().is_some() {
+            return;
+        }
+        if element.is_mathml_element() || element.traversal_parent().is_some_and(|parent| parent.is_mathml_element()) {
+            self.style.mutate_box().set_float(Float::None);
+        }
+    }
+
     /// Whether we should skip any item-based display property blockification on
     /// this element.
     fn skip_item_display_fixup<E>(&self, element: Option<E>) -> bool
@@ -1391,6 +1411,8 @@ impl<'a, 'b: 'a> StyleAdjuster<'a, 'b> {
             self.adjust_for_text_control_editing_root();
         }
         self.adjust_for_top_layer();
+        #[cfg(feature = "servo")]
+        self.adjust_for_math_float(element);
         self.blockify_if_necessary(layout_parent_style, element);
         #[cfg(feature = "gecko")]
         self.adjust_for_webkit_line_clamp();

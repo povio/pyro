@@ -167,6 +167,9 @@ pub const LIGHT_INDEX_ATTR: &str = "light-index";
 /// Name ([`STATE_NS`]) of the attribute an `<svg>` panned or zoomed by script carries in render
 /// trees (`currentTranslate`, `currentScale`): `tx ty scale`.
 pub const SVG_PAN_ATTR: &str = "svg-pan";
+/// pyro: name ([`STATE_NS`]) of the attribute an `<img>` carries in render trees when its load never
+/// delays `load` (`Dom::image_lazy`); blitz-dom's `referenced_images_with` reads it.
+pub const LAZY_IMAGE_ATTR: &str = "lazy-image";
 /// pyro: name ([`STATE_NS`]) of the attribute that marks the slot a `<details>` element's content
 /// renders in (the render tree gives a `<details>` the user-agent shadow tree Chromium gives it: a
 /// slot for its first `<summary>`, then this one for the rest), which the renderer styles as its
@@ -595,16 +598,18 @@ impl Dom {
     }
 
     /// Pushes the `<style>` steps of the sheets `scope` adopts (rendered
-    /// after what `stack` holds above them), each text once; `emitted` counts
-    /// the adopted sheets rendered so far (their keys).
+    /// after what `stack` holds above them), one per distinct sheet, at the
+    /// position of its last occurrence (Chrome: a sheet adopted twice applies
+    /// once, last; two sheets with the same text are still two sheets);
+    /// `emitted` counts the adopted sheets rendered so far (their keys).
     fn push_adopted(&self, stack: &mut Vec<Step>, opts: &RenderHtml<'_>, scope: u32, emitted: &mut usize) {
         let Some(adopted) = opts.adopted else { return };
         let mut sheets = Vec::new();
-        let mut texts = rustc_hash::FxHashSet::default();
-        for (_, text) in adopted(self.id_of(scope)) {
-            if !text.is_empty() && texts.insert(text.clone()) {
+        let list = adopted(self.id_of(scope));
+        for (i, (id, text)) in list.iter().enumerate() {
+            if !text.is_empty() && !list[i + 1..].iter().any(|(later, _)| later == id) {
                 *emitted += 1;
-                sheets.push((adopted_key(*emitted), text));
+                sheets.push((adopted_key(*emitted), text.clone()));
             }
         }
         for (key, text) in sheets.into_iter().rev() {
@@ -731,7 +736,10 @@ impl Dom {
                     let input_type = (html && local == "input").then(|| self.input_type_idx(n));
                     // The source an `<img>` selected from `srcset` or `<picture>` is its `src`
                     // to the renderer, which reads no other.
-                    let image_source = (html && local == "img").then(|| self.image_source(id)).flatten();
+                    // pyro: a lazy `<img>` whose fetch waits has no `src` there at all (the renderer
+                    // would fetch it at its first layout).
+                    let image_deferred = html && local == "img" && self.image_deferred(id);
+                    let image_source = (html && local == "img" && !image_deferred).then(|| self.image_source(id)).flatten();
                     let mut attrs: Vec<RAttr<'_>> = Vec::with_capacity(e.attrs.len() + 1);
                     for a in &e.attrs {
                         let name: &str = &a.name.local;
@@ -757,7 +765,10 @@ impl Dom {
                                 ("object", "data" | "srcdoc") | ("embed", "src" | "srcdoc") => {
                                     html && self.frame_documents.contains_key(&n)
                                 }
-                                ("img", "src") => image_source.is_some(),
+                                ("img", "src") => image_source.is_some() || image_deferred,
+                                // pyro: a lazy `<video>` whose load waits has no `poster` there either: the
+                                // renderer would fetch the poster at its first layout, far below the viewport.
+                                ("video", "poster") => html && self.image_deferred(id),
                                 // pyro: a script-made template's `shadowrootmode` would reparse as
                                 // a declarative shadow root of its parent in the renderer.
                                 ("template", "shadowrootmode") => html,
@@ -797,6 +808,15 @@ impl Dom {
                             name: Cow::Owned(QualName::new(None, STATE_NS.into(), "inline-declarations".into())),
                             value: Cow::Borrowed(style),
                             valueless: false,
+                        });
+                    }
+                    // pyro: an `<img>` whose load never delays `load` (lazy, or let go from deferral by
+                    // `loading` turning eager): the renderer does not wait for its request either.
+                    if html && local == "img" && self.image_lazy(id) {
+                        attrs.push(RAttr {
+                            name: Cow::Owned(QualName::new(None, STATE_NS.into(), LAZY_IMAGE_ATTR.into())),
+                            value: Cow::Borrowed(""),
+                            valueless: true,
                         });
                     }
                     if let Some(href) = href {

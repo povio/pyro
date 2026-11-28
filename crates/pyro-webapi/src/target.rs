@@ -391,6 +391,8 @@ fn add_listener<'s>(s: &Scope<'s>, t: &EventTargetData, obj: Object<'s>, a: Args
     t.page.register_realm(&realm);
     let added = t.page.dom.borrow_mut().add_listener(t.key, &ty, handle, opts);
     if added {
+        crate::smil::listener_added(&t.page, &ty);
+        crate::sensors::listener_added(s, &t.page, t.key, &ty);
         maybe_pin(s, &t.page, t.key, obj);
         if &*ty == "prioritychange" { crate::task_signal::sync_listener(s, obj)?; }
         if &*ty == "change" { crate::layout_api::sync_media_listener(s, obj); }
@@ -781,9 +783,24 @@ pub(crate) fn unheard(page: &PageDom, ty: &str) -> bool {
     !page.dom.borrow().listens_for(ty)
 }
 
+/// [`unheard`] for a trusted input event the caller would otherwise make and
+/// dispatch at `target`: when nobody listens, the event is still an input the
+/// performance timeline sees (Event Timing counts it in `eventCounts` and
+/// makes its entries; the last user input time moves), so the caller says what
+/// it would have made. One const-folded branch when no `perf` module that reads
+/// input is enabled. `key_code`: `KeyboardEvent.code` of key events.
+pub(crate) fn unheard_input(page: &PageDom, ty: &str, target: TargetKey, cancelable: bool, key_code: Option<&str>) -> bool {
+    let unheard = unheard(page, ty);
+    if unheard && crate::perf::TRACK_INPUT {
+        let time_stamp = crate::event::page_now_ms(page);
+        crate::perf::note_unheard(page, &crate::perf::UnheardEvent { ty, time_stamp, cancelable, target, key_code });
+    }
+    unheard
+}
+
 /// Dispatches `event` at `target` (DOM "dispatch"). Returns false if canceled.
 pub fn fire(page: &PageDom, target: TargetKey, event: &EventData) -> bool {
-    fire_with(page, target, event, &mut |_| {})
+    fire_with(page, target, None, event, &mut |_| {})
 }
 
 /// DOM "dispatch" of `event` at `target` with the legacy target override
@@ -797,25 +814,28 @@ pub fn fire_with_target_override(
     target_override: TargetKey,
     event: &EventData,
 ) -> bool {
-    dispatch_at(page, target, Some(target_override), event, &mut |_| {})
+    dispatch_at(page, target, Some(target_override), None, event, &mut |_| {})
 }
 
-/// [`fire`], calling `before_listeners` with the event's path before any
+/// [`fire`], with the event path cut before `stop_before` when given (an ancestor of `target` that
+/// neither sees the event nor passes it on), calling `before_listeners` with the event's path before any
 /// listener runs (see `pyro_dom::events::dispatch_with`): where the activation
 /// target is picked and its legacy-pre-activation behavior runs.
 pub(crate) fn fire_with(
     page: &PageDom,
     target: TargetKey,
+    stop_before: Option<TargetKey>,
     event: &EventData,
     before_listeners: &mut dyn FnMut(&[PathItem]),
 ) -> bool {
-    dispatch_at(page, target, None, event, before_listeners)
+    dispatch_at(page, target, None, stop_before, event, before_listeners)
 }
 
 fn dispatch_at(
     page: &PageDom,
     target: TargetKey,
     target_override: Option<TargetKey>,
+    stop_before: Option<TargetKey>,
     event: &EventData,
     before_listeners: &mut dyn FnMut(&[PathItem]),
 ) -> bool {
@@ -856,6 +876,22 @@ fn dispatch_at(
             }
         }
     }
+    if let Some(stop) = stop_before {
+        if let Some(end) = path.iter().skip(1).position(|&(observer, _)| observer == stop) {
+            path.truncate(end + 1);
+        }
+    }
+    // SMIL event values (`begin="click"`) begin or end animations at the time the event happens.
+    if page.dom.borrow().smil_seen() {
+        let node = page.dom.borrow().key_node(target);
+        if let Some(node) = node {
+            let (ty, bubbles) = {
+                let state = event.state.borrow();
+                (state.ty.to_string(), state.bubbles)
+            };
+            crate::smil::on_event(&event.page, node, &ty, bubbles);
+        }
+    }
     // No listener for the type on any target: no callback runs, so the path
     // needs no holding and no invocation target is asked about its tree.
     let heard = page.dom.borrow().listens_for(&event.state.borrow().ty);
@@ -882,7 +918,10 @@ fn dispatch_at(
         }
     };
     let mut inv = Invoker { page, event, in_shadow };
+    // Event Timing and Soft Navigations see the listeners of trusted events run (`perf`).
+    let perf_tokens = crate::perf::dispatch_begin(page, event);
     let result = dispatch_on_path(&page.dom, target, &path, &event.state, &mut inv, before_listeners);
+    crate::perf::dispatch_end(page, event, perf_tokens);
     // The relatedTarget stays as the outermost invocation target saw it, or
     // is reset with the target ("clearTargets").
     event.fields.borrow_mut().related_target = event.state.borrow().related_target;
@@ -1175,6 +1214,8 @@ fn store_event_handler(
         AddOptions { capture: false, once: false, passive: None },
     );
     maybe_pin(s, &target.page, target.key, object);
+    crate::smil::listener_added(&target.page, ty);
+    crate::sensors::listener_added(s, &target.page, target.key, ty);
     if ty == "prioritychange" { crate::task_signal::sync_listener(s, object)?; }
     if ty == "change" { crate::layout_api::sync_media_listener(s, object); }
     Ok(())

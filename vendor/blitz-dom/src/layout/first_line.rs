@@ -298,17 +298,24 @@ impl BaseDocument {
         let style = match current.primary_styles() {
             Some(own) if current.is_element() || current.is_anonymous() => {
                 let own: Arc<ComputedValues> = (*own).clone();
-                let kept = self.first_line_reparented.0.lock().unwrap().get(&node).and_then(|entry| {
-                    (Arc::ptr_eq(&entry.own, &own) && Arc::ptr_eq(&entry.parent, &parent_style))
-                        .then(|| entry.style.clone())
-                });
-                match kept {
-                    Some(style) => style,
-                    None => {
-                        let style = reparent(self, current, &own, &parent_style);
-                        let entry = ReparentEntry { own, parent: parent_style, style: style.clone() };
-                        self.first_line_reparented.0.lock().unwrap().insert(node, entry);
-                        style
+                // pyro: for a canvas a page can read back (`UnvisitedPaint`), the style is
+                // cascaded again with the visited rules of its own style, so its colours are
+                // read unvisited from the result; the cache holds only what the page shows.
+                if crate::node::UnvisitedPaint::active() {
+                    crate::node::UnvisitedPaint::view(reparent(self, current, &own, &parent_style))
+                } else {
+                    let kept = self.first_line_reparented.0.lock().unwrap().get(&node).and_then(|entry| {
+                        (Arc::ptr_eq(&entry.own, &own) && Arc::ptr_eq(&entry.parent, &parent_style))
+                            .then(|| entry.style.clone())
+                    });
+                    match kept {
+                        Some(style) => style,
+                        None => {
+                            let style = reparent(self, current, &own, &parent_style);
+                            let entry = ReparentEntry { own, parent: parent_style, style: style.clone() };
+                            self.first_line_reparented.0.lock().unwrap().insert(node, entry);
+                            style
+                        }
                     }
                 }
             }

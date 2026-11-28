@@ -24,7 +24,10 @@
 // if detached), `host(value, 9)` detaches it and `host(index, 10)` makes the
 // one of a decoded 'C' tree. For WebCodecs resources, host(value, 11) stores
 // the immutable slots and returns their index, and host(index, 12) restores
-// a 'Q' record in the receiving realm.
+// a 'Q' record in the receiving realm. `host(value, 0)` also describes a
+// FileSystemHandle as ['O', index] (the locator travels beside the text);
+// `host(index, 18)` makes the handle of a decoded 'O' tree (DataCloneError
+// unless the receiver is a secure context of the handle's origin).
 // Blob bytes travel beside the text, shared, not copied. Transferred
 // MessagePorts travel beside it too: `encode` returns them in transfer-list
 // order, then the ports of the transferred streams, with the count of the
@@ -258,6 +261,7 @@
             if (parts !== undefined) {
                 if (parts[0] === 'K') return '["K",' + node(parts[1]) + ']';
                 if (parts[0] === 'C') return '["C",' + parts[1] + ']';
+                if (parts[0] === 'O') return '["O",' + parts[1] + ']';
                 if (parts[0] === 'F') {
                     return '["F",' + parts[1] + ',' + stringify(parts[2]) + ','
                         + (parts[3] === null ? 'null' : stringify(parts[3])) + ',' + node(parts[4]) + ']';
@@ -375,6 +379,7 @@
                 case 'G': return remember(id, host(tree[1], 16, node(tree[2])));
                 case 'F': return remember(id, host(tree, 1));
                 case 'C': return remember(id, host(tree[1], 10));
+                case 'O': return remember(id, host(tree[1], 18));
                 case 'Q': return remember(id, host(tree[1], 12));
                 case 'I': return remember(id, host(tree, 14, node(tree[4])));
                 case 'S': {

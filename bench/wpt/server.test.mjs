@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { discoverCrashtests } from './crashtest.mjs';
-import { NEEDS_H2, discover, discoverReftests, serverFor } from './lib.mjs';
+import { discover, discoverReftests, serverFor } from './lib.mjs';
 
 test('reftests and crashtests gate under wptserve with testdriver; testharness pages under serve.mjs', () => {
   expect(serverFor('reftest')).toEqual({ server: 'wptserve', testdriver: true });
@@ -49,7 +49,7 @@ function checkout(files) {
   return wpt;
 }
 
-test('reftest discovery: wptserve and testdriver pages run under wptserve, h2 pages under neither', () => {
+test('reftest discovery: wptserve, h2 and testdriver pages run under wptserve, h2 pages not under serve.mjs', () => {
   const match = '<link rel="match" href="ref.html">';
   const wpt = checkout({
     'css/a/ref.html': '<p>ref',
@@ -64,18 +64,18 @@ test('reftest discovery: wptserve and testdriver pages run under wptserve, h2 pa
     const urls = (o) => discoverReftests(wpt, ['css'], o).tests.map((t) => t.url).sort();
     const stat = discoverReftests(wpt, ['css']);
     expect(stat.tests.map((t) => t.url)).toEqual(['css/a/plain.html']);
-    expect(stat.excluded).toMatchObject({ 'needs wptserve (substitution, pipe, Python handler)': 3, 'needs testdriver': 1, [NEEDS_H2]: 1 });
-    expect(urls({ wptserve: true })).toEqual(['css/a/handler.html', 'css/a/name.sub.html', 'css/a/pipe.html', 'css/a/plain.html']);
+    expect(stat.excluded).toMatchObject({ 'needs wptserve (substitution, pipe, Python handler)': 4, 'needs testdriver': 1 });
+    expect(urls({ wptserve: true })).toEqual(['css/a/handler.html', 'css/a/name.sub.html', 'css/a/pipe.html', 'css/a/plain.html', 'css/a/push.h2.html']);
     const all = discoverReftests(wpt, ['css'], { wptserve: true, testdriver: true });
-    expect(all.tests.map((t) => t.url).sort()).toEqual(['css/a/driver.html', 'css/a/handler.html', 'css/a/name.sub.html', 'css/a/pipe.html', 'css/a/plain.html']);
-    // Nothing is left out for the server but h2, which wptserve.mjs does not serve.
-    expect(all.excluded).toEqual({ [NEEDS_H2]: 1, 'reference file': 1 });
+    expect(all.tests.map((t) => t.url).sort()).toEqual(['css/a/driver.html', 'css/a/handler.html', 'css/a/name.sub.html', 'css/a/pipe.html', 'css/a/plain.html', 'css/a/push.h2.html']);
+    // Nothing is left out for the server: wptserve.mjs serves h2 too.
+    expect(all.excluded).toEqual({ 'reference file': 1 });
   } finally {
     fs.rmSync(wpt, { recursive: true, force: true });
   }
 });
 
-test('crashtest discovery: wptserve and testdriver pages run under wptserve, h2 pages under neither', () => {
+test('crashtest discovery: wptserve, h2 and testdriver pages run under wptserve, h2 pages not under serve.mjs', () => {
   const wpt = checkout({
     'dom/a-crash.html': '<p>x',
     'dom/b-crash.https.html': '<p>x',
@@ -87,14 +87,13 @@ test('crashtest discovery: wptserve and testdriver pages run under wptserve, h2 
     const stat = discoverCrashtests(wpt, ['.']);
     expect(stat.tests.map((t) => t.url)).toEqual(['dom/a-crash.html']);
     expect(stat.excluded).toEqual({
-      [NEEDS_H2]: 1,
-      'needs wptserve (substitution, https, h2, another host)': 1,
+      'needs wptserve (substitution, https, h2, another host)': 2,
       'needs testdriver': 1,
       'needs wptserve (substitution, pipe, Python handler)': 1,
     });
     const all = discoverCrashtests(wpt, ['.'], { wptserve: true, testdriver: true });
-    expect(all.tests.map((t) => t.url)).toEqual(['dom/a-crash.html', 'dom/b-crash.https.html', 'dom/c-crash.html', 'dom/d-crash.html']);
-    expect(all.excluded).toEqual({ [NEEDS_H2]: 1 });
+    expect(all.tests.map((t) => t.url)).toEqual(['dom/a-crash.html', 'dom/b-crash.https.html', 'dom/c-crash.html', 'dom/d-crash.html', 'dom/e-crash.h2.html']);
+    expect(all.excluded).toEqual({});
   } finally {
     fs.rmSync(wpt, { recursive: true, force: true });
   }

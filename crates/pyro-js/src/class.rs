@@ -1929,12 +1929,36 @@ unsafe fn this_data<'a, C: JsClass>(
             return Ok((d, (!crate::realm::is_scope_realm(realm, scope)).then_some(realm)));
         }
     }
+    // A WindowProxy of an accessible (same-origin) popup stands for its Window: the Window's
+    // attribute getters and methods run on it (`Object.getOwnPropertyDescriptor(self,
+    // "opener").get.call(popup)`).
+    if let Some(h) = unsafe { popup_proxy_header(scope, this) } {
+        if let Some(d) = unsafe { data_of_header::<C>(h) } {
+            let realm = unsafe { &(*h).realm_ref };
+            return Ok((d, (!crate::realm::is_scope_realm(realm, scope)).then_some(realm)));
+        }
+    }
     // Not a `C`: only the global receiver fallback is left, which needs the
     // class's registry entry (a cold path, one copy for every class).
     let p = this_data_global(scope, this, TypeId::of::<C>())?;
     // SAFETY: the pointer refers to C::Data owned by the realm's global
     // payload, which outlives this callback.
     Ok((unsafe { &*(p as *const C::Data) }, None))
+}
+
+/// The payload header of the Window global behind `this`, when `this` is the WindowProxy the
+/// embedder issued for an accessible popup (`Scope::accessible_popup_window`).
+#[cold]
+#[inline(never)]
+unsafe fn popup_proxy_header(scope: &Scope<'_>, this: sys::JSObjectRef) -> Option<*mut Header> {
+    if this.is_null() {
+        return None;
+    }
+    // SAFETY: `this` is the receiver of the running callback.
+    let object = unsafe { Object::from_raw(scope.ctx, this) };
+    let global = scope.accessible_popup_window(object).ok()??;
+    // SAFETY: the global of a live realm, on the stack through this call.
+    unsafe { scope.header_of_receiver(global.as_raw()) }
 }
 
 /// The global receiver fallback of [`this_data`]: the data of `class` the

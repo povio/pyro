@@ -17,7 +17,8 @@ use markup5ever::{local_name, ns, TokenizerResult};
 
 use crate::dom::Dom;
 use crate::RegistryAssociation;
-use crate::fragment_filter::FragmentFilter;
+use crate::fragment_filter::{Disposition, FragmentFilter};
+use rustc_hash::FxHashMap;
 use crate::error::{DomError, DomResult};
 use crate::node::{
     element_flags, shadow_flags, ElementData, FragmentData, NodeId, NodeKind, QuirksMode, ShadowRootMode, NIL,
@@ -58,6 +59,15 @@ struct Sink<A: DomAccess> {
     /// for a token", "insert an element at the adjusted insertion location").
     sync_custom: bool,
     filter: Option<Rc<FragmentFilter>>,
+    /// The filter also applies to the children of the document: a document parser's `html`
+    /// element and top-level comments. A fragment parser's synthetic `html` root is never filtered.
+    filter_document: bool,
+    /// Elements the filter replaces with their children, by id, with the place each would have
+    /// been inserted at (parent, and the sibling it goes before or NIL; the parent is resolved
+    /// through earlier entries). The element is created (the tree builder keeps it on its stack of
+    /// open elements) but never inserted: what the parser inserts under it goes to that place
+    /// (`Sink::append_to`, `Sink::attach_replaced`). Empty without a filter.
+    forwards: RefCell<FxHashMap<u32, (u32, u32)>>,
     /// Present only on the detached, unfiltered parsers that support inline patches.
     patches: Option<RefCell<crate::template_patch::Patches>>,
     /// Elements of a defined name created for a token, with the token's
@@ -96,6 +106,8 @@ impl<A: DomAccess> Sink<A> {
             elem_flags,
             sync_custom,
             filter: None,
+            filter_document: false,
+            forwards: RefCell::new(FxHashMap::default()),
             patches: None,
             fragment_document_registry: None,
             pending_custom: RefCell::new(Vec::new()),
@@ -203,7 +215,7 @@ fn document_has_child(d: &Dom, doc: u32, pred: impl Fn(u32) -> bool) -> bool {
 fn assign_parser_registry(dom: &mut Dom, node: u32, parent: u32) {
     let Some(el) = dom.n_mut(node).element_mut() else { return };
     if std::mem::take(&mut el.parser_needs_registry) {
-        let registry = dom.registry_idx(parent);
+        let registry = dom.parser_registry_for(node, parent);
         dom.set_registry_idx(node, registry);
     }
 }
@@ -237,6 +249,21 @@ fn insert_node(dom: &mut Dom, parent: u32, before: u32, child: NodeOrText<u32>) 
             if dom.reactions.any_custom && dom.is_connected_idx(parent) {
                 dom.enqueue_custom_reactions(n, crate::custom::CustomReaction::Connected);
             }
+            // A constructor may have attached a shadow root and filled it
+            // with unupgraded candidates (a clone of a template's contents):
+            // DOM "insert" tries to upgrade the shadow-including descendants
+            // once the host is connected. They run after the host's
+            // connectedCallback (queued just above), in shadow-including
+            // tree order.
+            // (`upgrades_after_insert` returns at once until a custom element was ever defined.)
+            if dom.n(n).element().is_some_and(|e| e.shadow_root != NIL) && dom.is_connected_idx(parent) {
+                dom.upgrades_after_insert(n);
+            }
+            // Nonce hiding applies to what the parser inserts as to what a script does (after
+            // the connected reaction: a custom element's `attributeChangedCallback` for the
+            // emptied attribute follows its `connectedCallback`). Returns at once without a
+            // header-delivered policy.
+            dom.hide_nonces(n);
         }
     }
 }
@@ -265,7 +292,7 @@ impl<A: DomAccess> TreeSink for Sink<A> {
     }
     fn create_element(&self, name: QualName, mut attrs: Vec<Attribute>, flags: ElementFlags) -> u32 {
         if let Some(filter) = &self.filter {
-            attrs.retain(|attr| filter.allows_attribute(&attr.name));
+            attrs.retain(|attr| filter.allows_attribute(&name, &attr.name, &attr.value));
         }
         // An element of a defined name keeps its token's attributes for its
         // construction (`Sink::settle_custom`). Decided under the creation's
@@ -282,7 +309,7 @@ impl<A: DomAccess> TreeSink for Sink<A> {
                 .then(|| attrs.iter().find(|a| a.name.ns == ns!() && &*a.name.local == "is"))
                 .flatten()
                 .map(|a| &*a.value);
-            if self.sync_custom && !template && !self.filter.as_ref().is_some_and(|f| f.removes_element(&name))
+            if self.sync_custom && !template && !self.filter.as_ref().is_some_and(|f| f.disposition(&name) != Disposition::Keep)
                 && d.parser_may_construct(self.doc_owner(d), &name, is) {
                 return Err((name, attrs));
             }
@@ -327,50 +354,11 @@ impl<A: DomAccess> TreeSink for Sink<A> {
         if self.stream_invalid() {
             return;
         }
-        let mut parent = *parent;
-        let mut before = NIL;
-        if let Some(position) = self.dom.insertion_position() {
-            if parent == self.doc {
-                // The tree builder starts a fragment with a synthetic html root.
-                // Keep this handle on its stack, outside the live document.
-                if let NodeOrText::AppendNode(root) = child {
-                    let previous = position.root.replace(root);
-                    debug_assert_eq!(previous, NIL);
-                }
-                return;
-            }
-            if parent == position.root.get() {
-                parent = position.target;
-                before = position.before;
-            }
-        }
-        if parent != self.doc && self.filter_child(&child) { return; }
-        if let Some(patches) = &self.patches {
-            let mut patches = patches.borrow_mut();
-            (parent, before) = self.dom.with(|d| patches.insertion(d, parent, before));
-            if let NodeOrText::AppendNode(node) = &child {
-                if self.dom.with(|d| patches.prepare(d, self.doc, parent, *node)) {
-                    return;
-                }
-            }
-        }
-        self.settle_custom(parent, &child);
-        if self.stream_invalid() {
-            return;
-        }
-        let queued = self.dom.with(|d| {
-            // A constructor or script can move the anchor between tokens.
-            if (before == NIL || d.n(before).parent == parent) && !cannot_insert(d, parent, &child) {
-                insert_node(d, parent, before, child);
-            }
-            d.custom_reactions_queued()
-        });
-        if queued {
-            self.run_custom_reactions();
-        }
+        self.append_to(*parent, NIL, child);
     }
     fn append_based_on_parent_node(&self, element: &u32, prev_element: &u32, child: NodeOrText<u32>) {
-        let has_parent = self.dom.with(|d| d.n(*element).parent != NIL);
+        // A replaced element has no parent: the place it stands for is its position.
+        let has_parent = self.dom.with(|d| d.n(*element).parent != NIL) || (self.filter.is_some() && self.forwarded(*element).is_some());
         if has_parent {
             self.append_before_sibling(element, child);
         } else {
@@ -450,11 +438,29 @@ impl<A: DomAccess> TreeSink for Sink<A> {
         });
     }
     fn append_before_sibling(&self, sibling: &u32, new_node: NodeOrText<u32>) {
-        if self.stream_invalid() || self.filter_child(&new_node) {
+        if self.stream_invalid() {
             return;
+        }
+        if self.filter.is_some() {
+            // A replaced sibling (a table the tree builder foster parents around) is the place
+            // its children went to: insert there.
+            if let Some((parent, before)) = self.forwarded(*sibling) {
+                self.append_to(parent, before, new_node);
+                return;
+            }
+        }
+        let mut replaced = None;
+        match self.filter_child(&new_node) {
+            ChildFilter::Keep => {}
+            ChildFilter::Drop => return,
+            ChildFilter::Replace(id) => replaced = Some(id),
         }
         let parent = self.dom.with(|d| d.n(*sibling).parent);
         if parent == NIL {
+            return;
+        }
+        if let Some(id) = replaced {
+            self.attach_replaced(id, parent, *sibling);
             return;
         }
         if let (Some(patches), NodeOrText::AppendNode(node)) = (&self.patches, &new_node) {
@@ -487,7 +493,7 @@ impl<A: DomAccess> TreeSink for Sink<A> {
                     insert_node(d, target, before, new_node);
                 }
             }
-            d.custom_reactions_queued()
+            d.custom_reactions_queued() || d.has_upgrade_candidates()
         });
         if queued {
             self.run_custom_reactions();
@@ -497,13 +503,18 @@ impl<A: DomAccess> TreeSink for Sink<A> {
         if self.stream_invalid() { return; }
         self.dom.with(|d| {
             let mut style_added = false;
+            let element_name = self.filter.as_ref().and_then(|_| d.n(*target).element().map(|e| e.name.clone()));
+            let mut nonce_added = false;
             for a in attrs {
-                if self.filter.as_ref().is_some_and(|filter| !filter.allows_attribute(&a.name)) {
-                    continue;
+                if let (Some(filter), Some(name)) = (&self.filter, &element_name) {
+                    if !filter.allows_attribute(name, &a.name, &a.value) {
+                        continue;
+                    }
                 }
                 let Some(el) = d.n_mut(*target).element_mut() else { return };
                 if !el.attrs.iter().any(|x| x.name == a.name) {
                     style_added |= a.name.ns == ns!() && a.name.local == local_name!("style");
+                    nonce_added |= a.name.ns == ns!() && a.name.local == local_name!("nonce");
                     d.note_style_attr(*target, &a.name, None);
                     let change = crate::dom::Change::attr(*target, &a.name);
                     let name = a.name.clone();
@@ -517,9 +528,39 @@ impl<A: DomAccess> TreeSink for Sink<A> {
             if style_added {
                 d.note_inline_style(*target);
             }
+            // A dangling `<body nonce=...` or `<html nonce=...` merges its attributes into the
+            // existing element: its nonce is hidden as any other (a CSS selector must not see it).
+            if nonce_added {
+                d.hide_nonces(*target);
+            }
         });
     }
-    fn associate_with_form(&self, _target: &u32, _form: &u32, _nodes: (&u32, Option<&u32>)) {}
+    /// HTML "create an element for the token" step: the element takes the form element pointer's
+    /// form as its owner when the intended parent is in the form's tree, even where the form was
+    /// popped at once (a `<form>` in `<table>`), so the ancestor walk of `form_owner_idx` misses it.
+    fn associate_with_form(&self, target: &u32, form: &u32, nodes: (&u32, Option<&u32>)) {
+        if self.stream_invalid() { return; }
+        self.dom.with(|d| {
+            if d.root_idx(*nodes.0) != d.root_idx(*form) {
+                return;
+            }
+            // A form that is an ancestor of the place the element goes to is found by the ancestor
+            // walk, and must not be remembered: the remembered one would outlive the element's
+            // removal with an ancestor and its insertion elsewhere in the form's tree (the element
+            // would keep a form it no longer is inside of; Chrome's form owner is null then).
+            let mut up = *nodes.0;
+            while up != NIL {
+                if up == *form {
+                    return;
+                }
+                up = d.n(up).parent;
+            }
+            let form = d.id_of(*form);
+            if let Some(e) = d.n_mut(*target).element_mut() {
+                e.parser_form = Some(form);
+            }
+        });
+    }
     fn remove_from_parent(&self, target: &u32) {
         if self.stream_invalid() { return; }
         self.dom.with(|d| {
@@ -543,9 +584,12 @@ impl<A: DomAccess> TreeSink for Sink<A> {
     }
     fn attach_declarative_shadow(&self, host: &u32, template: &u32, attrs: &[Attribute]) -> bool {
         if self.stream_invalid() { return false; }
-        if let Some(filter) = &self.filter {
-            let disallowed = self.dom.with(|d| filter.removes_element(&d.n(*template).element().unwrap().name));
-            if disallowed || !attrs.iter().any(|a| a.name.local == markup5ever::LocalName::from("shadowrootmode") && filter.allows_attribute(&a.name)) {
+        let template_name = self.filter.as_ref().map(|_| self.dom.with(|d| d.n(*template).element().unwrap().name.clone()));
+        if let (Some(filter), Some(template_name)) = (&self.filter, &template_name) {
+            // A host the filter replaces with its children is not in the tree: its template stays a
+            // plain template, in the place the host stands for.
+            let disallowed = filter.disposition(template_name) != Disposition::Keep || self.forwarded(*host).is_some();
+            if disallowed || !attrs.iter().any(|a| a.name.local == markup5ever::LocalName::from("shadowrootmode") && filter.allows_attribute(template_name, &a.name, &a.value)) {
                 return false;
             }
         }
@@ -553,8 +597,10 @@ impl<A: DomAccess> TreeSink for Sink<A> {
         let mut mode = ShadowRootMode::Open;
         let mut flags = 0;
         for a in attrs {
-            if self.filter.as_ref().is_some_and(|f| !f.allows_attribute(&a.name)) {
-                continue;
+            if let (Some(filter), Some(template_name)) = (&self.filter, &template_name) {
+                if !filter.allows_attribute(template_name, &a.name, &a.value) {
+                    continue;
+                }
             }
             match &*a.name.local {
                 "shadowrootmode" if a.value.eq_ignore_ascii_case("closed") => mode = ShadowRootMode::Closed,
@@ -597,30 +643,158 @@ impl<A: DomAccess> TreeSink for Sink<A> {
     }
 }
 
+/// What the filter says about a node the tree builder is about to insert.
+enum ChildFilter {
+    Keep,
+    /// The node and what is parsed under it are dropped.
+    Drop,
+    /// An element replaced with its children: it is never inserted (`Sink::forwards`).
+    Replace(u32),
+}
+
 impl<A: DomAccess> Sink<A> {
-    fn filter_child(&self, child: &NodeOrText<u32>) -> bool {
-        let (Some(filter), NodeOrText::AppendNode(id)) = (&self.filter, child) else { return false };
-        self.dom.with(|d| match &d.n(*id).kind {
-            NodeKind::Element(el) if filter.removes_element(&el.name) => {
-                if self.dom.insertion_position().is_some() {
-                    // The tree builder can keep a removed element open across
-                    // writes. Its descendants must not be constructed in the
-                    // live document's registry or start document resources.
-                    let inert = d.inert_doc_for_pub(d.n(*id).owner_doc);
-                    d.adopt_raw(*id, inert);
+    /// Where `id`'s children go, when the filter replaces `id` with its children.
+    #[inline]
+    fn forwarded(&self, id: u32) -> Option<(u32, u32)> {
+        self.forwards.borrow().get(&id).copied()
+    }
+
+    /// `append` at the resolved place: `parent` and the sibling `before` (NIL: the end).
+    fn append_to(&self, mut parent: u32, mut before: u32, child: NodeOrText<u32>) {
+        if self.filter.is_some() && (self.forwarded(parent).is_some() || (before != NIL && self.forwarded(before).is_some())) {
+            (parent, before) = self.resolve_place(parent, before);
+        }
+        if let Some(position) = self.dom.insertion_position() {
+            if parent == self.doc {
+                // The tree builder starts a fragment with a synthetic html root.
+                // Keep this handle on its stack, outside the live document.
+                if let NodeOrText::AppendNode(root) = child {
+                    let previous = position.root.replace(root);
+                    debug_assert_eq!(previous, NIL);
                 }
-                true
+                return;
             }
+            if parent == position.root.get() {
+                parent = position.target;
+                before = position.before;
+            }
+        }
+        if self.filter.is_some() && (parent != self.doc || self.filter_document) {
+            match self.filter_child(&child) {
+                ChildFilter::Keep => {}
+                ChildFilter::Drop => return,
+                ChildFilter::Replace(id) => {
+                    self.attach_replaced(id, parent, before);
+                    return;
+                }
+            }
+        }
+        if let Some(patches) = &self.patches {
+            let mut patches = patches.borrow_mut();
+            (parent, before) = self.dom.with(|d| patches.insertion(d, parent, before));
+            if let NodeOrText::AppendNode(node) = &child {
+                if self.dom.with(|d| patches.prepare(d, self.doc, parent, *node)) {
+                    return;
+                }
+            }
+        }
+        self.settle_custom(parent, &child);
+        if self.stream_invalid() {
+            return;
+        }
+        let queued = self.dom.with(|d| {
+            // A constructor or script can move the anchor between tokens.
+            // An anchor that is no longer a child of `parent` (script moved it): the end.
+            let before = if before != NIL && d.n(before).parent != parent { NIL } else { before };
+            if !cannot_insert(d, parent, &child) {
+                insert_node(d, parent, before, child);
+            }
+            d.custom_reactions_queued() || d.has_upgrade_candidates()
+        });
+        if queued {
+            self.run_custom_reactions();
+        }
+    }
+}
+
+impl<A: DomAccess> Sink<A> {
+    fn filter_child(&self, child: &NodeOrText<u32>) -> ChildFilter {
+        let (Some(filter), NodeOrText::AppendNode(id)) = (&self.filter, child) else { return ChildFilter::Keep };
+        self.dom.with(|d| match &d.n(*id).kind {
+            NodeKind::Element(el) => match filter.disposition(&el.name) {
+                Disposition::Keep => ChildFilter::Keep,
+                Disposition::ReplaceWithChildren => ChildFilter::Replace(*id),
+                Disposition::Remove => {
+                    if self.dom.insertion_position().is_some() {
+                        // The tree builder can keep a removed element open across
+                        // writes. Its descendants must not be constructed in the
+                        // live document's registry or start document resources.
+                        let inert = d.inert_doc_for_pub(d.n(*id).owner_doc);
+                        d.adopt_raw(*id, inert);
+                    }
+                    ChildFilter::Drop
+                }
+            },
             NodeKind::Comment(_) if !filter.comments => {
                 d.release_candidate(*id);
-                true
+                ChildFilter::Drop
             }
             NodeKind::ProcessingInstruction(pi) if !filter.allows_pi(&pi.target) => {
                 d.release_candidate(*id);
-                true
+                ChildFilter::Drop
             }
-            _ => false,
+            _ => ChildFilter::Keep,
         })
+    }
+
+    /// Where an element replaced with its children stands, `parent`/`before` followed through the
+    /// replaced elements that stand in for them.
+    fn resolve_place(&self, mut parent: u32, mut before: u32) -> (u32, u32) {
+        let forwards = self.forwards.borrow();
+        // Entries chain at most once per replaced element; a cycle (a script cannot make one,
+        // the tree builder never nests an element in itself) ends after `len` hops.
+        for _ in 0..=forwards.len() {
+            match forwards.get(&parent) {
+                Some(&place) => (parent, before) = place,
+                None => break,
+            }
+        }
+        // A sibling the filter replaced was never inserted: what stands for it is the place it
+        // was given, when that is still in `parent`.
+        for _ in 0..=forwards.len() {
+            match forwards.get(&before) {
+                Some(&(p, b)) if before != NIL && p == parent => before = b,
+                _ => break,
+            }
+        }
+        (parent, before)
+    }
+
+    /// The tree builder inserts the element `replaced`, which the filter replaces with its
+    /// children, as a child of `parent` before `before` (NIL: last): it is not inserted. Its
+    /// place is recorded for what is inserted under it from now on, and what was inserted under
+    /// it while it had no place (the adoption agency fills a clone it has not inserted yet) goes
+    /// to that place now, in order.
+    fn attach_replaced(&self, replaced: u32, parent: u32, before: u32) {
+        let (parent, before) = self.resolve_place(parent, before);
+        if parent == replaced {
+            return;
+        }
+        self.forwards.borrow_mut().insert(replaced, (parent, before));
+        let queued = self.dom.with(|d| {
+            let kids: Vec<u32> = d.child_idx_iter(replaced).collect();
+            for kid in kids {
+                let child = NodeOrText::AppendNode(kid);
+                let before = if before != NIL && d.n(before).parent != parent { NIL } else { before };
+                if !cannot_insert(d, parent, &child) {
+                    insert_node(d, parent, before, child);
+                }
+            }
+            d.custom_reactions_queued() || d.has_upgrade_candidates()
+        });
+        if queued {
+            self.run_custom_reactions();
+        }
     }
 
     #[inline]
@@ -650,8 +824,10 @@ impl<A: DomAccess> Sink<A> {
                     .any(|a| a.name.ns == ns!() && &*a.name.local == "content" && a.value.eq_ignore_ascii_case("drawable"));
             }
             local_name!("select") => d.select_seen = true,
+            local_name!("dialog") => d.dialog_seen = true,
             local_name!("input") => d.input_seen = true,
             local_name!("animate") if name.ns == markup5ever::ns!(svg) => d.smil_seen = true,
+            _ if name.ns == markup5ever::ns!(svg) && matches!(&*name.local, "animateTransform" | "set" | "animateMotion") => d.smil_seen = true,
             _ => {}
         }
         if !d.inline_transitions_seen
@@ -677,8 +853,9 @@ impl<A: DomAccess> Sink<A> {
         if self.elem_flags & element_flags::FRAGMENT_PARSED == 0 {
             el.script_force_async = false;
             // The line of the start tag's end, where its inline text starts: the line its classic
-            // script is evaluated from (as Chrome numbers inline script lines in the document).
-            if el.name.local == local_name!("script") {
+            // script is evaluated from (as Chrome numbers inline script lines in the document),
+            // and where a CSP violation of its inline `<script>` or `<style>` is located.
+            if el.name.local == local_name!("script") || el.name.local == local_name!("style") {
                 el.script_start_line = u32::try_from(self.current_line.get()).unwrap_or(u32::MAX);
             }
         }
@@ -756,6 +933,10 @@ impl<A: DomAccess> Sink<A> {
         let attrs: Vec<(QualName, String)> = attrs.into_iter().map(|a| (a.name, a.value.to_string())).collect();
         let hooks = self.dom.with(|d| {
             assign_parser_registry(d, n, parent);
+            // No registry (a `customelementregistry` attribute, or a parent without one): no definition to look up.
+            if d.has_explicit_null_registry(n) {
+                return None;
+            }
             let (name, is) = d.n(n).element().map(|e| (e.name.clone(), e.is_value.clone()))?;
             let doc = self.doc_owner(d);
             (d.n(parent).owner_doc == doc).then(|| d.parser_custom_elements(doc, &name, is.as_ref())).flatten()
@@ -780,7 +961,7 @@ impl<A: DomAccess> Sink<A> {
         }
         let hooks = self.dom.with(|d| {
             let doc = self.doc_owner(d);
-            let hooks = d.parser_reactions_pending(doc)?;
+            let hooks = d.parser_reactions_pending(doc).or_else(|| d.parser_custom_work(doc))?;
             matches!(&d.n(doc).kind, NodeKind::Document(data) if data.active).then_some(hooks)
         });
         if let Some(hooks) = hooks {
@@ -811,6 +992,11 @@ pub struct DocumentParser {
     /// The encoding when nothing declares one (a same-origin parent
     /// document's), before the UTF-8 default.
     fallback_charset: Option<&'static encoding_rs::Encoding>,
+    /// Run the compact encoding detector (chardetng, as Chrome/Firefox do) on an
+    /// unlabelled document with non-ASCII bytes, ahead of `fallback_charset`.
+    detect_charset: bool,
+    /// The document host's top-level domain (lower-case ASCII, as `guess` requires), a hint for the detector.
+    detect_tld: Option<Vec<u8>>,
     decoder: Option<encoding_rs::Decoder>,
     /// The first input chunk has been seen. Only one BOM is ever removed:
     /// by the decoder for bytes, or here once for input that came as text.
@@ -1206,6 +1392,8 @@ impl DocumentParser {
             plaintext: false,
             transport_charset: None,
             fallback_charset: None,
+            detect_charset: false,
+            detect_tld: None,
             decoder: None,
             bom_checked: false,
             decoded: String::new(),
@@ -1243,6 +1431,12 @@ impl DocumentParser {
     /// markup or character references from the response as HTML.
     pub fn new_plaintext(dom: DomRef, doc: NodeId) -> DomResult<Self> {
         Self::new_text_document(dom, doc, "text/plain", None)
+    }
+
+    /// A text document of another MIME type (HTML "plain text file": `text/css`, a JavaScript MIME type,
+    /// `text/vtt`): the same `<pre>` page, reporting the resource's type as `contentType`.
+    pub fn new_text_as(dom: DomRef, doc: NodeId, mime: &str) -> DomResult<Self> {
+        Self::new_text_document(dom, doc, mime, None)
     }
 
     /// JSON exchanged between systems uses UTF-8 irrespective of the parent
@@ -1283,6 +1477,20 @@ impl DocumentParser {
             .filter(|e| *e != encoding_rs::UTF_16LE && *e != encoding_rs::UTF_16BE);
     }
 
+    /// Enables encoding detection for documents that declare no encoding
+    /// (no BOM, transport charset or `<meta>`), before the fallback charset.
+    pub fn set_detect_charset(&mut self, on: bool) {
+        self.detect_charset = on;
+    }
+
+    /// The host's top-level domain for the detector (Chrome/Firefox pass it): ignored unless
+    /// it is non-empty lower-case ASCII without periods.
+    pub fn set_detect_tld(&mut self, tld: Option<&str>) {
+        self.detect_tld = tld
+            .filter(|t| !t.is_empty() && t.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'))
+            .map(|t| t.as_bytes().to_vec());
+    }
+
     /// Sets the Content-Type charset label for `feed_bytes`.
     pub fn set_transport_charset(&mut self, label: Option<&str>) {
         self.transport_charset = label.and_then(|l| encoding_rs::Encoding::for_label(l.as_bytes()));
@@ -1317,7 +1525,14 @@ impl DocumentParser {
         } else {
             matches!(meta_charset(&self.sniff, false), MetaScan::More) && self.sniff.len() < MAX_META_SCAN
         };
-        if !decided && waiting {
+        // Detection looks at more than the meta window: keep buffering while the bytes are all ASCII
+        // and the prescan found no charset (a declared one wins over detection: nothing to wait for).
+        let detect_waiting = self.detect_charset
+            && !self.plaintext
+            && self.sniff.len() < 4096
+            && self.sniff.is_ascii()
+            && prescan_charset(&self.sniff).is_none();
+        if !decided && (waiting || detect_waiting) {
             return ParseStep::NeedInput;
         }
         self.start_decoder();
@@ -1330,6 +1545,16 @@ impl DocumentParser {
             .map(|(e, _)| e)
             .or(self.transport_charset)
             .or_else(|| if self.plaintext { None } else { prescan_charset(&self.sniff) })
+            .or_else(|| {
+                if !self.detect_charset || self.plaintext || self.sniff.is_ascii() {
+                    return None;
+                }
+                let mut det = chardetng::EncodingDetector::new(chardetng::Iso2022JpDetection::Allow);
+                det.feed(&self.sniff, true);
+                // Chrome never detects UTF-8 for an http(s) document (encoding/sniffing.html,
+                // encoding-detection/utf-8.html): `Deny` yields the locale default, windows-1252.
+                Some(det.guess(self.detect_tld.as_deref(), chardetng::Utf8Detection::Deny))
+            })
             .or(self.fallback_charset)
             .unwrap_or(encoding_rs::UTF_8);
         self.decoder = Some(enc.new_decoder_with_bom_removal());
@@ -1499,7 +1724,7 @@ impl DocumentParser {
         }
         if let Some(xml) = &mut self.xml {
             let Some(load) = &mut xml.load else { return ParseStep::NeedInput };
-            let script = load.step(&mut self.dom.borrow_mut(), &mut self.tok.sink.sink.pins.borrow_mut());
+            let script = load.step(&self.dom, &self.tok.sink.sink.pins);
             // What the insertions left for the document's custom elements
             // runs before the script does (no DOM borrow is held here).
             let hooks = self.dom.borrow().parser_custom_work(self.doc.index());
@@ -1537,18 +1762,33 @@ impl DocumentParser {
 
 /// Parses a complete HTML document (no script execution).
 pub fn parse_document(dom: &DomRef, url: &str, html: &str) -> NodeId {
-    parse_document_with(dom, url, html, InertDocumentMode::Document)
+    parse_document_with(dom, url, html, InertDocumentMode::Document, None)
 }
 
 /// `Document.parseHTMLUnsafe`: as `parse_document`, with declarative shadow roots.
 pub fn parse_html_unsafe(dom: &DomRef, html: &str) -> NodeId {
-    parse_document_with(dom, "about:blank", html, InertDocumentMode::DeclarativeShadowRoots)
+    parse_document_with(dom, "about:blank", html, InertDocumentMode::DeclarativeShadowRoots, None)
+}
+
+/// `Document.parseHTMLUnsafe(html, {sanitizer})` and `Document.parseHTML(html, {sanitizer})`: a
+/// new document parsed with declarative shadow roots, every node (the `html`, `head` and `body`
+/// elements, and the attributes merged onto them from later start tags, included) filtered by
+/// `filter` while it is built. `None` is [`parse_html_unsafe`]. The caller applies the safe
+/// methods' baseline (`sanitizer_defaults::remove_unsafe`) to the filter before it calls.
+pub fn parse_html_unsafe_with(dom: &DomRef, html: &str, filter: Option<Rc<FragmentFilter>>) -> NodeId {
+    parse_document_with(dom, "about:blank", html, InertDocumentMode::DeclarativeShadowRoots, filter)
+}
+
+/// `Document.parseHTML`: [`parse_html_unsafe_with`] (the safe method differs only in the filter its
+/// caller builds; templates and their `shadowrootmode` are the filter's business).
+pub fn parse_html_with(dom: &DomRef, html: &str, filter: Rc<FragmentFilter>) -> NodeId {
+    parse_html_unsafe_with(dom, html, Some(filter))
 }
 
 /// The text/html branch of DOMParser.parseFromString parses a fresh HTML
 /// document with scripting disabled and no sanitizer or declarative shadow roots.
 pub fn parse_domparser_document(dom: &DomRef, url: &str, html: &str) -> NodeId {
-    parse_document_with(dom, url, html, InertDocumentMode::DomParser)
+    parse_document_with(dom, url, html, InertDocumentMode::DomParser, None)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1558,14 +1798,22 @@ enum InertDocumentMode {
     DeclarativeShadowRoots,
 }
 
-fn parse_document_with(dom: &DomRef, url: &str, html: &str, mode: InertDocumentMode) -> NodeId {
+fn parse_document_with(dom: &DomRef, url: &str, html: &str, mode: InertDocumentMode, filter: Option<Rc<FragmentFilter>>) -> NodeId {
     let doc = {
         let mut d = dom.borrow_mut();
         let doc = d.create_document(crate::node::DocumentKind::Html, url);
         d.set_allow_declarative_shadow_roots(doc, mode == InertDocumentMode::DeclarativeShadowRoots).expect("fresh document");
+        if mode == InertDocumentMode::DomParser && html.as_bytes().windows(8).any(|w| w.eq_ignore_ascii_case(b"<details")) {
+            d.queue_details_toggles_of_parsed_document(doc);
+        }
         doc
     };
     let mut p = DocumentParser::new(dom.clone(), doc, false).expect("fresh document");
+    if filter.is_some() {
+        p.tok.sink.sink.filter = filter;
+        p.tok.sink.sink.filter_document = true;
+        install_formatting_filter(&mut p.tok.sink);
+    }
     if mode == InertDocumentMode::DomParser && html.contains("<?") {
         enable_inline_patches(&mut p.tok.sink, true);
     }
@@ -1615,25 +1863,49 @@ pub fn parse_document_bytes(dom: &DomRef, url: &str, bytes: &[u8], charset: Opti
 /// createContextualFragment). Returns a new DocumentFragment owned by the
 /// context element's node document.
 pub fn parse_fragment(dom: &mut Dom, context: NodeId, html: &str) -> DomResult<NodeId> {
-    parse_fragment_with(dom, context, context, html, FragmentMode::Element, None)
+    parse_fragment_with(dom, context, context, html, FragmentMode::Element, false, None)
 }
 
 /// The legacy innerHTML and outerHTML setters parse into detached output,
 /// without a subsequent sanitization step or script activation.
 pub fn parse_setter_fragment(dom: &mut Dom, context: NodeId, html: &str) -> DomResult<NodeId> {
-    parse_fragment_with(dom, context, context, html, FragmentMode::Setter, None)
+    parse_setter_fragment_with(dom, context, html, false, None)
+}
+
+/// [`parse_setter_fragment`] with the options a Trusted Types default policy's `createParserOptions`
+/// can give the legacy setters: `run_scripts` leaves the scripts of the output not "already
+/// started" (they run once the fragment is inserted into a document), `filter` is a sanitizer.
+pub fn parse_setter_fragment_with(dom: &mut Dom, context: NodeId, html: &str, run_scripts: bool, filter: Option<Rc<FragmentFilter>>) -> DomResult<NodeId> {
+    parse_fragment_with(dom, context, context, html, FragmentMode::Setter, run_scripts, filter)
 }
 
 /// A shadow root supplies the registry even though its host supplies the
 /// HTML tree builder's context element.
 pub fn parse_setter_fragment_in(dom: &mut Dom, context: NodeId, registry_source: NodeId, html: &str) -> DomResult<NodeId> {
-    parse_fragment_with(dom, context, registry_source, html, FragmentMode::Setter, None)
+    parse_setter_fragment_in_with(dom, context, registry_source, html, false, None)
+}
+
+/// [`parse_setter_fragment_in`] with [`parse_setter_fragment_with`]'s options.
+pub fn parse_setter_fragment_in_with(
+    dom: &mut Dom,
+    context: NodeId,
+    registry_source: NodeId,
+    html: &str,
+    run_scripts: bool,
+    filter: Option<Rc<FragmentFilter>>,
+) -> DomResult<NodeId> {
+    parse_fragment_with(dom, context, registry_source, html, FragmentMode::Setter, run_scripts, filter)
 }
 
 /// Fragment insertion APIs use an HTML body context when there is no context
 /// element or when the context is an HTML html element in an HTML document.
 pub fn parse_insertion_fragment(dom: &mut Dom, context: NodeId, html: &str) -> DomResult<NodeId> {
-    parse_fragment_with(dom, context, context, html, FragmentMode::Insertion, None)
+    parse_insertion_fragment_with(dom, context, html, false, None)
+}
+
+/// [`parse_insertion_fragment`] with [`parse_setter_fragment_with`]'s options.
+pub fn parse_insertion_fragment_with(dom: &mut Dom, context: NodeId, html: &str, run_scripts: bool, filter: Option<Rc<FragmentFilter>>) -> DomResult<NodeId> {
+    parse_fragment_with(dom, context, context, html, FragmentMode::Insertion, run_scripts, filter)
 }
 
 /// `Range.createContextualFragment` (DOM Parsing): [`parse_fragment`], then
@@ -1641,7 +1913,17 @@ pub fn parse_insertion_fragment(dom: &mut Dom, context: NodeId, html: &str) -> D
 /// fragment parser's), so it runs once the fragment is inserted into a
 /// document, unlike `innerHTML`'s.
 pub fn parse_contextual_fragment(dom: &mut Dom, context: NodeId, html: &str) -> DomResult<NodeId> {
-    let frag = parse_fragment_with(dom, context, context, html, FragmentMode::Range, None)?;
+    parse_contextual_fragment_with(dom, context, html, true, None)
+}
+
+/// [`parse_contextual_fragment`] with the options a Trusted Types default policy's
+/// `createParserOptions` can give it: without `run_scripts` the scripts stay "already started"
+/// and never run; `filter` is a sanitizer.
+pub fn parse_contextual_fragment_with(dom: &mut Dom, context: NodeId, html: &str, run_scripts: bool, filter: Option<Rc<FragmentFilter>>) -> DomResult<NodeId> {
+    let frag = parse_fragment_with(dom, context, context, html, FragmentMode::Range, false, filter)?;
+    if !run_scripts {
+        return Ok(frag);
+    }
     let scripts: Vec<u32> = dom
         .descendants(frag)?
         .filter_map(|id| {
@@ -1676,9 +1958,11 @@ fn enable_inline_patches<A: DomAccess>(tree: &mut TreeBuilder<u32, Sink<A>>, doc
 }
 
 fn install_formatting_filter<A: DomAccess>(tree: &mut TreeBuilder<u32, Sink<A>>) {
-    if tree.sink.filter.as_ref().is_some_and(|filter| !filter.remove_elements.is_empty()) {
+    // Only dropped elements: one the filter replaces with its children takes part in the adoption
+    // agency like any other (its children's place follows it, `Sink::attach_replaced`).
+    if tree.sink.filter.as_ref().is_some_and(|filter| filter.elements.is_some() || !filter.remove_elements.is_empty()) {
         tree.removed_formatting_element = Some(|sink, id| {
-            sink.dom.with(|d| sink.filter.as_ref().unwrap().removes_element(&d.n(*id).element().unwrap().name))
+            sink.dom.with(|d| sink.filter.as_ref().unwrap().disposition(&d.n(*id).element().unwrap().name) == Disposition::Remove)
         });
     }
 }
@@ -1713,6 +1997,10 @@ fn parse_fragment_with(
     registry_source: NodeId,
     html: &str,
     mode: FragmentMode,
+    // The scripts of the output are left to run when it is inserted (a script end tag clears their
+    // "already started" flag; an unclosed one stays inert): `Modern { run_scripts: true }`, and the
+    // legacy setters when a Trusted Types default policy's `createParserOptions` says so.
+    scripts: bool,
     filter: Option<Rc<FragmentFilter>>,
 ) -> DomResult<NodeId> {
     let ctx = dom.check(context)?;
@@ -1769,6 +2057,7 @@ fn parse_fragment_with(
             mode,
             FragmentMode::Setter | FragmentMode::Insertion | FragmentMode::Range | FragmentMode::Modern { run_scripts: false }
         ) && filter.is_none()
+            && !scripts
             && html.contains("<?")
             && !dom.is_xml_document(owner_id);
         let document_registry = dom.registry_idx(owner);
@@ -1782,7 +2071,7 @@ fn parse_fragment_with(
             enable_inline_patches(&mut parser.tokenizer.sink, false);
         }
         use html5ever::tendril::TendrilSink;
-        if matches!(mode, FragmentMode::Modern { run_scripts: true }) {
+        if scripts {
             // A script end tag yields its node. Keep the EOF parser flag on
             // unclosed scripts, which must stay inert after insertion.
             parser.input_buffer.push_back(StrTendril::from_slice(html));
@@ -1823,6 +2112,11 @@ fn parse_fragment_with(
 
 /// `Element.innerHTML` setter.
 pub fn set_inner_html(dom: &mut Dom, element: NodeId, html: &str) -> DomResult<()> {
+    set_inner_html_with(dom, element, html, false, None)
+}
+
+/// [`set_inner_html`] with [`parse_setter_fragment_with`]'s options.
+pub fn set_inner_html_with(dom: &mut Dom, element: NodeId, html: &str, run_scripts: bool, filter: Option<Rc<FragmentFilter>>) -> DomResult<()> {
     let i = dom.check(element)?;
     // For <template>, replace the template contents instead.
     let target = match dom.n(i).element() {
@@ -1846,7 +2140,7 @@ pub fn set_inner_html(dom: &mut Dom, element: NodeId, html: &str) -> DomResult<(
         }
         _ => return Err(DomError::Type("innerHTML context must be an element")),
     };
-    let frag = parse_setter_fragment(dom, ctx, html)?;
+    let frag = parse_setter_fragment_with(dom, ctx, html, run_scripts, filter)?;
     dom.replace_all(target, Some(frag))
 }
 
@@ -1902,7 +2196,7 @@ pub fn parse_modern_html_fragment(dom: &mut Dom, context: NodeId, html: &str, ru
 }
 
 pub fn parse_modern_html_fragment_with(dom: &mut Dom, context: NodeId, html: &str, run_scripts: bool, filter: Option<Rc<FragmentFilter>>) -> DomResult<NodeId> {
-    parse_fragment_with(dom, context, context, html, FragmentMode::Modern { run_scripts }, filter)
+    parse_fragment_with(dom, context, context, html, FragmentMode::Modern { run_scripts }, run_scripts, filter)
 }
 
 /// `Element.setHTMLUnsafe` / `ShadowRoot.setHTMLUnsafe`: as `innerHTML`, with
@@ -1920,6 +2214,6 @@ pub fn set_html_unsafe_with(dom: &mut Dom, target: NodeId, html: &str, run_scrip
         NodeKind::Element(_) => (target, target),
         _ => return Err(DomError::Type("setHTMLUnsafe context must be an element")),
     };
-    let frag = parse_fragment_with(dom, ctx, target, html, FragmentMode::Modern { run_scripts }, filter)?;
+    let frag = parse_fragment_with(dom, ctx, target, html, FragmentMode::Modern { run_scripts }, run_scripts, filter)?;
     dom.replace_all(into, Some(frag))
 }

@@ -48,6 +48,7 @@ mod cssom;
 mod debug;
 mod events;
 mod font_metrics;
+mod mathml_attrs;
 mod mathml_operator;
 pub use font_metrics::font_metrics_provider;
 mod form;
@@ -58,6 +59,7 @@ mod html;
 mod iframe;
 /// Integration of taffy and the DOM.
 mod layout;
+pub use layout::construct::is_open_base_select;
 pub use layout::table::{CollapsedEdge, CollapsedEdges, TableCell, TableContext};
 pub use layout::multicol::{ColumnFragment, ColumnFragments};
 pub use layout::inline::span_edge_margins;

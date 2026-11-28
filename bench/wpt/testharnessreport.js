@@ -12,7 +12,11 @@
 // about 6 M) run 20 s and cross the 30 s timeout on slow runners.
 setup({ output: false });
 
-var report = {
+// A page may assign its own global `report` (WPT's COOP reporting helpers loop `for (report of reports)`), so the
+// shim's callbacks use a closure variable, and run.mjs reads window.__pyroWptReport; window.report stays for
+// other readers.
+(function() {
+const report = {
   complete: false,
   // Number of subtests with a result. wptrunner polls it to detect progress.
   completed: 0,
@@ -56,3 +60,7 @@ add_completion_callback(function (tests, status) {
   report.harnessStatus = status.status;
   report.complete = true;
 });
+
+window.report = report;
+window.__pyroWptReport = report;
+})();

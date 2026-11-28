@@ -559,6 +559,7 @@ fn follows_version(page: &PageDom, dom: &pyro_dom::Dom, m: &BindingState) -> boo
 fn hook_pending_slow(page: &PageDom, dom: &pyro_dom::Dom, m: &BindingState) -> bool {
     dom.has_iframe_events()
         || dom.has_changed_popovers()
+        || dom.has_removed_fullscreen()
         || dom.has_details_toggles()
         || dom.has_media_events()
         || page.render_blocking_pending(dom)

@@ -61,6 +61,9 @@ pub(crate) struct RenderBlocking {
     version: Cell<Option<u64>>,
     dirty: Cell<bool>,
     evaluating: Cell<bool>,
+    /// A view transition's rendering suppression (css-view-transitions-1): from the old state's capture
+    /// until the update callback is done and the new state captured, or the transition is skipped.
+    suppressed: Cell<bool>,
     /// Run once rendering is no longer blocked.
     waiters: RefCell<Vec<Box<dyn FnOnce()>>>,
 }
@@ -171,7 +174,25 @@ impl PageDom {
         self.render_blocking.dirty.set(true);
         self.mutations.touch();
         self.update_render_blocking();
-        !self.render_blocking.set.borrow().is_empty()
+        !self.render_blocking.set.borrow().is_empty() || self.render_blocking.suppressed.get()
+    }
+
+    /// Whether a view transition suppresses this document's rendering now.
+    pub fn view_transition_suppressed(&self) -> bool {
+        self.render_blocking.suppressed.get()
+    }
+
+    /// Starts or ends the view transition's rendering suppression; the end lets the frame that
+    /// waited for it run.
+    pub fn set_view_transition_suppressed(&self, on: bool) {
+        if self.render_blocking.suppressed.replace(on) == on {
+            return;
+        }
+        if !on {
+            self.render_blocking.dirty.set(true);
+            self.mutations.touch();
+            self.update_render_blocking();
+        }
     }
 
     /// Runs `f` once rendering is no longer blocked (at the evaluation that
@@ -203,7 +224,7 @@ impl PageDom {
                 self.evaluate_render_blocking(&mut dom);
             }
         }
-        if rb.set.borrow().is_empty() {
+        if rb.set.borrow().is_empty() && !rb.suppressed.get() {
             let waiters = std::mem::take(&mut *rb.waiters.borrow_mut());
             for waiter in waiters {
                 waiter();

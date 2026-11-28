@@ -274,6 +274,11 @@ fn validate_name(name: &str) -> Result<(), Error> {
 pub(crate) struct Catalog(Arc<Mutex<FxHashMap<StorageKey, Shelf>>>);
 
 impl Catalog {
+    /// Whether `lease` belongs to a bucket of this catalog (a storage partition's), not another's.
+    pub(crate) fn holds(&self, lease: &Lease) -> bool {
+        lock(&self.0).values().any(|shelf| Arc::ptr_eq(&shelf.ledger, &lease.ledger))
+    }
+
     pub(crate) fn open(&self, key: &StorageKey, name: &str, options: Options) -> Result<Arc<Bucket>, Error> {
         validate_name(name)?;
         let now = now_ms();
@@ -362,6 +367,23 @@ impl Catalog {
             bucket.retire_backends();
         }
         Some(result)
+    }
+
+    /// Bounce Tracking Mitigations: deletes the buckets of the storage keys whose top-level site is
+    /// `site` (the origin's own when the key names none). Returns whether any existed.
+    pub(crate) fn delete_site(&self, site: &str) -> bool {
+        let at = |key: &StorageKey| {
+            let top = key.top_level_site.as_deref().unwrap_or(key.origin.as_str());
+            crate::bounce_tracking::site_of_url(top).as_deref() == Some(site)
+        };
+        let doomed: Vec<StorageKey> = lock(&self.0).keys().filter(|key| at(key)).cloned().collect();
+        let mut deleted = false;
+        for key in doomed {
+            for name in self.keys(&key) {
+                deleted |= self.delete(&key, &name).is_ok();
+            }
+        }
+        deleted
     }
 
     pub(crate) fn keys(&self, key: &StorageKey) -> Vec<String> {

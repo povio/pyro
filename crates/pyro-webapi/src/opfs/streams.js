@@ -25,6 +25,7 @@
   const define = Object.defineProperty;
   const getNames = Object.getOwnPropertyNames;
   const TypeErrorC = TypeError;
+  const DOMExceptionC = DOMException;
   const trunc = Math.trunc;
   const finite = Number.isFinite;
   const UINT64_LIMIT = 2 ** 64;
@@ -144,14 +145,17 @@
       // run in a storage task, after the caller's microtask checkpoint.
       await ops.storageTask();
       if (command.type === 'seek') {
-        if (command.position === null) throw new TypeErrorC('Seek requires a position.');
+        if (command.position === null) throw new DOMExceptionC('Seek requires a position.', 'SyntaxError');
         ops.seek(lease, command.position);
       } else if (command.type === 'truncate') {
-        if (command.size === null) throw new TypeErrorC('Truncate requires a size.');
+        if (command.size === null) throw new DOMExceptionC('Truncate requires a size.', 'SyntaxError');
         ops.truncate(lease, command.size);
       } else {
         const data = command.data;
-        if (data == null) throw new TypeErrorC('Write requires data.');
+        // A missing `data` is a SyntaxError; an explicit null is not a
+        // valid chunk data (TypeError), as Chrome has it.
+        if (data === undefined) throw new DOMExceptionC('Write requires data.', 'SyntaxError');
+        if (data === null) throw new TypeErrorC('Write data must not be null.');
         let bytes;
         if (typeof data === 'string') bytes = apply(encode, encoder, [data]);
         else {

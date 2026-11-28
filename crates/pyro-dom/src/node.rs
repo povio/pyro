@@ -136,9 +136,16 @@ pub struct DocumentData {
     /// Element being activated (a primary press or Space on it) for
     /// `:active`, which also matches its shadow-including ancestors.
     pub(crate) activated: u32,
+    /// `activated` is a keyboard activation (Space held on a button): only that element is
+    /// `:active`, not its ancestors (Blink `Element::SetActive` without the hover/active chain).
+    pub(crate) activated_alone: bool,
     /// The focused element matches `:focus-visible` (Chrome's heuristics,
     /// decided by the bindings when focus moves).
     pub(crate) focus_visible: bool,
+    /// The focused element holds the focus for its `::scroll-marker-group` (a marker of it in tabs
+    /// mode was pressed or tabbed to), whether that focus shows its ring: the active marker has
+    /// `:focus`. Ends when the focused element changes.
+    pub(crate) marker_focus: Option<bool>,
     /// HTML `document.designMode` is "on": the whole document is editable.
     pub(crate) design_mode: bool,
     /// The editing commands' CSS styling flag and default single-line container.
@@ -405,8 +412,8 @@ pub struct ElementData {
     /// script (`createElement`, cloning), false for one a parser created.
     /// Meaningless for other elements.
     pub(crate) script_force_async: bool,
-    /// A `<script>` the document's parser created: the source line of its start tag's end (its
-    /// inline text's first line, 1-based); 0 for any other element or script.
+    /// A `<script>` or `<style>` the document's parser created: the source line of its start tag's
+    /// end (its inline text's first line, 1-based); 0 for any other element or script.
     pub(crate) script_start_line: u32,
     pub name: QualName,
     /// Read freely; written only through the methods that keep `id` and
@@ -425,6 +432,12 @@ pub struct ElementData {
     pub(crate) template_contents: u32,
     pub(crate) shadow_root: u32,
     pub(crate) control: Option<Box<ControlState>>,
+    /// HTML parser "form element pointer" association: the form the tree builder gave this
+    /// form-associated element although it is no descendant of it (`<table><form><tr><td><input>`);
+    /// NIL for none. It stays while the element and the form share a tree and ends when the element
+    /// itself is removed (the "reset the form owner" of an ancestor chain change of the element).
+    /// (A generation-checked handle: slots are recycled, so a form released since reads as none.)
+    pub(crate) parser_form: Option<NodeId>,
     /// `element_flags` bits.
     pub flags: u8,
     /// An HTML `<style>`: the `Dom::style_text_revision` at which its child
@@ -476,6 +489,7 @@ impl ElementData {
             template_contents: NIL,
             shadow_root: NIL,
             control: None,
+            parser_form: None,
             flags: 0,
             style_text_revision: 0,
             is_value: None,

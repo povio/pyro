@@ -34,6 +34,10 @@ pub struct PerformanceEntryData {
     pub navigation: Option<Box<NavigationValues>>,
     /// A `resource` entry's values (shared with the document's buffer).
     pub resource: Option<Rc<ResourceEntry>>,
+    /// A `paint` entry's `paintTime` (PaintTimingMixin); `None` for other entries.
+    pub paint_time: Option<f64>,
+    /// A `paint` entry's `presentationTime`; `None` reads as null.
+    pub presentation_time: Option<f64>,
 }
 
 impl PerformanceEntryData {
@@ -46,6 +50,8 @@ impl PerformanceEntryData {
             detail: None,
             navigation: None,
             resource: None,
+            paint_time: None,
+            presentation_time: None,
         }
     }
     /// The fetch phases: a resource entry's, or the navigation entry's
@@ -73,8 +79,8 @@ const KEY_RESOURCE: u64 = 0x5265_736f_7572_6300;
 
 /// A document's Navigation Timing as its `navigation` entry reports it, in
 /// milliseconds since the time origin (the start of the document's fetch);
-/// 0 for a step that has not run. Unloading the previous document is not
-/// timed (0).
+/// 0 for a step that has not run. `unload_*` time the previous document's
+/// unload when it was same-origin (0 otherwise).
 #[derive(Clone)]
 pub struct NavigationValues {
     pub dom_interactive: f64,
@@ -84,6 +90,8 @@ pub struct NavigationValues {
     pub load_start: f64,
     pub load_end: f64,
     pub nav_type: &'static str,
+    pub unload_start: f64,
+    pub unload_end: f64,
     /// The document's fetch (`None`: none, as for a document without one).
     pub fetch: Option<Rc<ResourceEntry>>,
 }
@@ -97,6 +105,8 @@ impl NavigationValues {
         load_start: 0.0,
         load_end: 0.0,
         nav_type: "navigate",
+        unload_start: 0.0,
+        unload_end: 0.0,
         fetch: None,
     };
 }
@@ -110,6 +120,10 @@ fn entry_json<'s>(s: &Scope<'s>, e: &PerformanceEntryData, detail: bool) -> JsRe
     if detail {
         o.set("detail", e.detail.as_ref().map_or(s.null(), |d| d.get(s)))?;
     }
+    if e.entry_type == "paint" {
+        o.set("paintTime", s.number(e.paint_time.unwrap_or(e.start)))?;
+        o.set("presentationTime", e.presentation_time.map_or(s.null(), |t| s.number(t)))?;
+    }
     if e.navigation.is_some() || e.resource.is_some() {
         let f = e.fetch();
         o.set("initiatorType", s.string(initiator_type(e)))?;
@@ -117,6 +131,7 @@ fn entry_json<'s>(s: &Scope<'s>, e: &PerformanceEntryData, detail: bool) -> JsRe
         o.set("nextHopProtocol", s.string(f.map_or("", |f| f.next_hop_protocol)))?;
         o.set("renderBlockingStatus", s.string(render_blocking_status(e)))?;
         o.set("contentType", s.string(f.map_or("", |f| &f.content_type)))?;
+        o.set("contentEncoding", s.string(f.map_or("", |f| f.content_encoding)))?;
         for (key, value) in RESOURCE_TIMES.iter().chain(&RESOURCE_SIZES) {
             o.set(key, s.number(f.map_or(0.0, value)))?;
         }
@@ -128,6 +143,9 @@ fn entry_json<'s>(s: &Scope<'s>, e: &PerformanceEntryData, detail: bool) -> JsRe
         }
         o.set("type", s.string(n.nav_type))?;
         o.set("redirectCount", s.number(redirect_count(n)))?;
+        // Pyro has no back/forward cache: a document is never "not restored".
+        o.set("notRestoredReasons", s.null())?;
+        o.set("confidence", confidence_json(s)?)?;
     }
     Ok(o.value())
 }
@@ -165,10 +183,10 @@ pub fn redirect_count(n: &NavigationValues) -> f64 {
 
 pub type FetchValue = fn(&ResourceEntry) -> f64;
 
-/// PerformanceResourceTiming's times (no service workers, no interim
-/// responses: those are 0).
+/// PerformanceResourceTiming's times (no interim responses: those are 0;
+/// `workerStart` is 0 for a fetch no service worker saw).
 pub const RESOURCE_TIMES: [(&str, FetchValue); 14] = [
-    ("workerStart", |_| 0.0),
+    ("workerStart", |f| f.worker_start),
     ("redirectStart", |f| f.redirect_start),
     ("redirectEnd", |f| f.redirect_end),
     ("fetchStart", |f| f.fetch_start),
@@ -193,8 +211,8 @@ pub const RESOURCE_SIZES: [(&str, FetchValue); 4] = [
 
 pub fn navigation_fields(n: &NavigationValues) -> [(&'static str, f64); 10] {
     [
-        ("unloadEventStart", 0.0),
-        ("unloadEventEnd", 0.0),
+        ("unloadEventStart", n.unload_start),
+        ("unloadEventEnd", n.unload_end),
         ("domInteractive", n.dom_interactive),
         ("domContentLoadedEventStart", n.dom_content_loaded_start),
         ("domContentLoadedEventEnd", n.dom_content_loaded_end),
@@ -230,7 +248,13 @@ impl JsClass for PerformancePaintTiming {
     type Data = PerformanceEntryData;
     type Parent = PerformanceEntry;
 
-    fn define(_def: &mut ClassDef<Self>) {}
+    fn define(def: &mut ClassDef<Self>) {
+        // PaintTimingMixin: `paintTime` is when the frame was painted,
+        // `presentationTime` when it was presented (null when unknown, then
+        // `startTime` is the paint time).
+        def.getter("paintTime", |s, e| Ok(s.number(e.paint_time.unwrap_or(e.start))));
+        def.getter("presentationTime", |s, e| Ok(e.presentation_time.map_or(s.null(), |t| s.number(t))));
+    }
 }
 
 /// Resource Timing: the document's `resource` entries (pyro-webapi
@@ -255,6 +279,7 @@ impl JsClass for PerformanceResourceTiming {
         def.getter("deliveryType", |s, e| Ok(s.string(e.fetch().map_or("", |f| f.delivery_type))));
         def.getter("renderBlockingStatus", |s, e| Ok(s.string(render_blocking_status(e))));
         def.getter("contentType", |s, e| Ok(s.string(e.fetch().map_or("", |f| &f.content_type))));
+        def.getter("contentEncoding", |s, e| Ok(s.string(e.fetch().map_or("", |f| f.content_encoding))));
         def.getter("serverTiming", server_metrics);
         def.method("toJSON", 0, |s, e, _a| entry_json(s, e, false));
     }
@@ -280,8 +305,46 @@ impl JsClass for PerformanceNavigationTiming {
         def.getter("type", |s, e| Ok(s.string(e.navigation.as_ref().map_or("navigate", |n| n.nav_type))));
         def.getter("redirectCount", |s, e| Ok(s.number(e.navigation.as_deref().map_or(0.0, redirect_count))));
         def.getter("notRestoredReasons", |s, _e| Ok(s.null()));
+        def.getter("confidence", |s, _e| confidence(s));
         def.method("toJSON", 0, |s, e, _a| entry_json(s, e, false));
     }
+}
+
+/// Navigation Timing's `PerformanceTimingConfidence`: how far the timings can be trusted.
+/// Pyro never clamps, jitters or throttles a document's timers (no background throttling, no
+/// reduced-precision mode, no randomized flips), so the rate is 0 and the value "high".
+pub struct PerformanceTimingConfidence;
+
+pub struct ConfidenceData;
+
+impl JsClass for PerformanceTimingConfidence {
+    const NAME: &'static str = "PerformanceTimingConfidence";
+    type Data = ConfidenceData;
+    type Parent = NoParent;
+
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("randomizedTriggerRate", |s, _c| Ok(s.number(0.0)));
+        def.getter("value", |s, _c| Ok(s.string("high")));
+        def.method("toJSON", 0, |s, _c, _a| confidence_json(s));
+    }
+}
+
+const KEY_CONFIDENCE: u64 = 0x5065_7254_436f_6e00;
+
+/// The realm's `confidence` object (`[SameObject]`).
+fn confidence<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
+    let key = pyro_js::IdentityKey(KEY_CONFIDENCE, 0);
+    if let Some(o) = s.lookup_identity(key) {
+        return Ok(o.value());
+    }
+    Ok(s.wrap::<PerformanceTimingConfidence>(ConfidenceData, Some(key))?.value())
+}
+
+fn confidence_json<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
+    let o = s.object();
+    o.set("randomizedTriggerRate", s.number(0.0))?;
+    o.set("value", s.string("high"))?;
+    Ok(o.value())
 }
 
 /// Navigation Timing's `PerformanceTiming` attribute names: not usable as
@@ -360,6 +423,8 @@ pub fn mark_data<'s>(s: &Scope<'s>, name: &str, options: Value<'s>, now: f64) ->
         detail,
         navigation: None,
         resource: None,
+        paint_time: None,
+        presentation_time: None,
     })
 }
 
@@ -435,7 +500,13 @@ impl UserTiming {
             }
             return Ok(t);
         }
-        let name = mark.to_string()?;
+        self.mark_timestamp(&mark.to_string()?, names)
+    }
+
+    /// "Convert a mark to a timestamp" for a DOMString (`measure(name, startMark, endMark)`'s
+    /// arguments: a number there is its string, a mark name like "1", never a time).
+    fn mark_timestamp(&self, name: &str, names: NameTimestamp<'_>) -> JsResult<f64> {
+        let name = name.to_owned();
         if let Some(t) = names(&name) {
             return t;
         }
@@ -475,7 +546,7 @@ impl UserTiming {
         }
         let duration = duration.map(|d| d.to_number()).transpose()?;
         let end_time = match (end_mark, end, start, duration) {
-            (Some(mark), ..) => self.timestamp(mark, names)?,
+            (Some(mark), ..) => self.mark_timestamp(&mark.to_string()?, names)?,
             (None, Some(end), ..) => self.timestamp(end, names)?,
             (None, None, Some(start), Some(duration)) => self.timestamp(start, names)? + duration,
             _ => now,
@@ -483,7 +554,9 @@ impl UserTiming {
         let start_time = match (start, duration, end) {
             (Some(start), ..) => self.timestamp(start, names)?,
             (None, Some(duration), Some(end)) => self.timestamp(end, names)? - duration,
-            _ if !is_options && !a.get(1).is_nullish() => self.timestamp(a.get(1), names)?,
+            // A dictionary, empty or with unknown members only, is the default options: start 0.
+            // Anything else (a string, a number) is a mark name.
+            _ if !is_options && !a.get(1).is_nullish() && options.is_none() => self.mark_timestamp(&a.get(1).to_string()?, names)?,
             _ => 0.0,
         };
         let data = PerformanceEntryData {
@@ -494,6 +567,8 @@ impl UserTiming {
             detail: clone_detail(s, detail)?,
             navigation: None,
             resource: None,
+            paint_time: None,
+            presentation_time: None,
         };
         let object = s.wrap::<PerformanceMeasure>(data, None)?.value();
         self.entries.borrow_mut().push(UserEntry {
@@ -603,8 +678,13 @@ pub fn observer_module<'s>(
     }
     let unavailable = || JsError::Type("PerformanceObserver is unavailable".into());
     let natives = s.object();
+    let timeline_page = Rc::downgrade(page);
     let watch = s.function("watch", move |s, _this, a| {
         watch(s, a.get(0));
+        // The `perf/` entry types reach the realm's queue function too.
+        if let Some(page) = timeline_page.upgrade() {
+            page.timeline().watch(s, a.get(0));
+        }
         Ok(s.undefined())
     })?;
     natives.set_atom("watch", watch.value())?;
@@ -613,6 +693,7 @@ pub fn observer_module<'s>(
         Ok(s.undefined())
     })?;
     natives.set_atom("reportException", report.value())?;
+    let page_rc = page.clone();
     let page = Rc::downgrade(page);
     let dropped = s.function("droppedResources", move |s, _this, _a| {
         let Some(page) = page.upgrade() else { return Ok(s.number(0.0)) };
@@ -620,6 +701,32 @@ pub fn observer_module<'s>(
         Ok(s.number(page.resource_timings().dropped() as f64))
     })?;
     natives.set_atom("droppedResources", dropped.value())?;
+    // The page's timeline buffers (`perf/timeline.rs`): the entries of the
+    // `perf/` types, their drop counts, and which types observers watch.
+    let weak = Rc::downgrade(&page_rc);
+    let buffered = s.function("buffered", move |s, _this, a| {
+        let Some(page) = weak.upgrade() else { return Ok(s.array(&[])?.value()) };
+        let ty = a.get(0).to_string()?;
+        page.timeline().buffered(s, &ty, a.get(1).to_bool())
+    })?;
+    natives.set_atom("buffered", buffered.value())?;
+    let weak = Rc::downgrade(&page_rc);
+    let dropped_of = s.function("dropped", move |s, _this, a| {
+        let Some(page) = weak.upgrade() else { return Ok(s.number(0.0)) };
+        let ty = a.get(0).to_string()?;
+        Ok(s.number(f64::from(page.timeline().dropped(&ty))))
+    })?;
+    natives.set_atom("dropped", dropped_of.value())?;
+    let weak = Rc::downgrade(&page_rc);
+    let observing = s.function("observing", move |s, _this, a| {
+        let Some(page) = weak.upgrade() else { return Ok(s.undefined()) };
+        // The types, joined by commas (entry type names have none).
+        let joined = a.get(0).to_string()?;
+        let types: Vec<String> = joined.split(',').filter(|t| !t.is_empty()).map(str::to_owned).collect();
+        crate::perf::observing(&page, s, types);
+        Ok(s.undefined())
+    })?;
+    natives.set_atom("observing", observing.value())?;
     let types: Vec<Value<'s>> = supported.iter().map(|t| s.string(t)).collect();
     let types = s.array(&types)?;
     let root = Persistent::new(s, natives.value());

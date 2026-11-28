@@ -233,6 +233,8 @@ impl FetchSite {
 pub fn fetch_mode(mode: RequestMode, destination: Destination) -> &'static str {
     match (mode, destination) {
         (_, Destination::WebSocket) => "websocket",
+        // Chrome loads an `<object>`/`<embed>` resource as a navigation of a nested context.
+        (_, Destination::Object | Destination::Embed) => "navigate",
         (RequestMode::Navigate, _) => "navigate",
         (RequestMode::SameOrigin, _) => "same-origin",
         (RequestMode::NoCors, _) => "no-cors",
@@ -258,6 +260,12 @@ pub fn fetch_dest(destination: Destination) -> &'static str {
         Destination::Video => "video",
         Destination::Track => "track",
         Destination::WebSocket => "websocket",
+        Destination::SpeculationRules => "speculationrules",
+        Destination::Object => "object",
+        Destination::Embed => "embed",
+        Destination::Report => "report",
+        Destination::AudioWorklet => "audioworklet",
+        Destination::PaintWorklet => "paintworklet",
         Destination::Xhr
         | Destination::Fetch
         | Destination::EventSource

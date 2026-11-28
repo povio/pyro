@@ -976,6 +976,11 @@ pub struct ExtraMatchingData<'a> {
     /// The style of the originating element in order to evaluate @container
     /// size queries affecting pseudo-elements.
     pub originating_element_style: Option<&'a ComputedValues>,
+
+    /// pyro: set when matching a `::scroll-marker-group` or `::scroll-button()`:
+    /// size container queries skip the originating element (CSS Conditional 5 § 3.3) and look at
+    /// its ancestors (the root element has none and is its own container).
+    pub skip_originating_container: bool,
 }
 
 impl ::selectors::SelectorImpl for SelectorImpl {

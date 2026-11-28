@@ -96,6 +96,7 @@ impl Images {
     /// Tracks `node`'s request (`image.url`), replacing its previous one.
     fn track(&mut self, node: NodeId, image: Image) {
         self.offers.retain(|(_, owner, ..)| *owner != node);
+        self.failures.retain(|(_, owner, _)| *owner != node);
         if self.requested.len() < 4096 {
             self.requested.insert(image.url.clone());
         }
@@ -117,6 +118,11 @@ pub(crate) struct Images {
     flights: Rc<RefCell<HashMap<Shape, Rc<RefCell<ImageFlight>>>>>,
     offers: VecDeque<(Shape, NodeId, Resource, std::sync::Arc<pyro_raster::SourceLease>)>,
     offers_tree_version: Option<u64>,
+    /// The failures of connected `<img>` requests in a document a service worker controls (a CORS
+    /// check that failed, a status or body that is no image), by request: the layout engine asks
+    /// for the image of an element that failed too, and that second request would be a second
+    /// `fetch` event of the worker; it is answered with the element's failure instead.
+    failures: VecDeque<(Shape, NodeId, String)>,
     entries: HashMap<NodeId, Image>,
     /// pyro: every URL the document's elements requested as images (`<img>`, SVG `<image>`,
     /// `<object>`), kept after the request ends (a loaded `<img>`'s entry goes): a capture
@@ -134,6 +140,11 @@ pub(crate) struct Images {
     /// The observation stamp (DOM, style, viewport, scroll) and the window `load` state at
     /// the last lazy load check.
     lazy_checked: Option<(((u64, u64, u32, u32), u64), bool)>,
+    /// The `<img>`s whose source selection reads the environment (a `srcset`, or a `<picture>`
+    /// parent), each with the viewport its last selection saw: HTML "reacting to environment
+    /// changes" selects again for those whose viewport is not the current one. Ordered by node id
+    /// (creation order), so the updates and their `load` events fire in a fixed order.
+    responsive: BTreeMap<NodeId, pyro_dom::media::Viewport>,
     generation: u64,
     /// Entry count at which those of collected elements are dropped (a
     /// finished request no longer pins its element, and `new Image()`
@@ -159,7 +170,10 @@ impl Images {
     fn offer(&mut self, shape: Shape, node: NodeId, resource: &Resource, bindings: &pyro_webapi::PageDom) {
         self.offers.retain(|(old, owner, ..)| old != &shape && *owner != node);
         const BUDGET: usize = 16 * 1024 * 1024;
-        if !resource.immutable_local || resource.body.capacity() > BUDGET { return; }
+        // A local resource never changes; one a service worker controls is not asked for twice either: the
+        // layout engine's later request for the same image would be a second `fetch` event of the worker
+        // (Chrome has one request, the element's).
+        if !(resource.immutable_local || bindings.is_service_worker_controlled()) || resource.body.capacity() > BUDGET { return; }
         let mut bytes = resource.body.capacity() + self.offers.iter().map(|(_, _, entry, _)| entry.body.capacity()).sum::<usize>();
         while bytes > BUDGET || self.offers.len() >= 64 {
             bytes -= self.offers.pop_front().unwrap().2.body.capacity();
@@ -169,7 +183,55 @@ impl Images {
 }
 
 impl Browser {
-    pub(crate) fn dispatch_image(&mut self, frame: FrameKey, loader: &Rc<dyn ResourceLoader>, request: FetchRequest, done: FetchDone, layout: bool) -> Option<ResourceCancellation> {
+    pub(crate) fn dispatch_image(&mut self, frame: FrameKey, loader: &Rc<dyn ResourceLoader>, mut request: FetchRequest, done: FetchDone, layout: bool) -> Option<ResourceCancellation> {
+        // An `<img>` whose request CSP blocked and reported (`PageDom::note_blocked_image`) is
+        // asked for again by layout: the same blocked request, a network error without a second
+        // violation report. Only while that element is still connected and still has this
+        // request; a note of a removed or retargeted `<img>` never covers another request.
+        let noted = layout && self.doc(frame).is_some_and(|state| {
+            let Some(page) = state.main_frame.page_dom.clone() else { return false };
+            let dom = page.dom.borrow();
+            let taken = page.take_blocked_image(&request.url, &|node, url| dom.is_alive(node) && dom.is_connected(node) == Ok(true) && state.images.entries.get(&node).is_some_and(|i| i.url == url));
+            taken
+        });
+        if noted {
+            let error = format!("{} {}", pyro_webapi::csp::BLOCKED_BY_CSP, request.url);
+            self.scheduler().post(TaskSource::Networking, move |b| done(b, Err(error)));
+            return None;
+        }
+        // The layout engine's request for the image of a connected `<img>` makes no Resource Timing
+        // entry of its own (it asks as a CSS `url()` does, initiator "css"): the element's own load has
+        // it, and a second one made the document's resource entries count the image twice (WPT
+        // srcset/avoid-reload-on-resize).
+        if layout && matches!(request.initiator, Some(pyro_webapi::resource_timing::Initiator::Css)) {
+            let of_element = self.doc(frame).is_some_and(|state| {
+                let Some(page) = state.main_frame.page_dom.clone() else { return false };
+                let dom = page.dom.borrow();
+                let found = state.images.entries.iter().any(|(node, i)| i.url == request.url && dom.is_alive(*node) && dom.is_connected(*node) == Ok(true));
+                found
+            });
+            if of_element {
+                request.initiator = None;
+            }
+        }
+        // The layout engine's request for the image of an `<img>` that already went through its
+        // pre-request check (`bind_image`, reported then, at the document) must not report that
+        // violation again: with a report-only `img-src` (nothing blocked, so no note above) every
+        // image was reported twice (CSP reporting/report-multiple-violations). The request keeps a
+        // guard, so a redirect is still checked, but nobody reports its findings a second time.
+        if layout && request.csp.is_none() {
+            let guard = self.doc(frame).and_then(|state| {
+                let page = state.main_frame.page_dom.clone()?;
+                let dom = page.dom.borrow();
+                let of_element = state.images.entries.iter().any(|(node, i)| i.url == request.url && dom.is_alive(*node) && dom.is_connected(*node) == Ok(true));
+                drop(dom);
+                if !of_element { return None; }
+                let list = pyro_webapi::csp::policy_list(&page)?;
+                let check = pyro_net::csp::CspRequest::new(url::Url::parse(&request.url).ok()?, pyro_net::csp::RequestDest::Image);
+                Some(pyro_net::csp::RequestCsp::new(list, check))
+            });
+            request.csp = guard;
+        }
         let shape = Shape::of(self, &request).expect("whole image");
         let flights = {
             let mut doc = self.doc_mut(frame)?;
@@ -181,6 +243,15 @@ impl Browser {
                         self.scheduler().post(TaskSource::Networking, move |browser| { let _lease = lease; done(browser, Ok(resource)); });
                         return None;
                     }
+                }
+            }
+            // The same for an element whose request failed: not asked for again (see `Images::failures`).
+            if layout && !doc.images.flights.borrow().contains_key(&shape) {
+                let failure = doc.images.failures.iter().find(|(key, owner, _)| key == &shape && doc.main_frame.page_dom.as_ref().is_some_and(|page| page.dom.borrow().is_connected(*owner) == Ok(true))).map(|(_, _, error)| error.clone());
+                if let Some(error) = failure {
+                    drop(doc);
+                    self.scheduler().post(TaskSource::Networking, move |browser| done(browser, Err(error)));
+                    return None;
                 }
             }
             doc.images.flights.clone()
@@ -401,6 +472,29 @@ impl Browser {
                 && dom.natural_size(node).is_none();
             (lazy, hidden, rendered, attr, auto_css)
         };
+        // HTML "reacting to environment changes": an image whose selection reads the viewport
+        // (`srcset`, a `<picture>` parent) is selected again when it changes
+        // ([`Browser::reselect_responsive_images`]).
+        {
+            let responsive = {
+                let dom = bindings.dom.borrow();
+                dom.get_attribute(node, "srcset").ok().flatten().is_some()
+                    || dom.parent(node).ok().flatten().is_some_and(|p| dom.element(p).is_ok_and(|e| e.is_html() && &*e.name.local == "picture"))
+            };
+            let viewport = responsive.then(|| bindings.viewport());
+            if let Some(mut p) = self.doc_mut(page) {
+                if let Some(viewport) = viewport {
+                    // Removed images leave the set as it doubles (and when the viewport changes).
+                    if p.images.responsive.len().is_power_of_two() {
+                        let dom = bindings.dom.borrow();
+                        p.images.responsive.retain(|n, _| *n == node || dom.is_alive(*n));
+                    }
+                    p.images.responsive.insert(node, viewport);
+                } else {
+                    p.images.responsive.remove(&node);
+                }
+            }
+        }
         // A lazy image's concrete width, for `sizes="auto"`: laid out (the default object size's
         // 300 px while its width is `auto` and no image gave a natural width). Not rendered: its
         // last width while rendered when still connected, else none (the `auto` entry is skipped).
@@ -465,7 +559,13 @@ impl Browser {
         };
         if deferred_now {
             // Not rendered and lazy: select now, fetch once rendered (or eager).
-            bindings.dom.borrow_mut().set_image_source(node, candidate.as_ref().map(|c| c.url.as_str()));
+            {
+                // The renderer gets no `src` meanwhile: it would fetch the image at its first layout.
+                let mut dom = bindings.dom.borrow_mut();
+                dom.set_image_source(node, candidate.as_ref().map(|c| c.url.as_str()));
+                dom.set_image_deferred(node, true);
+                dom.set_image_lazy(node, true);
+            }
             if let Some(mut p) = self.doc_mut(page) {
                 p.images.deferred.insert(node, candidate);
             }
@@ -475,7 +575,13 @@ impl Browser {
         let density = candidate.as_ref().map_or(1.0, |c| c.density);
         let picture_source = candidate.map(|c| c.url);
         // The renderer draws the selected source (its snapshot's `src`).
-        bindings.dom.borrow_mut().set_image_source(node, picture_source.as_deref());
+        {
+            let mut dom = bindings.dom.borrow_mut();
+            dom.set_image_deferred(node, false);
+            // A lazy image, or one let go from deferral, never delays `load`: not the renderer's request either.
+            dom.set_image_lazy(node, lazy || from_deferral);
+            dom.set_image_source(node, picture_source.as_deref());
+        }
         let source = {
             let dom = bindings.dom.borrow();
             match picture_source.as_deref().or(dom.get_attribute(node, "src").ok().flatten()) {
@@ -587,6 +693,7 @@ impl Browser {
                 let mut state = self.doc_mut(page).expect("page");
                 state.images.entries.remove(&node);
                 state.images.offers.retain(|(_, owner, ..)| *owner != node);
+                state.images.failures.retain(|(_, owner, _)| *owner != node);
                 drop(state);
                 // A source that does not parse is a broken current request: `complete` (it stays
                 // false until these steps ran, as HTML's await a stable state).
@@ -655,6 +762,9 @@ impl Browser {
                 match pyro_webapi::csp::check_request(&bindings, check, None) {
                     Ok(guard) => guard,
                     Err(_) => {
+                        // Reported once: the layout engine asks for this image again when it
+                        // draws the element (`dispatch_image`), which must not report again.
+                        bindings.note_blocked_image(node, &url);
                         let error = format!("{} {url}", pyro_webapi::csp::BLOCKED_BY_CSP);
                         self.scheduler().post(TaskSource::Networking, move |b| finish(b, Err(error), None));
                         return;
@@ -688,10 +798,18 @@ impl Browser {
                     refresh: None,
                     content_language: None,
                     last_modified: None,
-                    reporting_endpoints: None,
+                    reporting_endpoints: None, permissions_policy: None,
+                    connection_allowlist: None,
+                    link_fetches: Vec::new(),
+                    integrity_headers: None,
                     dictionary_links: Vec::new(),
+                    speculation_rules: Vec::new(),
+                    no_vary_search: None,
                     referrer_policy: None,
-                    origin_agent_cluster: false,
+                    origin_agent_cluster: false, force_load_at_top: false, isolation_policy: 0, ephemeral_jar: false,
+                    embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
+                    embedder_reporting: Default::default(),
+                    coop: Vec::new(),
                     sent_referrer: None,
                     timing: None,
                     partial: None,
@@ -709,6 +827,7 @@ impl Browser {
         let request = FetchRequest {
             csp,
             required_csp: None,
+            purpose: None,
             parser_priority: false,
             credentials: None,
             post: None,
@@ -720,9 +839,14 @@ impl Browser {
             frame_id: Some(frame.id.0.clone()),
             loader_id: Some(frame.loader_id.0.clone()),
             crossorigin: bindings.dom.borrow().get_attribute(node, "crossorigin").ok().flatten().map(str::to_owned),
-            initiator: Some(pyro_webapi::resource_timing::Initiator::Img),
+            initiator: Some(pyro_webapi::resource_timing::element_initiator(
+                &bindings.dom.borrow(),
+                node,
+                pyro_webapi::resource_timing::Initiator::Img,
+            )),
             module: None,
             part: None,
+            accept_signature: None,
         };
         let key = Shape::of(self, &request);
         let cancel = self.dispatch_image(page, &resource_loader, request, Box::new(move |browser, result| finish(browser, result, key)), false);
@@ -771,6 +895,7 @@ impl Browser {
         let mut reported = None;
         // As Chromium, a response whose body is an image is shown and fires `load` whatever its
         // status (a 404 page that is an image); otherwise only a 2xx `image/*` one loads.
+        let error = result.as_ref().err().cloned();
         let outcome = result.ok().filter(|r| !r.body.is_empty()).and_then(|r| {
             let ok_status = (200..300).contains(&r.status);
             let body = &r.body[..r.body.len().min(MAX_IMAGE_BYTES)];
@@ -842,7 +967,14 @@ impl Browser {
             }
             if !used && bindings.dom.borrow().is_connected(node) == Ok(true) {
                 if let (Some(mut state), Some(resource)) = (self.doc_mut(page), raster.as_ref()) {
-                    state.images.offer(key, node, resource, &bindings);
+                    state.images.offer(key.clone(), node, resource, &bindings);
+                }
+            }
+            if outcome.is_none() && bindings.is_service_worker_controlled() && bindings.dom.borrow().is_connected(node) == Ok(true) {
+                if let Some(mut state) = self.doc_mut(page) {
+                    state.images.failures.retain(|(old, owner, _)| old != &key && *owner != node);
+                    if state.images.failures.len() >= 64 { state.images.failures.pop_front(); }
+                    state.images.failures.push_back((key, node, error.unwrap_or_else(|| format!("{request_url}: not an image"))));
                 }
             }
         }
@@ -931,7 +1063,45 @@ impl Browser {
         if rendered && matches!(source, Source::None) {
             object_without_url_csp(&bindings, node, &base, pyro_net::csp::RequestDest::Object);
         }
-        self.fetch_for_load_event(page, node, &bindings, loader, base, loaded, source, false, 0);
+        self.fetch_for_load_event(page, node, &bindings, loader, base, loaded, source, false, 0, ResourceKind::Object);
+    }
+
+    /// HTML "reacting to environment changes": when the viewport (its size, device pixel ratio,
+    /// media features) is not the one the responsive `<img>`s of `page`'s document last selected
+    /// for, each runs "update the image data" again (a `srcset` with `w` descriptors and `sizes`,
+    /// a `<picture>`'s `<source media>`); one whose selected URL changed requests it. Runs at the
+    /// microtask checkpoint, only for documents that have such images.
+    pub(crate) fn reselect_responsive_images(&mut self, page: FrameKey) {
+        let Some(state) = self.doc(page) else { return };
+        if state.images.responsive.is_empty() {
+            return;
+        }
+        let Some(bindings) = state.main_frame.page_dom.clone() else { return };
+        drop(state);
+        // A store borrowed elsewhere: at the next checkpoint.
+        if bindings.dom.try_borrow().is_err() {
+            return;
+        }
+        let viewport = bindings.viewport();
+        let nodes: Vec<NodeId> = {
+            let Some(mut state) = self.doc_mut(page) else { return };
+            // (Every checkpoint asks: nothing is walked while each image has seen this viewport.)
+            if state.images.responsive.values().all(|seen| *seen == viewport) {
+                return;
+            }
+            let dom = bindings.dom.borrow();
+            // (Removed nodes, and those adopted into another document, leave the set here.)
+            state.images.responsive.retain(|node, _| dom.is_alive(*node) && dom.node_document(*node).ok() == Some(bindings.document()));
+            // Each image's own selection viewport is compared: one selected after a change is current.
+            let nodes: Vec<NodeId> = state.images.responsive.iter().filter(|(_, seen)| **seen != viewport).map(|(node, _)| *node).collect();
+            for node in &nodes {
+                state.images.responsive.insert(*node, viewport.clone());
+            }
+            nodes
+        };
+        for node in nodes {
+            self.image_event_with(page, node, false);
+        }
     }
 
     /// The deferred lazy images of `page` that are rendered now run their steps again (select
@@ -1030,9 +1200,7 @@ impl Browser {
             if !(all || parent.is_some_and(|p| pyro_webapi::intersection_observer::lazy_load_intersects(&p, owner))) {
                 continue;
             }
-            host.lazy_frames.borrow_mut().retain(|(k, _)| *k != key);
-            host.lazy_approved.borrow_mut().push(key);
-            host.queue_attributes(key, frame.loader_id.clone());
+            host.approve_lazy_frame(key, frame.loader_id.clone());
             started.frames.push(key);
         }
         started
@@ -1155,7 +1323,7 @@ impl Browser {
         if rendered && matches!(source, Source::None) {
             object_without_url_csp(&bindings, node, &base, pyro_net::csp::RequestDest::Embed);
         }
-        self.fetch_for_load_event(page, node, &bindings, loader, base, loaded, source, false, 0);
+        self.fetch_for_load_event(page, node, &bindings, loader, base, loaded, source, false, 0, ResourceKind::Embed);
     }
 
     /// SVG `<image>` (SVG 2 §5.7): a connected one fetches its `href` (or
@@ -1204,7 +1372,7 @@ impl Browser {
         drop(state);
         // pyro: its `crossorigin` (a CORS settings attribute) is its request's mode, as an `<img>`'s.
         let cors = image_cors(&bindings.dom.borrow(), node);
-        self.fetch_for_load_event(page, node, &bindings, loader, base, loaded, source, true, cors);
+        self.fetch_for_load_event(page, node, &bindings, loader, base, loaded, source, true, cors, ResourceKind::SvgImage);
         // pyro: the attribute value the request is for, which `decode()` settles against.
         if let Some(raw) = href {
             if let Some(mut image) = self.doc_mut(page).and_then(|p| p.filter_map(|p| p.images.entries.get_mut(&node)))
@@ -1234,6 +1402,8 @@ impl Browser {
         // pyro: the CORS state of an SVG `<image>`'s request (0: none, 1: anonymous, 2:
         // use-credentials).
         cors: u8,
+        // The request's kind: `Object`, `Embed` or `SvgImage` (its Fetch destination and CSP directive).
+        kind: ResourceKind,
     ) {
         let bindings = bindings.clone();
         let Some(state) = self.doc(page) else { return };
@@ -1295,7 +1465,7 @@ impl Browser {
         if url.starts_with("blob:") || about {
             let ok = about || bindings.blob_url(&url).is_some();
             self.scheduler().post(TaskSource::Networking, move |b| {
-                finish(b, if ok { Ok(Resource { url: String::new(), status: 200, mime: String::new(), charset: None, body: Default::default(), immutable_local: false, content_disposition: None, header_csp: None, allow_csp_from: None, refresh: None, content_language: None, last_modified: None, reporting_endpoints: None, dictionary_links: Vec::new(), referrer_policy: None, sent_referrer: None, origin_agent_cluster: false, timing: None, partial: None, nosniff: false, opaque: false }) } else { Err("revoked or unknown blob URL".into()) })
+                finish(b, if ok { Ok(Resource { url: String::new(), status: 200, mime: String::new(), charset: None, body: Default::default(), immutable_local: false, content_disposition: None, header_csp: None, allow_csp_from: None, refresh: None, content_language: None, last_modified: None, reporting_endpoints: None, permissions_policy: None, dictionary_links: Vec::new(), speculation_rules: Vec::new(), no_vary_search: None, referrer_policy: None, sent_referrer: None, origin_agent_cluster: false, force_load_at_top: false, isolation_policy: 0, ephemeral_jar: false, embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone, embedder_reporting: Default::default(), coop: Vec::new(), timing: None, partial: None, nosniff: false, opaque: false, connection_allowlist: None, link_fetches: Vec::new(), integrity_headers: None }) } else { Err("revoked or unknown blob URL".into()) })
             });
             return;
         }
@@ -1307,11 +1477,12 @@ impl Browser {
         let request = FetchRequest {
             csp: None,
             required_csp: None,
+            purpose: None,
             parser_priority: false,
             credentials: None,
             post: None,
             url,
-            kind: ResourceKind::Object,
+            kind,
             page: page.page,
             referrer: Some(base),
             referrer_policy: None,
@@ -1322,9 +1493,14 @@ impl Browser {
                 2 => Some("use-credentials".to_owned()),
                 _ => Some("anonymous".to_owned()),
             },
-            initiator: Some(pyro_webapi::resource_timing::Initiator::Other),
+            initiator: Some(pyro_webapi::resource_timing::element_initiator(
+                &bindings.dom.borrow(),
+                node,
+                pyro_webapi::resource_timing::Initiator::Other,
+            )),
             module: None,
             part: None,
+            accept_signature: None,
         };
         *key.borrow_mut() = Some(crate::layout_key_of(&frame, &request, None));
         let cancel = self.fetch_document_resource(page, &resource_loader, request, Box::new(finish));

@@ -56,12 +56,17 @@ impl pyro_js::NamedProperties for WindowNamedProperties {
         for (&el, kind) in named.iter().zip(&kinds) {
             if kind.is_some() {
                 if let Some(window) = page.frame_window(s, el)? {
+                    // COOP access reporting: another window read a named property of this one.
+                    crate::popup::note_window_access(page, "named");
                     return Ok(Some(window));
                 }
             }
         }
         let found: Vec<_> =
             named.iter().zip(&kinds).filter(|(_, kind)| kind.unwrap_or(true)).map(|(&el, _)| el).collect();
+        if !found.is_empty() {
+            crate::popup::note_window_access(page, "named");
+        }
         match found[..] {
             [] => Ok(None),
             [el] => Ok(Some(crate::node::wrap_node(s, page, el)?.value())),
@@ -210,6 +215,9 @@ where
     );
     def.getter("ClipboardItem", |s, w| crate::navigator_extras::member(s, w.page(), "ClipboardItem"));
     def.getter("Notification", |s, w| crate::navigator_extras::member(s, w.page(), "Notification"));
+    def.getter("Clipboard", |s, w| crate::navigator_extras::member(s, w.page(), "Clipboard"));
+    def.getter("Permissions", |s, w| crate::navigator_extras::member(s, w.page(), "Permissions"));
+    def.getter("PermissionStatus", |s, w| crate::navigator_extras::member(s, w.page(), "PermissionStatus"));
     crate::streams::define_globals(def);
     crate::scheduler::define_global(def);
     crate::observable::define_globals(def);
@@ -226,6 +234,11 @@ where
     crate::font_loading::define_globals(def);
     crate::web_locks::define_globals(def);
     crate::media_devices::define_globals(def);
+    crate::credentials::define_globals(def);
+    crate::sensors::define_globals(def);
+    crate::media_stream::define_globals(def);
+    crate::media_session::define_globals(def);
+    crate::media_capabilities::define_globals(def);
     crate::paint_worklet::define_globals(def);
     crate::audio_worklet::define_globals(def);
     crate::lazy_module::lazy_globals!(def, crate::pseudo_element::MODULE, "CSSPseudoElement");
@@ -258,13 +271,17 @@ where
     crate::animations::define_globals(def);
     crate::reporting::define(def);
     crate::audio_decoder::define(def);
+    crate::sanitizer::define(def);
+    crate::pressure::define(def);
     crate::audio_encoder::define(def);
     crate::video_encoder::define(def);
     crate::image_decoder::define(def);
     crate::canvas::define_globals(def);
     crate::media::define_globals(def);
     crate::media_source::define_globals(def);
+    crate::eme::define_globals(def);
     crate::webaudio::define_globals(def);
+    crate::webnn::define_globals(def);
     def.getter("screen", |s, w| {
         let key = pyro_js::IdentityKey(w.page().id() | (1 << 57), 1);
         same_object(s, w.page(), key, || s.wrap::<Screen>(w.page().clone(), Some(key)))
@@ -346,11 +363,23 @@ where
         },
         |s, w, value| replace_window_attribute(s, w.page(), "origin", value),
     );
+    // The CrossOriginProperties methods tell COOP access reporting when another window calls them
+    // (`note_window_access`: one thread-local read unless a COOP reporting endpoint exists).
     def.method("focus", 0, |s, w, _a| {
+        crate::popup::note_window_access(w.page(), "focus");
         crate::input::focus_window(w.page());
         Ok(s.undefined())
     });
-    def.method("blur", 0, |s, _w, _a| Ok(s.undefined()));
+    def.method("blur", 0, |s, w, _a| {
+        crate::popup::note_window_access(w.page(), "blur");
+        Ok(s.undefined())
+    });
+    // CSSOM View: a popup's size and position follow the script; any other window ignores them.
+    // (The window is as large as its viewport here: no chrome around it.)
+    def.method("resizeTo", 2, |s, w, a| window_resize(s, w.page(), &a, "resizeTo", false));
+    def.method("resizeBy", 2, |s, w, a| window_resize(s, w.page(), &a, "resizeBy", true));
+    def.method("moveTo", 2, |s, w, a| window_move(s, w.page(), &a, "moveTo", false));
+    def.method("moveBy", 2, |s, w, a| window_move(s, w.page(), &a, "moveBy", true));
     def.method("print", 0, |s, _w, _a| Ok(s.undefined()));
     // pyro: css-sizing-4 responsive iframes: a responsively embedded document (one that opted in with
     // `<meta name="responsive-embedded-sizing">`) in a child frame asks its iframe to take its
@@ -406,10 +435,51 @@ where
     // Closes a script-closable top-level browsing context (a popup); the
     // embedder decides and closes the page later. No-op elsewhere.
     def.method("close", 0, |s, w, _a| {
+        crate::popup::note_window_access(w.page(), "close");
         w.page().close_window();
         Ok(s.undefined())
     });
     def.method("postMessage", 1, |s, w, a| post_message_to_self(s, w.page(), &a).map(|()| s.undefined()));
+}
+
+/// The two `long` arguments of `resizeTo`/`resizeBy`/`moveTo`/`moveBy` (WebIDL conversion).
+fn window_long_pair(a: &pyro_js::Args<'_>, name: &str) -> JsResult<(i32, i32)> {
+    if a.len() < 2 {
+        return Err(JsError::Type(format!("Failed to execute '{name}' on 'Window': 2 arguments required, but only {} present.", a.len()).into()));
+    }
+    let long = |v: pyro_js::Value<'_>| -> JsResult<i32> {
+        let n = v.to_number()?;
+        Ok(if n.is_finite() { n.trunc().clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32 } else { 0 })
+    };
+    Ok((long(a.get(0))?, long(a.get(1))?))
+}
+
+fn window_resize<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Args<'s>, name: &str, by: bool) -> JsResult<Value<'s>> {
+    let (x, y) = window_long_pair(a, name)?;
+    if !page.is_script_sizable_window() {
+        return Ok(s.undefined());
+    }
+    let device = page.device_viewport();
+    let screen = (device.screen_width.unwrap_or(device.width), device.screen_height.unwrap_or(device.height));
+    let (width, height) = if by { (i64::from(device.width) + i64::from(x), i64::from(device.height) + i64::from(y)) } else { (i64::from(x), i64::from(y)) };
+    // (At least one CSS pixel, at most the screen.)
+    let fit = |size: i64, screen: u32| size.clamp(1, i64::from(screen.max(1))) as u32;
+    page.resize_window(fit(width, screen.0), fit(height, screen.1));
+    Ok(s.undefined())
+}
+
+fn window_move<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Args<'s>, name: &str, by: bool) -> JsResult<Value<'s>> {
+    let (x, y) = window_long_pair(a, name)?;
+    if !page.is_script_sizable_window() {
+        return Ok(s.undefined());
+    }
+    let device = page.device_viewport();
+    let (is_popup, left, top) = page.window_chrome();
+    let (left, top) = if by { (left.saturating_add(x), top.saturating_add(y)) } else { (x, y) };
+    // (Kept on the screen.)
+    let room = |screen: Option<u32>, size: u32| screen.unwrap_or(size).saturating_sub(size) as i32;
+    page.set_window_chrome(is_popup, left.clamp(0, room(device.screen_width, device.width)), top.clamp(0, room(device.screen_height, device.height)));
+    Ok(s.undefined())
 }
 
 /// `postMessage` of a window outside a frame tree, which only reaches
@@ -517,6 +587,10 @@ impl JsClass for Navigator {
         def.getter("serviceWorker", |s, p| crate::service_worker::container(s, p));
         def.getter("locks", |s, p| crate::web_locks::locks(s, p));
         def.getter("mediaDevices", |s, p| crate::media_devices::media_devices(s, p));
+        def.getter("credentials", |s, p| crate::credentials::credentials(s, p));
+        def.getter("mediaSession", |s, p| crate::media_session::media_session(s, p));
+        def.getter("mediaCapabilities", |s, p| crate::media_capabilities::media_capabilities(s, p));
+        def.getter("ml", |s, p| crate::webnn::ml(s, p));
         def.getter("userActivation", |s, p| crate::user_activation::user_activation(s, p));
         def.getter("webdriver", |s, _p| Ok(s.boolean(true)));
         def.getter("doNotTrack", |s, _p| Ok(s.null()));
@@ -544,6 +618,7 @@ impl JsClass for Navigator {
             def.method(name, 2, protocol_handler);
         }
         def.method("vibrate", 0, |s, _p, _a| Ok(s.boolean(false)));
+        def.method("requestMediaKeySystemAccess", 2, |s, p, a| crate::eme::request_access(s, p, a.len(), a.get(0), a.get(1)));
     }
 }
 
@@ -822,6 +897,8 @@ fn window_size(p: &PageDom) -> (u32, u32) {
 /// `visualViewport`'s width, height and scale (see [`VisualViewport`]).
 fn visual_viewport(p: &PageDom) -> (f64, f64, f64) {
     p.sync_mobile_layout();
+    // The size excludes classic scrollbars: laid out first, noting a change for `resize`.
+    p.note_visual_viewport();
     p.layout().visual_viewport()
 }
 
@@ -1056,6 +1133,10 @@ pub(crate) fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Ar
     let lower = target.to_ascii_lowercase();
     let same_context = matches!(lower.as_str(), "_self" | "_top" | "_parent");
     let named = !same_context && lower != "_blank";
+    // Cross-Origin-Opener-Policy: a window a frame of another origin than its top-level `same-origin`
+    // document creates has no opener and no name (`PageHooks::coop_forces_noopener`).
+    // A credentialless frame's popups have no opener either (HTML "credentialless": `noopener`).
+    let coop_noopener = !same_context && (page.is_credentialless() || page.hooks().is_some_and(|h| h.coop_forces_noopener()));
     // An existing frame of this page the name chooses (`_parent`, `_top`, a frame's target
     // name): it navigates when there is a URL, and window.open returns its WindowProxy.
     if lower == "_parent" || lower == "_top" || (named && !no_opener) {
@@ -1074,6 +1155,7 @@ pub(crate) fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Ar
                     source: None,
                     form_entries: None,
                     replace: false,
+                    user_initiated: false,
                 });
             }
             return Ok(window);
@@ -1100,7 +1182,7 @@ pub(crate) fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Ar
     // the embedder's hook the navigation is still asked for (the embedder looks the name up first
     // and blocks only a new window), without a popup ticket.
     let sandboxed = !same_context && page.popups_sandboxed();
-    let (ticket, popup) = if same_context || no_opener || sandboxed {
+    let (ticket, popup) = if same_context || no_opener || coop_noopener || sandboxed {
         (None, None)
     } else {
         let name = if named { target.clone() } else { String::new() };
@@ -1122,6 +1204,7 @@ pub(crate) fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Ar
         source: None,
         form_entries: None,
         replace: false,
+        user_initiated: false,
     });
     if sandboxed {
         return Ok(s.null());
@@ -1164,6 +1247,7 @@ pub(crate) fn element_popup_ticket(
 ) -> Option<Rc<crate::popup::PopupTicket>> {
     let target = target.filter(|t| !t.is_empty())?;
     let lower = target.to_ascii_lowercase();
+    let noopener = noopener || page.is_credentialless() || page.hooks().is_some_and(|h| h.coop_forces_noopener());
     if noopener || matches!(lower.as_str(), "_self" | "_top" | "_parent") {
         return None;
     }
@@ -1226,8 +1310,10 @@ fn find_text(page: &Rc<PageDom>, needle: &str, case_sensitive: bool, backwards: 
     let doc = page.document();
     let texts: Vec<(pyro_dom::NodeId, Vec<u16>)> = {
         let dom = page.dom.borrow();
-        let Ok(nodes) = dom.descendants(doc) else { return false };
+        // Shadow trees are searched too (Chromium searches the flat tree: text in a shadow root is findable).
+        let Ok(nodes) = dom.shadow_including_nodes(doc) else { return false };
         nodes
+            .into_iter()
             .filter(|&n| dom.node_type(n).ok() == Some(pyro_dom::NodeType::Text))
             .filter_map(|n| Some((n, dom.text_content_ref(n).ok()??.encode_utf16().collect())))
             .collect()

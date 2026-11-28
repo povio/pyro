@@ -90,6 +90,9 @@
       this.#afterCR = false;
       this.#data = '';
       this.#type = '';
+      // The incomplete event a dropped stream ended in is discarded with its `id:` (the buffer
+      // goes back to the last dispatched id), as Chrome does.
+      this.#idBuffer = this.#lastEventId;
       this.#request = connect(this.#url, this.#withCredentials, this.#lastEventId, (kind, a, b, c) => this.#report(kind, a, b, c));
     }
 

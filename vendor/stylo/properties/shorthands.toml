@@ -544,7 +544,7 @@ spec = "https://drafts.csswg.org/css-ui/#propdef-outline"
 
 [columns]
 # pyro: css-multicol-2 `[ / <column-height> ]`.
-sub_properties = ["column-width", "column-count", "column-height"]
+sub_properties = ["column-width", "column-count", "column-height", "column-wrap"]
 spec = "https://drafts.csswg.org/css-multicol/#propdef-columns"
 servo_pref = "layout.css.columns.enabled"
 

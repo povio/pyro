@@ -153,7 +153,17 @@ impl ToCss for PseudoClass {
     fn to_css<W: fmt::Write>(&self, dest: &mut W) -> fmt::Result {
         use PseudoClass::*;
         match self {
-            Lang(r) => return write!(dest, ":lang({r})"),
+            // (Language ranges are identifiers: `:lang(j\ a)` keeps its escape.)
+            Lang(r) => {
+                dest.write_str(":lang(")?;
+                for (i, range) in r.split(',').enumerate() {
+                    if i != 0 {
+                        dest.write_char(',')?;
+                    }
+                    cssparser::serialize_identifier(range, dest)?;
+                }
+                return dest.write_char(')');
+            }
             Dir(d) => return write!(dest, ":dir({d})"),
             State(s) => {
                 dest.write_str(":state(")?;
@@ -353,13 +363,30 @@ impl<'i> selectors::parser::Parser<'i> for SelParser<'_> {
                     return Err(invalid());
                 }
             }
-            // `::part(<ident>+)`.
+            // `::part(<ident>+)`, serialized with its names (escaped as identifiers) separated by
+            // one space, whatever whitespace the source had.
             "part" => {
-                parser.expect_ident()?;
-                while parser.try_parse(|p| p.expect_ident().map(|_| ())).is_ok() {}
+                let mut names = vec![(**parser.expect_ident()?).to_owned()];
+                while let Ok(name) = parser.try_parse(|p| p.expect_ident().map(|ident| (**ident).to_owned())) {
+                    names.push(name);
+                }
                 if !parser.is_exhausted() {
                     return Err(invalid());
                 }
+                let mut text = String::new();
+                for (i, name) in names.iter().enumerate() {
+                    if i != 0 {
+                        text.push(' ');
+                    }
+                    cssparser::serialize_identifier(name, &mut text).map_err(|_| invalid())?;
+                }
+                return Ok(PseudoElement(format!("part({text})")));
+            }
+            // `::picker(select)`: the one keyword, serialized lower-case.
+            "picker" => {
+                parser.expect_ident_matching("select").map_err(|_| invalid())?;
+                parser.expect_exhausted().map_err(|_| invalid())?;
+                return Ok(PseudoElement("picker(select)".to_owned()));
             }
             "view-transition-group" | "view-transition-image-pair" | "view-transition-old" | "view-transition-new" => {
                 let pseudo = style::selector_parser::transition_selector(&lower, parser).map_err(|_| invalid())?;
@@ -369,9 +396,28 @@ impl<'i> selectors::parser::Parser<'i> for SelParser<'_> {
                 let pseudo = style::selector_parser::highlight_selector(parser).map_err(|_| invalid())?;
                 return Ok(PseudoElement(pseudo.to_css_string()[2..].to_owned()));
             }
+            // `::scroll-button( <direction> | * )` (CSS Overflow 5): one keyword or `*`, serialized
+            // lower-case without the surrounding whitespace.
+            "scroll-button" => {
+                let direction = match parser.next().map_err(|_| invalid())? {
+                    cssparser::Token::Delim('*') => "*".to_owned(),
+                    cssparser::Token::Ident(ident) => {
+                        let ident = ident.to_ascii_lowercase();
+                        let known = matches!(
+                            ident.as_str(),
+                            "up" | "down" | "left" | "right" | "block-start" | "block-end" | "inline-start" | "inline-end"
+                        );
+                        if !known {
+                            return Err(invalid());
+                        }
+                        ident
+                    }
+                    _ => return Err(invalid()),
+                };
+                parser.expect_exhausted().map_err(|_| invalid())?;
+                return Ok(PseudoElement(format!("{lower}({direction})")));
+            }
             "cue" | "cue-region"
-            | "picker"
-            | "scroll-button"
             | "column" => {
                 // The argument is kept only for serialization.
                 while parser.next().is_ok() {}
@@ -854,6 +900,9 @@ impl Dom {
             Visited => false,
             Active => {
                 let a = self.activated_idx(self.n(idx).owner_doc);
+                if a != NIL && self.activated_alone_flag(self.n(idx).owner_doc) {
+                    return idx == a;
+                }
                 a != NIL && (self.user_action_chain_holds(idx, a) || self.labeled_by_active_label(idx, a))
             }
             Target => self.is_url_target(idx),

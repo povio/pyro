@@ -433,7 +433,10 @@ fn matches_kind(dom: &Dom, root: NodeId, id: NodeId, kind: &CollectionKind) -> b
         CollectionKind::FormElements => {
             let listed = html
                 && matches!(local, "button" | "fieldset" | "input" | "object" | "output" | "select" | "textarea")
-                || e.flags & pyro_dom::node::element_flags::FORM_ASSOCIATED != 0;
+                // A form-associated custom element is a listed element once it is custom, not while
+                // its constructor runs in the upgrade (HTML: custom element state "precustomized").
+                || e.flags & (pyro_dom::node::element_flags::FORM_ASSOCIATED | pyro_dom::node::element_flags::CUSTOM_DEFINED)
+                    == pyro_dom::node::element_flags::FORM_ASSOCIATED | pyro_dom::node::element_flags::CUSTOM_DEFINED;
             // HTML: a fieldset's `elements` are its listed descendants (whatever their form owner,
             // image buttons included); a form's are the listed elements it owns, but image buttons.
             if is_fieldset(dom, root) {
@@ -1125,7 +1128,8 @@ impl JsClass for DomTokenList {
             // `rel` per element, as Chromium answers: a `<link>`'s fetch and resource types;
             // `<a>`, `<area>` and `<form>`'s opener and referrer types.
             let rel_of = |t: &TokenListData| {
-                t.el.page.dom.borrow().element(t.el.id).ok().filter(|e| e.is_html()).map(|e| match &*e.name.local {
+                // (An SVG `<a>` has `<a>`'s: SVGAElement.relList is the same DOMTokenList.)
+                t.el.page.dom.borrow().element(t.el.id).ok().filter(|e| e.is_html() || (e.namespace() == &markup5ever::ns!(svg) && &*e.name.local == "a")).map(|e| match &*e.name.local {
                     "link" => 0,
                     "a" | "area" | "form" => 1,
                     _ => 2,
@@ -1191,6 +1195,7 @@ impl JsClass for DomTokenList {
                     "allow-presentation",
                     "allow-same-origin",
                     "allow-scripts",
+                    "allow-storage-access-by-user-activation",
                     "allow-top-navigation",
                     "allow-top-navigation-by-user-activation",
                     "allow-top-navigation-to-custom-protocols",
@@ -1433,12 +1438,49 @@ pub(crate) fn set_attribute_node<'s>(
     let Some(a) = s.unwrap::<Attr>(attr) else {
         return Err(JsError::Type("parameter 1 is not of type 'Attr'.".into()));
     };
+    // Trusted Types "set an attribute": the attribute's value is made compliant first, before the
+    // in-use check and the same-attribute early return; a default policy's result becomes the
+    // Attr's value. The policy can run script that gives the Attr an owner: the DOM's in-use
+    // check below then sees it (`modify-attributes-in-callback`). No borrow is held across it.
+    // Only a document that requires Trusted Types has anything to check (the cheap test
+    // `attribute_value` makes first): nothing is copied out of the DOM otherwise.
+    let requires = page.dom.borrow().node_document(el).is_ok_and(|doc| crate::trusted_types::requires_for_script_in(page, doc));
+    if requires {
+        let (local, ns, value) = {
+            let dom = page.dom.borrow();
+            let data = dom.attr_node_data(a.id).js()?;
+            (data.name.local.to_string(), data.name.ns.to_string(), dom.attr_node_value(a.id).js()?.to_owned())
+        };
+        if let Some(compliant) = crate::trusted_types::attribute_value(s, page, el, &local, Some(ns.as_str()), s.string(&value))? {
+            // An Attr some element owns by now is that element's attribute: left alone.
+            let unowned = page.dom.borrow().attr_owner_element(a.id).js()?.is_none();
+            if unowned && compliant != value {
+                page.dom.borrow_mut().set_attr_node_value(a.id, &compliant).js()?;
+            }
+        }
+    }
     let replaced = page.dom.borrow_mut().set_attribute_node(el, a.id).js()?;
     match replaced {
         Some(old) if old == a.id => Ok(attr),
         Some(old) => Ok(wrap_node(s, page, old)?.value()),
         None => Ok(s.null()),
     }
+}
+
+/// Setting the value of the Attr `n` (`Attr.value`, `nodeValue`, `textContent`): an Attr with an
+/// owner element is a Trusted Types sink when the element's attribute is (`attribute_value`, the
+/// element's node document's policies), else the text is set as it is. `text` is the converted
+/// DOMString (a Trusted* object arrives as its string, so a default policy applies to it).
+pub(crate) fn set_attr_value_checked(s: &Scope<'_>, n: &NodeData, text: &str) -> JsResult<()> {
+    let page = n.page();
+    let (owner, name) = attr_of(n).ok_or_else(|| JsError::Type("Not an Attr".into()))?;
+    let mut text = std::borrow::Cow::Borrowed(text);
+    if let Some(el) = owner {
+        if let Some(compliant) = crate::trusted_types::attribute_value(s, page, el, &name.local, name.ns(), s.string(&text))? {
+            text = std::borrow::Cow::Owned(compliant);
+        }
+    }
+    page.dom.borrow_mut().set_attr_node_value(n.id, &text).js()
 }
 
 /// `Element.removeAttributeNode`.
@@ -1488,9 +1530,9 @@ impl JsClass for Attr {
         def.accessor(
             "value",
             |s, a| Ok(s.string(a.page().dom.borrow().attr_node_value(a.id).js()?)),
-            |_s, a, v| {
+            |s, a, v| {
                 let value = dom_string(v)?;
-                a.page().dom.borrow_mut().set_attr_node_value(a.id, &value).js()
+                set_attr_value_checked(s, a, &value)
             },
         );
         def.getter("ownerElement", |s, a| {
@@ -1745,12 +1787,28 @@ impl AnimatedEnumData {
             .and_then(|k| self.e.keywords.iter().position(|w| *w == k))
             .map_or(self.e.initial, |i| i as u16 + 1)
     }
+
+    /// `animVal`: the keyword the animations in effect give, else `value`. An animated value that
+    /// is no keyword leaves the base value (a marker's `orient` angle is its initial, angle, type).
+    fn animated_value(&self) -> u16 {
+        let contributions = attribute_contributions(&self.el.page, self.el.id, &[self.e.attr]);
+        if contributions.is_empty() {
+            return self.value();
+        }
+        let base = self.el.page.dom.borrow().get_attribute_ns(self.el.id, None, self.e.attr).ok().flatten().map(str::to_owned);
+        let text = crate::smil::fold(&TextSpace, &contributions, base.unwrap_or_default());
+        match self.e.keywords.iter().position(|w| *w == text) {
+            Some(i) => i as u16 + 1,
+            None if self.e.attr == "orient" => self.e.initial,
+            None => self.value(),
+        }
+    }
 }
 
 /// `SVGAnimatedEnumeration`: `baseVal` reflects the attribute (setting it writes
 /// the keyword, which re-renders the SVG as any attribute change does; 0 and
 /// values without a keyword throw a TypeError, as in Chromium); `animVal` is
-/// `baseVal`, as nothing animates it.
+/// `baseVal` unless a SMIL animation is in effect.
 pub struct SvgAnimatedEnumeration;
 impl JsClass for SvgAnimatedEnumeration {
     const NAME: &'static str = "SVGAnimatedEnumeration";
@@ -1779,7 +1837,7 @@ impl JsClass for SvgAnimatedEnumeration {
                 t.el.page.dom.borrow_mut().set_attribute_ns(t.el.id, None, t.e.attr, keyword).js()
             },
         );
-        def.getter("animVal", |s, t| Ok(s.number(t.value() as f64)));
+        def.getter("animVal", |s, t| Ok(s.number(t.animated_value() as f64)));
     }
 }
 
@@ -1849,6 +1907,34 @@ impl AnimatedAttrData {
         let dom = self.el.page.dom.borrow();
         let (ns, name) = self.name(&dom);
         dom.get_attribute_ns(self.el.id, ns, name).ok().flatten().map(str::to_owned)
+    }
+    /// The text the SMIL animations in effect give the attribute (`None` without one).
+    fn animated_text(&self) -> Option<String> {
+        let contributions = attribute_contributions(&self.el.page, self.el.id, self.a.attrs);
+        if contributions.is_empty() {
+            return None;
+        }
+        Some(crate::smil::fold(&TextSpace, &contributions, self.text().unwrap_or_default()))
+    }
+    /// The numbers the SMIL animations in effect give the attribute (`None` without one).
+    fn animated_numbers(&self) -> Option<Vec<f64>> {
+        let contributions = attribute_contributions(&self.el.page, self.el.id, self.a.attrs);
+        if contributions.is_empty() {
+            return None;
+        }
+        let pair = matches!(self.a.part, SvgPart::First | SvgPart::Second);
+        let mut base = self.numbers().unwrap_or_else(|| vec![self.a.initial]);
+        // A pair given one number is that number twice.
+        if pair && base.len() == 1 {
+            base.push(base[0]);
+        }
+        Some(crate::smil::fold(&NumberSpace { pair }, &contributions, base))
+    }
+    /// The number of this part under animation (`None` without one).
+    fn animated_part(&self) -> Option<f64> {
+        let numbers = self.animated_numbers()?;
+        let first = *numbers.first()?;
+        Some(if self.a.part == SvgPart::Second { numbers.get(1).copied().unwrap_or(first) } else { first })
     }
     fn set(&self, value: &str) -> JsResult<()> {
         let mut dom = self.el.page.dom.borrow_mut();
@@ -1931,15 +2017,31 @@ fn finite_float(v: Value<'_>, what: &str) -> JsResult<f64> {
     Ok(n)
 }
 
-/// `SVGAnimatedString`: `baseVal` reflects the attribute; `animVal` is `baseVal`, as nothing animates it.
+/// `SVGAnimatedString`: `baseVal` reflects the attribute; `animVal` is `baseVal` unless a SMIL animation is in effect.
 pub struct SvgAnimatedString;
 impl JsClass for SvgAnimatedString {
     const NAME: &'static str = "SVGAnimatedString";
     type Data = AnimatedAttrData;
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
-        def.accessor("baseVal", |s, t| Ok(s.string(&t.text().unwrap_or_default())), |_s, t, v| t.set(&dom_string(v)?));
-        def.getter("animVal", |s, t| Ok(s.string(&t.text().unwrap_or_default())));
+        // `baseVal` writes the attribute: SVGScriptElement's `href` is a Trusted Types sink (a
+        // TrustedScriptURL or what the default policy makes of the string), as `setAttribute` is.
+        def.accessor(
+            "baseVal",
+            |s, t| Ok(s.string(&t.text().unwrap_or_default())),
+            |s, t, v| {
+                let (ns, name) = {
+                    let dom = t.el.page.dom.borrow();
+                    let name = t.name(&dom);
+                    name
+                };
+                match crate::trusted_types::attribute_value(s, &t.el.page, t.el.id, name, ns, v)? {
+                    Some(compliant) => t.set(&compliant),
+                    None => t.set(&dom_string(v)?),
+                }
+            },
+        );
+        def.getter("animVal", |s, t| Ok(s.string(&t.animated_text().or_else(|| t.text()).unwrap_or_default())));
     }
 }
 
@@ -1980,7 +2082,7 @@ impl JsClass for SvgAnimatedNumber {
             |s, t| Ok(s.number(t.number() as f32 as f64)),
             |_s, t, v| t.set_number(finite_float(v, "SVGAnimatedNumber")?),
         );
-        def.getter("animVal", |s, t| Ok(s.number(t.number() as f32 as f64)));
+        def.getter("animVal", |s, t| Ok(s.number(t.animated_part().unwrap_or_else(|| t.number()) as f32 as f64)));
     }
 }
 
@@ -1997,7 +2099,8 @@ impl JsClass for SvgAnimatedInteger {
             if n == n.trunc() { n } else { t.a.initial }
         }
         def.accessor("baseVal", |s, t| Ok(s.number(int(t))), |_s, t, v| t.set_number(to_i32(v)? as f64));
-        def.getter("animVal", |s, t| Ok(s.number(int(t))));
+        // (An animated integer is rounded to the nearest one.)
+        def.getter("animVal", |s, t| Ok(s.number(t.animated_part().map_or_else(|| int(t), f64::round))));
     }
 }
 
@@ -2016,7 +2119,7 @@ impl JsClass for SvgAnimatedBoolean {
             |s, t| Ok(s.boolean(get(t))),
             |_s, t, v| t.set(if v.to_bool() { "true" } else { "false" }),
         );
-        def.getter("animVal", |s, t| Ok(s.boolean(get(t))));
+        def.getter("animVal", |s, t| Ok(s.boolean(t.animated_text().map_or_else(|| get(t), |v| v.trim() == "true"))));
     }
 }
 
@@ -2089,15 +2192,28 @@ impl SvgAngleData {
                 let (value, unit) = cell.get();
                 Angle { value, unit }
             }
-            Self::Reflected { el, .. } => el
-                .page
-                .dom
-                .borrow()
-                .get_attribute_ns(el.id, None, "orient")
-                .ok()
-                .flatten()
-                .and_then(Angle::parse)
-                .unwrap_or(Angle::ZERO),
+            Self::Reflected { el, anim } => {
+                let base = el
+                    .page
+                    .dom
+                    .borrow()
+                    .get_attribute_ns(el.id, None, "orient")
+                    .ok()
+                    .flatten()
+                    .and_then(Angle::parse)
+                    .unwrap_or(Angle::ZERO);
+                if !*anim {
+                    return base;
+                }
+                let contributions = attribute_contributions(&el.page, el.id, &["orient"]);
+                if contributions.is_empty() {
+                    return base;
+                }
+                match crate::smil::fold(&AngleSpace, &contributions, AngleVal::Angle(base)) {
+                    AngleVal::Angle(angle) => angle,
+                    AngleVal::Keyword(_) => Angle::ZERO,
+                }
+            }
         }
     }
     fn writable(&self) -> JsResult<()> {
@@ -2282,12 +2398,25 @@ impl SvgLengthData {
     fn get(&self) -> (f64, u16) {
         match self {
             Self::Item { item, .. } => item.value(),
-            Self::Attribute { el, a, .. } => el.page.dom.borrow().get_attribute(el.id, a.attr)
-                .ok()
-                .flatten()
-                .and_then(parse_svg_length)
-                .or_else(|| parse_svg_length(a.initial))
-                .unwrap_or((0.0, 1)),
+            Self::Attribute { el, a, anim } => {
+                let base = el.page.dom.borrow().get_attribute(el.id, a.attr)
+                    .ok()
+                    .flatten()
+                    .and_then(parse_svg_length)
+                    .or_else(|| parse_svg_length(a.initial))
+                    .unwrap_or((0.0, 1));
+                if !*anim {
+                    return base;
+                }
+                // `animVal`: the animations in effect over the attribute (units convert in user units).
+                let contributions = attribute_contributions(&el.page, el.id, &[a.attr]);
+                if contributions.is_empty() {
+                    return base;
+                }
+                let factor = |kind: u16| Self::attribute_factor(el, a.dir, kind);
+                let space = LengthSpace { factor: &factor };
+                crate::smil::fold(&space, &contributions, vec![base]).first().copied().unwrap_or(base)
+            }
         }
     }
 
@@ -2423,8 +2552,8 @@ fn length_kind(v: Value<'_>) -> JsResult<u16> {
     Ok(kind)
 }
 
-/// `SVGLength`, reflecting a length attribute (`baseVal`) or read-only (`animVal`, which nothing
-/// animates). `value` is in user units: percentages resolve against the nearest `svg` viewport.
+/// `SVGLength`, reflecting a length attribute (`baseVal`) or read-only (`animVal`, the attribute
+/// under the SMIL animations in effect). `value` is in user units: percentages resolve against the nearest `svg` viewport.
 pub struct SvgLength;
 impl JsClass for SvgLength {
     const NAME: &'static str = "SVGLength";
@@ -2543,7 +2672,7 @@ pub fn create_svg_length<'s>(s: &Scope<'s>, _svg: NodeId) -> JsResult<Object<'s>
     length_item(s, LengthItem::detached((0.0, 1)))
 }
 
-/// `SVGAnimatedLength`: `baseVal` reflects the attribute, `animVal` reads it.
+/// `SVGAnimatedLength`: `baseVal` reflects the attribute, `animVal` reads it as animated.
 pub struct SvgAnimatedLength;
 impl JsClass for SvgAnimatedLength {
     const NAME: &'static str = "SVGAnimatedLength";
@@ -2567,106 +2696,135 @@ pub fn animated_length<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId, a: &'stati
 
 // ----- SVGAnimatedTransformList ----------------------------------------------------
 
-/// One function of an SVG `transform` attribute: its `SVGTransform` type (1 matrix, 2 translate,
-/// 3 scale, 4 rotate, 5 skewX, 6 skewY), angle (degrees, rotations and skews) and matrix.
-#[derive(Clone, Copy)]
-pub struct SvgTransformItem {
-    kind: u16,
-    angle: f64,
-    matrix: [f64; 6],
-}
+use pyro_dom::svg_point_list::{parse_transform_list, TransformItem, TransformLists, TransformValue};
 
-/// The functions of a `transform` list attribute (SVG 1.1 syntax: commas or spaces between
-/// numbers); an attribute that does not parse is an empty list, as in Chromium.
-fn parse_transform_list(text: &str) -> Vec<SvgTransformItem> {
-    let mut items = Vec::new();
-    let mut rest = text.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == ',');
-    while !rest.is_empty() {
-        let Some(open) = rest.find('(') else { return Vec::new() };
-        let name = rest[..open].trim();
-        let Some(close) = rest[open..].find(')') else { return Vec::new() };
-        let args: Option<Vec<f64>> = rest[open + 1..open + close]
-            .split(|c: char| c.is_ascii_whitespace() || c == ',')
-            .filter(|v| !v.is_empty())
-            .map(|v| v.parse::<f64>().ok())
-            .collect();
-        let Some(n) = args else { return Vec::new() };
-        let rad = |deg: f64| deg.to_radians();
-        let item = match (name, n.as_slice()) {
-            ("matrix", &[a, b, c, d, e, f]) => SvgTransformItem { kind: 1, angle: 0.0, matrix: [a, b, c, d, e, f] },
-            ("translate", &[x]) => SvgTransformItem { kind: 2, angle: 0.0, matrix: [1.0, 0.0, 0.0, 1.0, x, 0.0] },
-            ("translate", &[x, y]) => SvgTransformItem { kind: 2, angle: 0.0, matrix: [1.0, 0.0, 0.0, 1.0, x, y] },
-            ("scale", &[x]) => SvgTransformItem { kind: 3, angle: 0.0, matrix: [x, 0.0, 0.0, x, 0.0, 0.0] },
-            ("scale", &[x, y]) => SvgTransformItem { kind: 3, angle: 0.0, matrix: [x, 0.0, 0.0, y, 0.0, 0.0] },
-            ("rotate", &[a]) | ("rotate", &[a, _, _]) => {
-                let (sin, cos) = rad(a).sin_cos();
-                let (cx, cy) = if n.len() == 3 { (n[1], n[2]) } else { (0.0, 0.0) };
-                SvgTransformItem {
-                    kind: 4,
-                    angle: a,
-                    matrix: [cos, sin, -sin, cos, cx - cos * cx + sin * cy, cy - sin * cx - cos * cy],
-                }
-            }
-            ("skewX", &[a]) => SvgTransformItem { kind: 5, angle: a, matrix: [1.0, 0.0, rad(a).tan(), 1.0, 0.0, 0.0] },
-            ("skewY", &[a]) => SvgTransformItem { kind: 6, angle: a, matrix: [1.0, rad(a).tan(), 0.0, 1.0, 0.0, 0.0] },
-            _ => return Vec::new(),
-        };
-        items.push(item);
-        rest = rest[open + close + 1..].trim_start_matches(|c: char| c.is_ascii_whitespace() || c == ',');
-    }
-    items
-}
+/// The identity `SVGMatrix` as `[a b c d e f]`.
+pub const IDENTITY_MATRIX: [f64; 6] = TransformValue::IDENTITY;
 
-pub struct TransformListData {
-    el: NodeHold,
-    attr: &'static str,
-}
-
-impl TransformListData {
-    fn items(&self) -> Vec<SvgTransformItem> {
-        let dom = self.el.page.dom.borrow();
-        dom.get_attribute(self.el.id, self.attr).ok().flatten().map_or_else(Vec::new, |v| parse_transform_list(&v))
-    }
-}
-
-/// `SVGAnimatedTransformList`: `baseVal` and `animVal` are the same list of the attribute (nothing
-/// animates it). The CSS `transform` property is not in it (WPT css-transforms
+/// `SVGAnimatedTransformList`: `baseVal` is the list of the attribute, `animVal` that list under the
+/// `<animateTransform>`s in effect. The CSS `transform` property is not in it (WPT css-transforms
 /// `css-transforms-transformlist`).
 pub struct SvgAnimatedTransformList;
 impl JsClass for SvgAnimatedTransformList {
     const NAME: &'static str = "SVGAnimatedTransformList";
-    type Data = TransformListData;
+    type Data = Rc<TransformLists>;
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
-        def.getter("baseVal", |s, t| Ok(transform_list(s, &t.el, t.attr, 33)?.value()));
-        def.getter("animVal", |s, t| Ok(transform_list(s, &t.el, t.attr, 34)?.value()));
+        def.getter("baseVal", |s, lists| transform_list_view(s, lists, false));
+        def.getter("animVal", |s, lists| transform_list_view(s, lists, true));
     }
 }
 
-/// `SVGTransformList`, read only: the attribute's functions at each access.
+fn transform_list_view<'s>(s: &Scope<'s>, lists: &Rc<TransformLists>, animated: bool) -> JsResult<Value<'s>> {
+    let key = IdentityKey((1 << 59) | (6 << 56) | u64::from(animated), Rc::as_ptr(lists) as u64);
+    Ok(s.wrap::<SvgTransformList>(SvgListData { lists: lists.clone(), animated }, Some(key))?.value())
+}
+
+/// `SVGTransformList`: the live list of the attribute's functions (`animVal`: read only, under the
+/// animations in effect). An item inserted into a list is the object the script holds, so editing
+/// it edits the attribute; one that is already in a list is copied (`ListItem::insertion_value`).
 pub struct SvgTransformList;
 impl JsClass for SvgTransformList {
     const NAME: &'static str = "SVGTransformList";
-    type Data = TransformListData;
+    type Data = SvgListData<TransformValue>;
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
-        def.getter("length", |s, t| Ok(s.number(t.items().len() as f64)));
-        def.getter("numberOfItems", |s, t| Ok(s.number(t.items().len() as f64)));
-        def.method("getItem", 1, |s, t, a| {
-            let i = to_u32(a.get(0))? as usize;
-            let Some(item) = t.items().get(i).copied() else {
-                return Err(JsError::dom("IndexSizeError", format!("The index provided ({i}) is greater than the maximum bound.")));
-            };
-            Ok(s.wrap::<SvgTransform>(item, None)?.value())
+        define_svg_list(def);
+        def.method("createSVGTransformFromMatrix", 0, |s, _l, a| {
+            let matrix = matrix_init_argument(s, a.get(0))?;
+            detached_transform(s, matrix)
+        });
+        def.method("consolidate", 0, |s, l, _a| {
+            let lists = l.writable()?;
+            let count = lists.len(false);
+            if count == 0 {
+                return Ok(s.null());
+            }
+            // The single item is already the consolidation.
+            if count == 1 {
+                return transform_item(s, lists.item(0, false).ok_or_else(|| JsError::dom("IndexSizeError", "The index is outside the SVG list."))?);
+            }
+            let mut matrix = IDENTITY_MATRIX;
+            for i in 0..count {
+                if let Some(item) = lists.item(i, false) {
+                    matrix = pyro_dom::svg_geometry::multiply(matrix, item.value().matrix);
+                }
+            }
+            let item = TransformItem::detached(TransformValue::from_matrix(matrix));
+            transform_item(s, lists.initialize(&item).js()?)
         });
     }
+}
+
+impl SvgItemList<TransformValue> for SvgTransformList {
+    fn wrap_item<'s>(s: &Scope<'s>, item: Rc<TransformItem>) -> JsResult<Value<'s>> {
+        transform_item(s, item)
+    }
+    fn unwrap_item(s: &Scope<'_>, value: Value<'_>) -> JsResult<Rc<TransformItem>> {
+        let transform = s.unwrap::<SvgTransform>(value).ok_or_else(|| JsError::Type("Expected an SVGTransform.".into()))?;
+        Ok(Rc::clone(&*transform))
+    }
+}
+
+fn transform_item<'s>(s: &Scope<'s>, item: Rc<TransformItem>) -> JsResult<Value<'s>> {
+    // As the points: one wrapper per item for as long as it is held.
+    let key = IdentityKey((1 << 59) | (7 << 56), Rc::as_ptr(&item) as u64);
+    Ok(s.wrap::<SvgTransform>(item, Some(key))?.value())
+}
+
+/// A detached `SVGTransform` of type SVG_TRANSFORM_MATRIX (`createSVGTransform` and
+/// `createSVGTransformFromMatrix`).
+pub fn detached_transform<'s>(s: &Scope<'s>, matrix: [f64; 6]) -> JsResult<Value<'s>> {
+    transform_item(s, TransformItem::detached(TransformValue::from_matrix(matrix)))
+}
+
+/// A detached `SVGMatrix`.
+pub fn detached_matrix<'s>(s: &Scope<'s>, matrix: [f64; 6]) -> JsResult<Value<'s>> {
+    Ok(s.wrap::<SvgMatrix>(Cell::new(matrix), None)?.value())
+}
+
+/// The six numbers of an `SVGMatrix` argument (a TypeError for anything else).
+pub fn matrix_argument(s: &Scope<'_>, value: Value<'_>) -> JsResult<[f64; 6]> {
+    let matrix = s.unwrap::<SvgMatrix>(value).ok_or_else(|| JsError::Type("Expected an SVGMatrix.".into()))?;
+    Ok(matrix.get())
+}
+
+/// `createSVGTransformFromMatrix`'s `optional DOMMatrix2DInit`: an `SVGMatrix` (or any object with
+/// the members `a` .. `f`, the identity's by default; `undefined` is the identity).
+pub fn matrix_init_argument(s: &Scope<'_>, value: Value<'_>) -> JsResult<[f64; 6]> {
+    if let Some(matrix) = s.unwrap::<SvgMatrix>(value) {
+        return Ok(matrix.get());
+    }
+    if value.is_undefined() {
+        return Ok(IDENTITY_MATRIX);
+    }
+    let Some(init) = value.as_object() else {
+        return Err(JsError::Type("The provided value is not of type 'DOMMatrix2DInit'.".into()));
+    };
+    let mut matrix = IDENTITY_MATRIX;
+    for (slot, name) in matrix.iter_mut().zip(["a", "b", "c", "d", "e", "f"]) {
+        let member = init.get_atom(name)?;
+        if !member.is_undefined() {
+            *slot = transform_number(member)?;
+        }
+    }
+    Ok(matrix)
+}
+
+/// A Web IDL `float` argument: a TypeError for NaN and the infinities.
+fn transform_number(v: Value<'_>) -> JsResult<f64> {
+    let n = v.to_number()?;
+    if !n.is_finite() {
+        return Err(JsError::Type("The provided float value is non-finite.".into()));
+    }
+    Ok(n)
 }
 
 /// `SVGTransform`: its type, angle and the six numbers of its matrix (`matrix.a` .. `matrix.f`).
 pub struct SvgTransform;
 impl JsClass for SvgTransform {
     const NAME: &'static str = "SVGTransform";
-    type Data = SvgTransformItem;
+    type Data = Rc<TransformItem>;
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
         for (name, value) in [
@@ -2680,36 +2838,127 @@ impl JsClass for SvgTransform {
         ] {
             def.constant(name, value);
         }
-        def.getter("type", |s, t| Ok(s.number(f64::from(t.kind))));
-        def.getter("angle", |s, t| Ok(s.number(t.angle)));
-        def.getter("matrix", |s, t| {
-            Ok(s.wrap::<SvgMatrix>(t.matrix, None)?.value())
+        def.getter("type", |s, t| Ok(s.number(f64::from(t.value().kind))));
+        def.getter("angle", |s, t| Ok(s.number(t.value().angle)));
+        def.getter("matrix", |s, t| detached_matrix(s, t.value().matrix));
+        def.method("setMatrix", 1, |s, t, a| {
+            a.require(1, "SVGTransform.setMatrix")?;
+            let matrix = matrix_argument(s, a.get(0))?;
+            t.set_value(TransformValue::from_matrix(matrix)).js()?;
+            Ok(s.undefined())
+        });
+        def.method("setTranslate", 2, |s, t, a| {
+            a.require(2, "SVGTransform.setTranslate")?;
+            let (x, y) = (transform_number(a.get(0))?, transform_number(a.get(1))?);
+            t.set_value(TransformValue::translate(x, y)).js()?;
+            Ok(s.undefined())
+        });
+        def.method("setScale", 2, |s, t, a| {
+            a.require(2, "SVGTransform.setScale")?;
+            let (x, y) = (transform_number(a.get(0))?, transform_number(a.get(1))?);
+            t.set_value(TransformValue::scale(x, y)).js()?;
+            Ok(s.undefined())
+        });
+        def.method("setRotate", 3, |s, t, a| {
+            a.require(3, "SVGTransform.setRotate")?;
+            let (angle, cx, cy) = (transform_number(a.get(0))?, transform_number(a.get(1))?, transform_number(a.get(2))?);
+            t.set_value(TransformValue::rotate(angle, cx, cy)).js()?;
+            Ok(s.undefined())
+        });
+        def.method("setSkewX", 1, |s, t, a| {
+            a.require(1, "SVGTransform.setSkewX")?;
+            t.set_value(TransformValue::skew_x(transform_number(a.get(0))?)).js()?;
+            Ok(s.undefined())
+        });
+        def.method("setSkewY", 1, |s, t, a| {
+            a.require(1, "SVGTransform.setSkewY")?;
+            t.set_value(TransformValue::skew_y(transform_number(a.get(0))?)).js()?;
+            Ok(s.undefined())
         });
     }
 }
 
-/// `SVGMatrix` (read only here): `a` .. `f`.
+/// Sets component `index` of the matrix (`a` .. `f`).
+fn set_matrix_component(m: &Cell<[f64; 6]>, index: usize, v: Value<'_>) -> JsResult<()> {
+    let n = transform_number(v)?;
+    let mut matrix = m.get();
+    matrix[index] = n;
+    m.set(matrix);
+    Ok(())
+}
+
+/// A new `SVGMatrix`: `m` followed by `next` (the matrix the operation multiplies by).
+fn matrix_then<'s>(s: &Scope<'s>, m: &Cell<[f64; 6]>, next: [f64; 6]) -> JsResult<Value<'s>> {
+    detached_matrix(s, pyro_dom::svg_geometry::multiply(m.get(), next))
+}
+
+/// `SVGMatrix`: `a` .. `f` and the operations, each returning a new matrix (the receiver is not changed).
 pub struct SvgMatrix;
 impl JsClass for SvgMatrix {
     const NAME: &'static str = "SVGMatrix";
-    type Data = [f64; 6];
+    type Data = Cell<[f64; 6]>;
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
-        def.getter("a", |s, m| Ok(s.number(m[0])));
-        def.getter("b", |s, m| Ok(s.number(m[1])));
-        def.getter("c", |s, m| Ok(s.number(m[2])));
-        def.getter("d", |s, m| Ok(s.number(m[3])));
-        def.getter("e", |s, m| Ok(s.number(m[4])));
-        def.getter("f", |s, m| Ok(s.number(m[5])));
+        def.accessor("a", |s, m| Ok(s.number(m.get()[0])), |_s, m, v| set_matrix_component(m, 0, v));
+        def.accessor("b", |s, m| Ok(s.number(m.get()[1])), |_s, m, v| set_matrix_component(m, 1, v));
+        def.accessor("c", |s, m| Ok(s.number(m.get()[2])), |_s, m, v| set_matrix_component(m, 2, v));
+        def.accessor("d", |s, m| Ok(s.number(m.get()[3])), |_s, m, v| set_matrix_component(m, 3, v));
+        def.accessor("e", |s, m| Ok(s.number(m.get()[4])), |_s, m, v| set_matrix_component(m, 4, v));
+        def.accessor("f", |s, m| Ok(s.number(m.get()[5])), |_s, m, v| set_matrix_component(m, 5, v));
+        def.method("multiply", 1, |s, m, a| {
+            a.require(1, "SVGMatrix.multiply")?;
+            let other = matrix_argument(s, a.get(0))?;
+            matrix_then(s, m, other)
+        });
+        def.method("inverse", 0, |s, m, _a| {
+            let [a, b, c, d, e, f] = m.get();
+            let det = a * d - b * c;
+            if det == 0.0 || !det.is_finite() {
+                return Err(JsError::dom("InvalidStateError", "The matrix is not invertible."));
+            }
+            detached_matrix(s, [d / det, -b / det, -c / det, a / det, (c * f - d * e) / det, (b * e - a * f) / det])
+        });
+        def.method("translate", 2, |s, m, a| {
+            a.require(2, "SVGMatrix.translate")?;
+            let (x, y) = (transform_number(a.get(0))?, transform_number(a.get(1))?);
+            matrix_then(s, m, TransformValue::translate(x, y).matrix)
+        });
+        def.method("scale", 1, |s, m, a| {
+            a.require(1, "SVGMatrix.scale")?;
+            let factor = transform_number(a.get(0))?;
+            matrix_then(s, m, TransformValue::scale(factor, factor).matrix)
+        });
+        def.method("scaleNonUniform", 2, |s, m, a| {
+            a.require(2, "SVGMatrix.scaleNonUniform")?;
+            let (x, y) = (transform_number(a.get(0))?, transform_number(a.get(1))?);
+            matrix_then(s, m, TransformValue::scale(x, y).matrix)
+        });
+        def.method("rotate", 1, |s, m, a| {
+            a.require(1, "SVGMatrix.rotate")?;
+            let angle = transform_number(a.get(0))?;
+            matrix_then(s, m, TransformValue::rotate(angle, 0.0, 0.0).matrix)
+        });
+        def.method("rotateFromVector", 2, |s, m, a| {
+            a.require(2, "SVGMatrix.rotateFromVector")?;
+            let (x, y) = (transform_number(a.get(0))?, transform_number(a.get(1))?);
+            if x == 0.0 || y == 0.0 {
+                return Err(JsError::dom("InvalidAccessError", "The vector has a zero component."));
+            }
+            matrix_then(s, m, TransformValue::rotate(y.atan2(x).to_degrees(), 0.0, 0.0).matrix)
+        });
+        def.method("flipX", 0, |s, m, _a| matrix_then(s, m, [-1.0, 0.0, 0.0, 1.0, 0.0, 0.0]));
+        def.method("flipY", 0, |s, m, _a| matrix_then(s, m, [1.0, 0.0, 0.0, -1.0, 0.0, 0.0]));
+        def.method("skewX", 1, |s, m, a| {
+            a.require(1, "SVGMatrix.skewX")?;
+            let angle = transform_number(a.get(0))?;
+            matrix_then(s, m, TransformValue::skew_x(angle).matrix)
+        });
+        def.method("skewY", 1, |s, m, a| {
+            a.require(1, "SVGMatrix.skewY")?;
+            let angle = transform_number(a.get(0))?;
+            matrix_then(s, m, TransformValue::skew_y(angle).matrix)
+        });
     }
-}
-
-fn transform_list<'s>(s: &Scope<'s>, el: &NodeHold, attr: &'static str, slot: u64) -> JsResult<Object<'s>> {
-    let key = coll_identity(&el.page, slot, el.id);
-    if let Some(o) = s.lookup_identity(key) {
-        return Ok(o);
-    }
-    s.wrap::<SvgTransformList>(TransformListData { el: NodeHold::new(&el.page, el.id)?, attr }, Some(key))
 }
 
 /// The element's `SVGAnimatedTransformList` of `attr` (`transform`, `gradientTransform`,
@@ -2720,7 +2969,449 @@ pub fn animated_transform_list<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId, at
         return Ok(o);
     }
     let page = page_rc(s)?;
-    s.wrap::<SvgAnimatedTransformList>(TransformListData { el: NodeHold::new(&page, id)?, attr }, Some(key))
+    let hold = NodeHold::new(&page, id)?;
+    let write = Box::new(move |text: &str| {
+        hold.page.dom.borrow_mut().set_attribute_local(hold.id, &pyro_dom::LocalName::from(attr), text)
+    });
+    let lists = page.dom.borrow_mut().svg_transform_lists(id, attr, write).js()?;
+    // `animVal` is the list under the SMIL animations in effect.
+    let animated = NodeHold::new(&page, id)?;
+    lists.set_animation(Box::new(move |base: &[TransformValue]| {
+        let contributions = attribute_contributions(&animated.page, animated.id, &[attr]);
+        if contributions.is_empty() {
+            return None;
+        }
+        Some(animated_transform_items(&contributions, base))
+    }));
+    s.wrap::<SvgAnimatedTransformList>(lists, Some(key))
+}
+
+/// SMIL 3.3: the transform list `base` under the `<animateTransform>`s `contributions` (in sandwich
+/// order): an additive animation adds its transform to the list below it; any other replaces the list.
+fn animated_transform_items(contributions: &[crate::smil::Contribution], base: &[TransformValue]) -> Vec<TransformValue> {
+    let mut items = base.to_vec();
+    for c in contributions {
+        let (Some(kind), Some(args)) = (c.transform_type(), crate::smil::evaluate(&TransformSpace, c, &Vec::new())) else {
+            continue;
+        };
+        let args: Vec<String> = args.iter().map(|v| v.to_string()).collect();
+        let animation = parse_transform_list(&format!("{kind}({})", args.join(" ")));
+        if c.additive() && !items.is_empty() {
+            items.extend(animation);
+        } else {
+            items = animation;
+        }
+    }
+    items
+}
+
+/// The matrix of the `transform` attribute of `id` under the `<animateTransform>`s in effect on it (its
+/// `animVal`), for `getBBox()` and `getCTM()`; `None` when no animation changes it.
+pub(crate) fn animated_transform_matrix(page: &PageDom, id: NodeId) -> Option<[f64; 6]> {
+    let contributions = attribute_contributions(page, id, &["transform"]);
+    if contributions.is_empty() {
+        return None;
+    }
+    let base = page.dom.borrow().get_attribute(id, "transform").ok().flatten().map(parse_transform_list).unwrap_or_default();
+    let items = animated_transform_items(&contributions, &base);
+    Some(items.iter().fold(IDENTITY_MATRIX, |matrix, item| pyro_dom::svg_geometry::multiply(matrix, item.matrix)))
+}
+
+// ----- SVGRect, SVGAnimatedRect -------------------------------------------------------
+
+/// `SVGSVGElement.createSVGRect`: a detached rectangle of zeros.
+pub fn detached_rect<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
+    let page = page_rc(s)?;
+    crate::canvas::svg_rect_value(s, &page, pyro_dom::layout::Rect { x: 0.0, y: 0.0, width: 0.0, height: 0.0 })
+}
+
+/// The four numbers of an element's `viewBox` attribute; zeros when it is absent or not a valid
+/// `<min-x> <min-y> <width> <height>` (a negative width or height is an error).
+fn read_view_box(page: &PageDom, id: NodeId) -> [f64; 4] {
+    let dom = page.dom.borrow();
+    let Some(text) = dom.get_attribute(id, "viewBox").ok().flatten() else { return [0.0; 4] };
+    let numbers: Option<Vec<f64>> = text
+        .split(|c: char| c.is_ascii_whitespace() || c == ',')
+        .filter(|p| !p.is_empty())
+        .map(svg_number)
+        .collect();
+    match numbers.as_deref() {
+        Some(&[x, y, w, h]) if w >= 0.0 && h >= 0.0 => [x, y, w, h],
+        _ => [0.0; 4],
+    }
+}
+
+/// `SVGAnimatedRect` of `viewBox`: `baseVal` and `animVal` are live `SVGRect`s of the attribute
+/// (`animVal` read only), each the same object every time (kept on this wrapper).
+pub struct SvgAnimatedRect;
+impl JsClass for SvgAnimatedRect {
+    const NAME: &'static str = "SVGAnimatedRect";
+    type Data = NodeHold;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter_this("baseVal", |s, el, this| view_box_rect(s, el, this, false));
+        def.getter_this("animVal", |s, el, this| view_box_rect(s, el, this, true));
+    }
+}
+
+fn view_box_rect<'s>(s: &Scope<'s>, el: &NodeHold, this: Object<'s>, animated: bool) -> JsResult<Value<'s>> {
+    let key = if animated { "__lpViewBoxAnim" } else { "__lpViewBoxBase" };
+    if let Some(rect) = s.get_hidden(this, key)? {
+        return Ok(rect);
+    }
+    let reader = Rc::new(NodeHold::new(&el.page, el.id)?);
+    let writer = reader.clone();
+    let read = s.function("read", move |s, _this, _a| {
+        let numbers = if animated { animated_view_box(&reader.page, reader.id) } else { read_view_box(&reader.page, reader.id) };
+        Ok(s.array(&numbers.map(|v| s.number(v)))?.value())
+    })?;
+    let write = s.function("write", move |s, _this, a| {
+        let index = a.get(0).to_number()? as usize;
+        let value = a.get(1).to_number()?;
+        let mut numbers = read_view_box(&writer.page, writer.id);
+        if let Some(slot) = numbers.get_mut(index) {
+            *slot = value;
+        }
+        let text = format!("{} {} {} {}", numbers[0], numbers[1], numbers[2], numbers[3]);
+        writer.page.dom.borrow_mut().set_attribute(writer.id, "viewBox", &text).js()?;
+        Ok(s.undefined())
+    })?;
+    let page = page_rc(s)?;
+    let rect = crate::canvas::view_box_rect(s, &page, read, write, animated)?;
+    s.set_hidden(this, key, rect)?;
+    Ok(rect)
+}
+
+/// The four numbers of `viewBox` under the SMIL animations in effect on it (`animVal`); the attribute's
+/// own when none animates it or the animated value is not a valid rectangle.
+fn animated_view_box(page: &PageDom, id: NodeId) -> [f64; 4] {
+    let base = read_view_box(page, id);
+    let contributions = attribute_contributions(page, id, &["viewBox"]);
+    if contributions.is_empty() {
+        return base;
+    }
+    match crate::smil::fold(&NumberSpace { pair: false }, &contributions, base.to_vec()).as_slice() {
+        &[x, y, w, h] if w >= 0.0 && h >= 0.0 => [x, y, w, h],
+        _ => base,
+    }
+}
+
+/// The element's `SVGAnimatedRect` for `viewBox`, the same object each time.
+pub fn animated_rect<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId) -> JsResult<Object<'s>> {
+    let key = coll_identity(page, 470, id);
+    if let Some(o) = s.lookup_identity(key) {
+        return Ok(o);
+    }
+    let page = page_rc(s)?;
+    s.wrap::<SvgAnimatedRect>(NodeHold::new(&page, id)?, Some(key))
+}
+
+// ----- SMIL: the animated values of the SVG types --------------------------------------------------
+
+use crate::smil::Space;
+
+/// The SMIL animations in effect on the first of `names` that any animates, of `id`.
+fn attribute_contributions(page: &PageDom, id: NodeId, names: &[&str]) -> Vec<crate::smil::Contribution> {
+    names.iter().flat_map(|name| crate::smil::animated(page, id, name)).collect()
+}
+
+/// The animated value, in user units, of the geometry length attribute `name` of `id` (what its `animVal`
+/// has: `x`, `width`, `cx`, `r`, ...) for `getBBox()`; `None` when no animation changes it, or the value
+/// is in a unit that needs the layout (`%`, `em`: the attribute's own reading stays).
+pub(crate) fn animated_geometry_number(page: &PageDom, id: NodeId, name: &str) -> Option<f64> {
+    let contributions = attribute_contributions(page, id, &[name]);
+    if contributions.is_empty() {
+        return None;
+    }
+    let base = page.dom.borrow().get_attribute(id, name).ok().flatten().and_then(parse_svg_length).unwrap_or((0.0, 1));
+    // (Absolute units only: this runs under the layout's borrow, which `unit_factor` takes again.)
+    let factor = |kind: u16| match kind {
+        1 | 5 => 1.0,
+        6 => 96.0 / 2.54,
+        7 => 96.0 / 25.4,
+        8 => 96.0,
+        9 => 4.0 / 3.0,
+        10 => 16.0,
+        _ => 0.0,
+    };
+    let space = LengthSpace { factor: &factor };
+    let (value, kind) = crate::smil::fold(&space, &contributions, vec![base]).first().copied().unwrap_or(base);
+    let scale = factor(kind);
+    (scale != 0.0).then(|| value * scale)
+}
+
+/// What SMIL animation changes in the geometry of `page`'s elements at its current time, for
+/// `getBBox()`, `getCTM()` and `getScreenCTM()` (`pyro_dom::svg_geometry::Animated`).
+pub(crate) struct SmilGeometry<'a> {
+    page: &'a PageDom,
+    /// The `<animateMotion>`s' transforms, sampled once.
+    motion: crate::smil::Geometry,
+}
+
+impl<'a> SmilGeometry<'a> {
+    /// Call it before borrowing the layout.
+    pub(crate) fn new(page: &'a PageDom) -> SmilGeometry<'a> {
+        SmilGeometry { page, motion: crate::smil::geometry(page) }
+    }
+}
+
+impl pyro_dom::svg_geometry::Animated for SmilGeometry<'_> {
+    fn motion(&self, el: NodeId) -> Option<[f64; 6]> {
+        pyro_dom::svg_geometry::Animated::motion(&self.motion, el)
+    }
+
+    fn number(&self, el: NodeId, name: &str) -> Option<f64> {
+        animated_geometry_number(self.page, el, name)
+    }
+
+    fn transform(&self, el: NodeId) -> Option<[f64; 6]> {
+        animated_transform_matrix(self.page, el)
+    }
+}
+
+/// The numbers of a list separated by whitespace and/or commas.
+fn split_values(text: &str) -> Vec<&str> {
+    text.split(|c: char| c == ',' || c.is_ascii_whitespace()).filter(|t| !t.is_empty()).collect()
+}
+
+fn numbers_lerp(a: &[f64], b: &[f64], t: f64) -> Vec<f64> {
+    if a.len() == b.len() {
+        a.iter().zip(b).map(|(x, y)| x + (y - x) * t).collect()
+    } else if t < 0.5 {
+        a.to_vec()
+    } else {
+        b.to_vec()
+    }
+}
+
+fn numbers_add(a: &[f64], b: &[f64]) -> Vec<f64> {
+    if a.len() == b.len() {
+        a.iter().zip(b).map(|(x, y)| x + y).collect()
+    } else {
+        b.to_vec()
+    }
+}
+
+fn numbers_distance(a: &[f64], b: &[f64]) -> Option<f64> {
+    (a.len() == b.len()).then(|| a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum::<f64>().sqrt())
+}
+
+/// Strings, keywords and booleans: they do not interpolate (the first half of a interval is the
+/// first value) and do not add.
+struct TextSpace;
+impl Space for TextSpace {
+    type V = String;
+    fn parse(&self, text: &str, _kind: Option<&str>) -> Option<String> {
+        Some(text.trim().to_owned())
+    }
+    fn lerp(&self, a: &String, b: &String, t: f64) -> String {
+        if t < 0.5 { a.clone() } else { b.clone() }
+    }
+    fn add(&self, _a: &String, b: &String) -> String {
+        b.clone()
+    }
+    fn scale(&self, a: &String, _k: f64) -> String {
+        a.clone()
+    }
+    fn zero(&self, _like: &String) -> String {
+        String::new()
+    }
+    fn additive(&self) -> bool {
+        false
+    }
+    fn interpolates(&self) -> bool {
+        false
+    }
+}
+
+/// A `<number>`, a pair of them (`pair`: `<number-optional-number>`, one number being that number
+/// twice), or a list.
+struct NumberSpace {
+    pair: bool,
+}
+impl Space for NumberSpace {
+    type V = Vec<f64>;
+    fn parse(&self, text: &str, _kind: Option<&str>) -> Option<Vec<f64>> {
+        let mut numbers: Vec<f64> = split_values(text.trim()).into_iter().map(svg_number).collect::<Option<_>>()?;
+        if numbers.is_empty() || (self.pair && numbers.len() > 2) {
+            return None;
+        }
+        if self.pair && numbers.len() == 1 {
+            numbers.push(numbers[0]);
+        }
+        Some(numbers)
+    }
+    fn lerp(&self, a: &Vec<f64>, b: &Vec<f64>, t: f64) -> Vec<f64> {
+        numbers_lerp(a, b, t)
+    }
+    fn add(&self, a: &Vec<f64>, b: &Vec<f64>) -> Vec<f64> {
+        numbers_add(a, b)
+    }
+    fn scale(&self, a: &Vec<f64>, k: f64) -> Vec<f64> {
+        a.iter().map(|x| x * k).collect()
+    }
+    fn zero(&self, like: &Vec<f64>) -> Vec<f64> {
+        vec![0.0; like.len()]
+    }
+    fn distance(&self, a: &Vec<f64>, b: &Vec<f64>) -> Option<f64> {
+        numbers_distance(a, b)
+    }
+}
+
+/// The arguments of an `<animateTransform>` value of `type` `kind`, filled in as the transform
+/// function has them (`translate` y 0, `scale` y x, `rotate` about the origin).
+fn transform_arguments(kind: &str, n: &[f64]) -> Option<Vec<f64>> {
+    match (kind, n) {
+        ("translate", [x]) => Some(vec![*x, 0.0]),
+        ("translate", [x, y]) => Some(vec![*x, *y]),
+        ("scale", [x]) => Some(vec![*x, *x]),
+        ("scale", [x, y]) => Some(vec![*x, *y]),
+        ("rotate", [a]) => Some(vec![*a, 0.0, 0.0]),
+        ("rotate", [a, x, y]) => Some(vec![*a, *x, *y]),
+        ("skewX", [a]) | ("skewY", [a]) => Some(vec![*a]),
+        _ => None,
+    }
+}
+
+/// The arguments of one transform function, interpolated one by one.
+struct TransformSpace;
+impl Space for TransformSpace {
+    type V = Vec<f64>;
+    fn parse(&self, text: &str, kind: Option<&str>) -> Option<Vec<f64>> {
+        let numbers: Vec<f64> = split_values(text.trim()).into_iter().map(svg_number).collect::<Option<_>>()?;
+        transform_arguments(kind?, &numbers)
+    }
+    fn lerp(&self, a: &Vec<f64>, b: &Vec<f64>, t: f64) -> Vec<f64> {
+        numbers_lerp(a, b, t)
+    }
+    fn add(&self, a: &Vec<f64>, b: &Vec<f64>) -> Vec<f64> {
+        numbers_add(a, b)
+    }
+    fn scale(&self, a: &Vec<f64>, k: f64) -> Vec<f64> {
+        a.iter().map(|x| x * k).collect()
+    }
+    fn zero(&self, like: &Vec<f64>) -> Vec<f64> {
+        vec![0.0; like.len()]
+    }
+    fn distance(&self, a: &Vec<f64>, b: &Vec<f64>) -> Option<f64> {
+        numbers_distance(a, b)
+    }
+}
+
+/// A list of `<length>`s. Lengths of different units interpolate in user units (the result in the
+/// unit of the nearer end); `factor` is the user units of a unit.
+struct LengthSpace<'a> {
+    factor: &'a dyn Fn(u16) -> f64,
+}
+impl LengthSpace<'_> {
+    fn lerp_one(&self, a: (f64, u16), b: (f64, u16), t: f64) -> (f64, u16) {
+        if a.1 == b.1 {
+            return (a.0 + (b.0 - a.0) * t, a.1);
+        }
+        let (fa, fb) = ((self.factor)(a.1), (self.factor)(b.1));
+        if fa == 0.0 || fb == 0.0 {
+            return if t < 0.5 { a } else { b };
+        }
+        let user = fa * a.0 + (fb * b.0 - fa * a.0) * t;
+        if t < 0.5 { (user / fa, a.1) } else { (user / fb, b.1) }
+    }
+    fn add_one(&self, a: (f64, u16), b: (f64, u16)) -> (f64, u16) {
+        if a.1 == b.1 {
+            return (a.0 + b.0, a.1);
+        }
+        let (fa, fb) = ((self.factor)(a.1), (self.factor)(b.1));
+        if fb == 0.0 {
+            return b;
+        }
+        ((fa * a.0 + fb * b.0) / fb, b.1)
+    }
+    fn user(&self, a: (f64, u16)) -> f64 {
+        a.0 * (self.factor)(a.1)
+    }
+}
+impl Space for LengthSpace<'_> {
+    type V = Vec<(f64, u16)>;
+    fn parse(&self, text: &str, _kind: Option<&str>) -> Option<Vec<(f64, u16)>> {
+        let lengths: Vec<(f64, u16)> = split_values(text.trim()).into_iter().map(parse_svg_length).collect::<Option<_>>()?;
+        (!lengths.is_empty()).then_some(lengths)
+    }
+    fn lerp(&self, a: &Vec<(f64, u16)>, b: &Vec<(f64, u16)>, t: f64) -> Vec<(f64, u16)> {
+        if a.len() != b.len() {
+            return if t < 0.5 { a.clone() } else { b.clone() };
+        }
+        a.iter().zip(b).map(|(x, y)| self.lerp_one(*x, *y, t)).collect()
+    }
+    fn add(&self, a: &Vec<(f64, u16)>, b: &Vec<(f64, u16)>) -> Vec<(f64, u16)> {
+        if a.len() != b.len() {
+            return b.clone();
+        }
+        a.iter().zip(b).map(|(x, y)| self.add_one(*x, *y)).collect()
+    }
+    fn scale(&self, a: &Vec<(f64, u16)>, k: f64) -> Vec<(f64, u16)> {
+        a.iter().map(|(v, unit)| (v * k, *unit)).collect()
+    }
+    fn zero(&self, like: &Vec<(f64, u16)>) -> Vec<(f64, u16)> {
+        like.iter().map(|(_, unit)| (0.0, *unit)).collect()
+    }
+    fn distance(&self, a: &Vec<(f64, u16)>, b: &Vec<(f64, u16)>) -> Option<f64> {
+        (a.len() == b.len()).then(|| a.iter().zip(b).map(|(x, y)| (self.user(*x) - self.user(*y)).powi(2)).sum::<f64>().sqrt())
+    }
+}
+
+/// An `SVGAngle`, or a keyword where the attribute takes one (a marker's `orient="auto"`).
+#[derive(Clone)]
+enum AngleVal {
+    Angle(Angle),
+    Keyword(String),
+}
+
+/// An angle: units convert through degrees, the result in the unit of the nearer end.
+struct AngleSpace;
+impl Space for AngleSpace {
+    type V = AngleVal;
+    fn parse(&self, text: &str, _kind: Option<&str>) -> Option<AngleVal> {
+        match Angle::parse(text) {
+            Some(angle) => Some(AngleVal::Angle(angle)),
+            None => Some(AngleVal::Keyword(text.trim().to_owned())).filter(|_| !text.trim().is_empty()),
+        }
+    }
+    fn lerp(&self, a: &AngleVal, b: &AngleVal, t: f64) -> AngleVal {
+        match (a, b) {
+            (AngleVal::Angle(x), AngleVal::Angle(y)) => {
+                let unit = if t < 0.5 { x.unit } else { y.unit };
+                let degrees = x.degrees() + (y.degrees() - x.degrees()) * t;
+                AngleVal::Angle(Angle { value: Angle::clamp(degrees / Angle::factor(unit)), unit })
+            }
+            _ if t < 0.5 => a.clone(),
+            _ => b.clone(),
+        }
+    }
+    fn add(&self, a: &AngleVal, b: &AngleVal) -> AngleVal {
+        match (a, b) {
+            (AngleVal::Angle(x), AngleVal::Angle(y)) => {
+                AngleVal::Angle(Angle { value: Angle::clamp((x.degrees() + y.degrees()) / Angle::factor(x.unit)), unit: x.unit })
+            }
+            _ => b.clone(),
+        }
+    }
+    fn scale(&self, a: &AngleVal, k: f64) -> AngleVal {
+        match a {
+            AngleVal::Angle(x) => AngleVal::Angle(Angle { value: Angle::clamp(f64::from(x.value) * k), unit: x.unit }),
+            AngleVal::Keyword(_) => a.clone(),
+        }
+    }
+    fn zero(&self, like: &AngleVal) -> AngleVal {
+        match like {
+            AngleVal::Angle(x) => AngleVal::Angle(Angle { value: 0.0, unit: x.unit }),
+            AngleVal::Keyword(_) => AngleVal::Angle(Angle::ZERO),
+        }
+    }
+    fn distance(&self, a: &AngleVal, b: &AngleVal) -> Option<f64> {
+        match (a, b) {
+            (AngleVal::Angle(x), AngleVal::Angle(y)) => Some((x.degrees() - y.degrees()).abs()),
+            _ => None,
+        }
+    }
 }
 
 pub(crate) fn register(engine: &pyro_js::Engine) {
@@ -2729,6 +3420,7 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<SvgTransformList>();
     engine.register::<SvgTransform>();
     engine.register::<SvgMatrix>();
+    engine.register::<SvgAnimatedRect>();
     engine.register::<SvgAnimatedEnumeration>();
     engine.register::<SvgAnimatedString>();
     engine.register::<SvgNumber>();
@@ -2833,8 +3525,7 @@ impl JsClass for SvgPoint {
         def.getter("z", |s, _| Ok(s.number(0.0)));
         def.method("matrixTransform", 1, |s, p, args| {
             args.require(1, "SVGPoint.matrixTransform")?;
-            let matrix = s.unwrap::<SvgMatrix>(args.get(0))
-                .ok_or_else(|| JsError::Type("Expected an SVGMatrix.".into()))?;
+            let matrix = matrix_argument(s, args.get(0))?;
             let (x, y) = p.coordinates();
             detached_point(s, matrix[0] * x + matrix[2] * y + matrix[4], matrix[1] * x + matrix[3] * y + matrix[5])
         });
@@ -2842,6 +3533,12 @@ impl JsClass for SvgPoint {
 }
 
 use pyro_dom::svg_point_list::PointItem;
+
+/// `SVGSVGElement.currentTranslate` (`[SameObject]`): one wrapper per element while it is held.
+pub(crate) fn current_translate<'s>(s: &Scope<'s>, page: &Rc<PageDom>, id: NodeId) -> JsResult<Value<'s>> {
+    let key = coll_identity(page, 480, id);
+    Ok(s.wrap::<SvgPoint>(SvgPointData::Translate(NodeHold::new(page, id)?), Some(key))?.value())
+}
 
 fn point_value<'s>(s: &Scope<'s>, item: Rc<PointItem>) -> JsResult<Value<'s>> {
     // The wrapper owns this Rc and its weak identity entry ends at GC. Each
@@ -2986,6 +3683,18 @@ pub fn point_list<'s>(s: &Scope<'s>, n: &NodeData, animated: bool) -> JsResult<V
         }
     });
     let lists = n.page().dom.borrow_mut().svg_point_lists(n.id, write).js()?;
+    // `animatedPoints` (and `animVal`) is the list under the SMIL animations in effect: the points as one
+    // list of numbers, as an animation's values parse.
+    let animated_hold = NodeHold::new(n.page(), n.id)?;
+    lists.set_animation(Box::new(move |base: &[(f32, f32)]| {
+        let contributions = attribute_contributions(&animated_hold.page, animated_hold.id, &["points"]);
+        if contributions.is_empty() {
+            return None;
+        }
+        let flat: Vec<f64> = base.iter().flat_map(|(x, y)| [f64::from(*x), f64::from(*y)]).collect();
+        let folded = crate::smil::fold(&NumberSpace { pair: false }, &contributions, flat);
+        Some(folded.chunks_exact(2).map(|p| (p[0] as f32, p[1] as f32)).collect::<Vec<(f32, f32)>>())
+    }));
     Ok(s.wrap::<SvgPointList>(SvgListData { lists, animated }, Some(key))?.value())
 }
 
@@ -3018,6 +3727,16 @@ pub fn animated_number_list<'s>(s: &Scope<'s>, n: &NodeData, attr: &'static str)
         hold.page.dom.borrow_mut().set_attribute_local(hold.id, &pyro_dom::LocalName::from(attr), text)
     });
     let lists = n.page().dom.borrow_mut().svg_number_lists(n.id, attr, write).js()?;
+    // `animVal` is the list under the SMIL animations in effect.
+    let animated = NodeHold::new(n.page(), n.id)?;
+    lists.set_animation(Box::new(move |base: &[f32]| {
+        let contributions = attribute_contributions(&animated.page, animated.id, &[attr]);
+        if contributions.is_empty() {
+            return None;
+        }
+        let base: Vec<f64> = base.iter().map(|v| f64::from(*v)).collect();
+        Some(crate::smil::fold(&NumberSpace { pair: false }, &contributions, base).into_iter().map(|v| v as f32).collect::<Vec<f32>>())
+    }));
     Ok(s.wrap::<SvgAnimatedNumberList>(lists, Some(key))?.value())
 }
 
@@ -3083,5 +3802,16 @@ pub fn animated_length_list<'s>(s: &Scope<'s>, n: &NodeData, attr: &'static str)
     let dir = if matches!(attr, "y" | "dy") { SvgLengthDir::Height } else { SvgLengthDir::Width };
     let factor = Box::new(move |kind| SvgLengthData::attribute_factor(&el, dir, kind));
     let lists = n.page().dom.borrow_mut().svg_length_lists(n.id, attr, write, factor).js()?;
+    // `animVal` is the list under the SMIL animations in effect.
+    let animated = NodeHold::new(n.page(), n.id)?;
+    lists.set_animation(Box::new(move |base: &[(f64, u16)]| {
+        let contributions = attribute_contributions(&animated.page, animated.id, &[attr]);
+        if contributions.is_empty() {
+            return None;
+        }
+        let factor = |kind: u16| SvgLengthData::attribute_factor(&animated, dir, kind);
+        let space = LengthSpace { factor: &factor };
+        Some(crate::smil::fold(&space, &contributions, base.to_vec()))
+    }));
     Ok(s.wrap::<SvgAnimatedLengthList>(lists, Some(key))?.value())
 }

@@ -184,6 +184,10 @@ pub(crate) struct EngineInner {
     pub(crate) collections: crate::interned::Collections,
     /// The property hooks' switches (see [`class::HookState`]).
     pub(crate) hook_state: class::HookState,
+    /// COOP access reporting: whether some document names a reporting endpoint, and the one-element
+    /// array holding it that the WindowProxy helpers of every realm read (null until first needed).
+    coop_on: Cell<bool>,
+    coop_flag: Cell<sys::JSObjectRef>,
     /// The values [`crate::HeldValue`]s keep alive.
     pub(crate) held: RefCell<crate::persistent::HeldValues>,
     /// Block coverage: enables not yet matched by a disable, and while on,
@@ -551,6 +555,21 @@ impl EngineInner {
     pub(crate) fn group(&self) -> sys::JSContextGroupRef {
         self.group
     }
+    /// The shared COOP flag array `[on]`, made in the root context on first use (page script cannot
+    /// reach it) and protected for the engine's lifetime.
+    pub(crate) fn coop_flag(&self) -> sys::JSObjectRef {
+        if self.coop_flag.get().is_null() {
+            let root = self.root_ctx();
+            // SAFETY: the root context is live; the array is protected for the engine's lifetime.
+            unsafe {
+                let on = sys::JSValueMakeBoolean(root, self.coop_on.get());
+                let array = sys::JSObjectMakeArray(root, 1, &on, std::ptr::null_mut());
+                sys::JSValueProtect(root, array as sys::JSValueRef);
+                self.coop_flag.set(array);
+            }
+        }
+        self.coop_flag.get()
+    }
     pub(crate) fn root_ctx(&self) -> sys::JSContextRef {
         self.root as sys::JSContextRef
     }
@@ -747,8 +766,55 @@ pub(crate) struct EntryGuard(sys::JSContextRef);
 impl EntryGuard {
     #[inline]
     pub(crate) fn enter(ctx: sys::JSContextRef) -> Self {
+        note_entered(ctx);
         Self(callback_tls().entry.replace(ctx))
     }
+}
+
+thread_local! {
+    /// The contexts native code entered (a Rust-to-JavaScript call) since [`reset_entered`], by
+    /// address: which documents' script ran in a task (long task and long animation frame
+    /// attribution). Bounded; `ENTERED_LAST` skips the list for repeated entries of one context.
+    static ENTERED: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
+    static ENTERED_LAST: Cell<usize> = const { Cell::new(0) };
+}
+
+/// The most contexts remembered between two [`reset_entered`] calls (more than a page set has).
+const ENTERED_MAX: usize = 64;
+
+#[inline]
+fn note_entered(ctx: sys::JSContextRef) {
+    let ctx = ctx as usize;
+    let _ = ENTERED_LAST.try_with(|last| {
+        if last.get() != ctx {
+            last.set(ctx);
+            let _ = ENTERED.try_with(|list| {
+                let mut list = list.borrow_mut();
+                if list.len() < ENTERED_MAX && !list.contains(&ctx) {
+                    list.push(ctx);
+                }
+            });
+        }
+    });
+}
+
+/// Forgets which contexts were entered ([`Realm::entered_since_reset`]): the embedder calls it
+/// at the boundaries of the units of work it attributes script to (event-loop tasks).
+pub fn reset_entered() {
+    let _ = ENTERED_LAST.try_with(|last| last.set(0));
+    let _ = ENTERED.try_with(|list| list.borrow_mut().clear());
+}
+
+/// Whether native code entered any context since [`reset_entered`]: one thread-local length read, no
+/// allocation. False means no document's script ran (the embedder's per-task bookkeeping can stop there).
+pub fn entered_any() -> bool {
+    ENTERED.try_with(|list| !list.borrow().is_empty()).unwrap_or(false)
+}
+
+/// Whether native code entered the context `ctx` since [`reset_entered`].
+pub(crate) fn entered_since_reset(ctx: sys::JSContextRef) -> bool {
+    let ctx = ctx as usize;
+    ENTERED.try_with(|list| list.borrow().contains(&ctx)).unwrap_or(false)
 }
 
 impl Drop for EntryGuard {
@@ -801,6 +867,19 @@ pub(crate) fn callback_tls() -> &'static CallbackTls {
     // SAFETY: a const-initialized thread-local without a destructor is never
     // deallocated while the thread runs; the reference is used only on it.
     CALLBACK.with(|c| unsafe { &*(c as *const CallbackTls) })
+}
+
+/// Tells the thread's engine whether some document names a COOP reporting endpoint: the WindowProxy
+/// helpers report cross-window property accesses only while it is on.
+pub fn set_coop_reporting(on: bool) {
+    let Some(e) = current_inner() else { return };
+    e.coop_on.set(on);
+    let flag = e.coop_flag.get();
+    if !flag.is_null() {
+        let root = e.root_ctx();
+        // SAFETY: the engine's live flag array, written in the root context.
+        unsafe { sys::JSObjectSetPropertyAtIndex(root, flag, 0, sys::JSValueMakeBoolean(root, on), std::ptr::null_mut()) };
+    }
 }
 
 pub(crate) fn current_inner() -> Option<Rc<EngineInner>> {
@@ -872,6 +951,8 @@ impl Engine {
             lingering: RefCell::new(Vec::new()),
             deferred_waker: RefCell::new(None),
             collections: crate::interned::Collections::new(),
+            coop_on: Cell::new(false),
+            coop_flag: Cell::new(std::ptr::null_mut()),
             hook_state: class::HookState::default(),
             held: RefCell::new(crate::persistent::HeldValues::default()),
             coverage_users: Cell::new(0),

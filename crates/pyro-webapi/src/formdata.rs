@@ -502,6 +502,7 @@ pub(crate) fn form_submission(
             source: Some(submitter.unwrap_or(form)),
             form_entries: None,
             replace,
+            user_initiated: crate::input::user_initiated_navigation(),
         });
     }
     let (ct, body) = match enctype.as_deref() {
@@ -532,6 +533,7 @@ pub(crate) fn form_submission(
         source: Some(submitter.unwrap_or(form)),
         form_entries: Some(FormEntries(Rc::new(entries))),
         replace,
+        user_initiated: crate::input::user_initiated_navigation(),
     })
 }
 

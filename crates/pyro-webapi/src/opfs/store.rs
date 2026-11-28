@@ -257,12 +257,29 @@ impl Namespace {
         }
     }
 
+    /// Bounce Tracking Mitigations: empties the file systems of the origins at `site` (a handle script
+    /// still holds then finds nothing). Returns whether any file system existed.
+    pub(crate) fn clear_site(&self, site: &str) -> bool {
+        let doomed: Vec<_> = {
+            let mut origins = lock(&self.origins);
+            let keys: Vec<String> = origins.keys().filter(|o| crate::bounce_tracking::site_of_url(o).as_deref() == Some(site)).cloned().collect();
+            keys.into_iter().filter_map(|key| origins.remove(&key)).collect()
+        };
+        for tree in &doomed {
+            let mut tree = lock(tree);
+            tree.entries.clear();
+            tree.reserved.clear();
+            tree.used = 0;
+        }
+        !doomed.is_empty()
+    }
+
     pub(crate) fn root(&self, origin: &str) -> Handle {
         let tree = lock(&self.origins)
             .entry(origin.to_owned())
             .or_insert_with(|| Arc::new(Mutex::new(Tree { bucket: self.bucket.clone(), ..Tree::default() })))
             .clone();
-        Handle::new(tree, Path::new(), Kind::Directory)
+        Handle::new(tree, Path::new(), Kind::Directory, Arc::from(origin))
     }
 
     pub(crate) fn usage(&self, origin: &str) -> u64 {
@@ -284,11 +301,28 @@ pub(crate) struct Handle {
     tree: Arc<Mutex<Tree>>,
     path: Arc<Mutex<Path>>,
     kind: Kind,
+    /// The origin whose file system this is: a structured clone delivers the
+    /// handle only to a secure context of that origin.
+    origin: Arc<str>,
 }
 
 impl Handle {
-    fn new(tree: Arc<Mutex<Tree>>, path: Path, kind: Kind) -> Self {
-        Self { tree, path: Arc::new(Mutex::new(path)), kind }
+    fn new(tree: Arc<Mutex<Tree>>, path: Path, kind: Kind, origin: Arc<str>) -> Self {
+        Self { tree, path: Arc::new(Mutex::new(path)), kind, origin }
+    }
+
+    pub(crate) fn origin(&self) -> &str {
+        &self.origin
+    }
+
+    /// Whether this handle's file system is the one `namespace` (a default-bucket handle) or one of
+    /// `buckets`' (a named bucket's) of the receiving context holds: a storage namespace is a storage
+    /// partition (a credentialless frame tree has its own), and a handle never crosses it.
+    pub(crate) fn in_partition(&self, namespace: &Namespace, buckets: &crate::storage_buckets::catalog::Catalog) -> bool {
+        match lock(&self.tree).bucket.clone() {
+            Some(lease) => buckets.holds(&lease),
+            None => lock(&namespace.origins).get(&*self.origin).is_some_and(|tree| Arc::ptr_eq(tree, &self.tree)),
+        }
     }
 
     pub(crate) fn kind(&self) -> Kind {
@@ -344,7 +378,7 @@ impl Handle {
         } else {
             return Err(Error::Missing);
         }
-        Ok(Self::new(self.tree.clone(), path, kind))
+        Ok(Self::new(self.tree.clone(), path, kind, self.origin.clone()))
     }
 
     pub(crate) fn next(&self, after: Option<&str>) -> Result<Option<(String, Self)>> {
@@ -364,7 +398,7 @@ impl Handle {
         };
         path.push(name.clone());
         let kind = tree.entries[&path].kind();
-        Ok(Some((name, Self::new(self.tree.clone(), path, kind))))
+        Ok(Some((name, Self::new(self.tree.clone(), path, kind, self.origin.clone()))))
     }
 
     pub(crate) fn resolve(&self, other: &Self) -> Result<Option<Vec<String>>> {

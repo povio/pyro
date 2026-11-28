@@ -3,6 +3,8 @@
 use bytes::{Bytes, BytesMut};
 use std::collections::BTreeMap;
 
+use crate::cenc::{Protection, SampleEnc};
+
 mod fragment;
 mod init;
 
@@ -27,6 +29,17 @@ pub struct Track {
     pub height: u32,
     pub sample_rate: u32,
     pub channels: u32,
+    /// `sinf`: the track is Common Encrypted (`encv`/`enca`).
+    pub protection: Option<Protection>,
+}
+
+/// The initialization data of an init segment with protection information:
+/// what the `encrypted` event reports (EME "initialization data encountered").
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Encrypted {
+    /// Always `cenc`: the `pssh` boxes of the init segment, then a Common SystemID box naming the `tenc` key IDs.
+    pub init_data_type: &'static str,
+    pub init_data: Vec<u8>,
 }
 
 #[derive(Clone, Debug)]
@@ -37,6 +50,8 @@ pub struct Sample {
     pub duration: f64,
     pub key: bool,
     pub data: Bytes,
+    /// Common Encryption parameters of this sample (its `data` is ciphertext).
+    pub enc: Option<Box<SampleEnc>>,
 }
 
 #[derive(Debug)]
@@ -66,11 +81,16 @@ pub struct Mp4Parser {
     tracks: BTreeMap<u32, TrackInfo>,
     spans: Vec<Span>,
     duration: Option<f64>,
+    encrypted: Vec<Encrypted>,
 }
 
 impl Mp4Parser {
     pub fn duration(&self) -> Option<f64> {
         self.duration
+    }
+    /// The initialization data of the init segments parsed since the last call.
+    pub fn take_encrypted(&mut self) -> Vec<Encrypted> {
+        std::mem::take(&mut self.encrypted)
     }
     pub fn buffered_bytes(&self) -> usize {
         self.input.len() + self.spans.len() * std::mem::size_of::<Span>()
@@ -122,9 +142,10 @@ impl Mp4Parser {
                     if !self.ftyp || !self.spans.is_empty() {
                         return Err(Error::Invalid);
                     }
-                    let (tracks, duration) = init::parse(&data)?;
+                    let (tracks, duration, encrypted) = init::parse(&data)?;
                     self.tracks = tracks;
                     self.duration = duration;
+                    self.encrypted.extend(encrypted);
                     self.ftyp = false;
                     events.push(Event::Init(self.tracks.values().map(|info| info.track.clone()).collect(), duration));
                 }
@@ -132,7 +153,7 @@ impl Mp4Parser {
                     if self.tracks.is_empty() || !self.spans.is_empty() {
                         return Err(Error::Invalid);
                     }
-                    self.spans = fragment::parse(&data, pos, &self.tracks)?;
+                    self.spans = fragment::parse(&data, pos, pos + start as u64, &self.tracks)?;
                 }
                 b"mdat" => {
                     if self.spans.is_empty() {

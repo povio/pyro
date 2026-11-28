@@ -442,6 +442,8 @@ fn notification_follows_the_notifications_permission() {
 
 // ----- touch ---------------------------------------------------------------------
 
+// (The page's listeners are on the document, where touchstart/touchmove listeners are passive by
+// default as in Chrome, so Chrome sends those two events non-cancelable: `cancelable` is false.)
 const TOUCH_PAGE: &str = r#"(() => {
   document.body.style.margin = '0';
   document.body.innerHTML = '<div id=a style="width:100px;height:100px"></div><div id=b style="width:100px;height:100px"></div>';
@@ -525,7 +527,7 @@ fn touch_tap_fires_chromium_pointer_touch_and_compat_mouse_sequence() {
         format!("pointerenter@BODY {pressed}"),
         format!("pointerenter@a {pressed}"),
         format!("pointerdown@a {pressed}"),
-        format!("touchstart@a 1,1,1,true,true,true {point}"),
+        format!("touchstart@a 1,1,1,false,true,true {point}"),
         format!("gotpointercapture@a {released}"),
         format!("pointerup@a {released}"),
         format!("lostpointercapture@a {released}"),
@@ -616,10 +618,10 @@ fn touch_moves_cancel_the_tap_scroll_and_follow_ids() {
     let log = take_log(&mut h);
     let touches: Vec<&String> = log.iter().filter(|l| l.starts_with("touch")).collect();
     assert_eq!(touches.len(), 6, "{log:#?}");
-    assert!(touches[0].starts_with("touchstart@a 1,1,1,true"), "{touches:?}");
-    assert!(touches[1].starts_with("touchstart@b 2,1,1,true") && touches[1].contains("[[8,"), "{touches:?}");
-    assert!(touches[2].starts_with("touchmove@a 2,1,2,true"), "{touches:?}");
-    assert!(touches[3].starts_with("touchmove@b 2,1,2,true"), "{touches:?}");
+    assert!(touches[0].starts_with("touchstart@a 1,1,1,false"), "{touches:?}");
+    assert!(touches[1].starts_with("touchstart@b 2,1,1,false") && touches[1].contains("[[8,"), "{touches:?}");
+    assert!(touches[2].starts_with("touchmove@a 2,1,2,false"), "{touches:?}");
+    assert!(touches[3].starts_with("touchmove@b 2,1,2,false"), "{touches:?}");
     assert!(touches[4].starts_with("touchend@b 1,0,1,true") && touches[4].contains("[[8,"), "{touches:?}");
     assert!(touches[5].starts_with("touchend@a 0,0,1,true") && touches[5].contains("[[7,"), "{touches:?}");
     assert!(log.iter().any(|l| l.starts_with("pointerdown@b T,false")), "{log:#?}");
@@ -632,7 +634,7 @@ fn touch_moves_cancel_the_tap_scroll_and_follow_ids() {
         log,
         [
             "pointerdown@a T,true,2,2,1,0,1,10,10",
-            "touchstart@a 1,1,1,true,true,true",
+            "touchstart@a 1,1,1,false,true,true",
             "gotpointercapture@a T,true,2,2,0,-1,0,10,10",
             "pointercancel@a T,true,2,2,0,-1,0,10,10",
             "lostpointercapture@a T,true,2,2,0,-1,0,10,10",

@@ -68,6 +68,51 @@ const STACK_BYTES: usize = 8 * 1024 * 1024;
 /// each level waits its own, so a chain of them can take this once per level.
 const NESTED_JOIN: Duration = Duration::from_secs(1);
 
+/// The embedder policies of a dedicated worker's owner, which its script's response must be
+/// compatible with (HTML "run a worker": "check a global object's embedder policy"). `Send`.
+pub(crate) struct OwnerEmbedder {
+    policy: pyro_net::EmbedderPolicy,
+    report_only: pyro_net::EmbedderPolicy,
+    /// Where the owner's reports of a refused worker go (its `report-to` endpoints, by disposition).
+    report: Option<pyro_net::CorpReport>,
+}
+
+impl OwnerEmbedder {
+    /// `page`'s policies, when its worker's script has to be compatible with them: none for an owner without
+    /// a (report-only) policy or one with a Document-Isolation-Policy (its workers inherit it).
+    ///
+    /// `shared`: nothing is checked for a shared worker, whatever its owner's policy. The spec would refuse a
+    /// `require-corp` or `credentialless` owner a worker without a policy, but Chrome does not: a shared worker
+    /// is in an agent cluster of its own and runs (html/cross-origin-embedder-policy/credentialless/
+    /// shared-worker.https.window.js, fs/opfs-shared-worker-coep.https.window.js expect a `require-corp` or
+    /// `credentialless` window's `unsafe-none` shared worker to run), and the page is the proxy for Chrome.
+    pub(crate) fn of(page: &PageDom, shared: bool) -> Option<OwnerEmbedder> {
+        if shared {
+            return None;
+        }
+        let owner_reporting = page.embedder_reporting();
+        if owner_reporting.dip || owner_reporting.report_only_dip {
+            return None;
+        }
+        let mut owner = pyro_net::RequestDefaults::default();
+        page.apply_embedder_defaults(&mut owner);
+        let policy = owner.embedder_policy;
+        owner.corp_report.map(|report| OwnerEmbedder { policy, report_only: report.report_only, report: Some(report) })
+    }
+}
+
+/// A document's connection to a shared worker, checked on the worker's thread, where its embedder policy is
+/// known once its script has loaded (HTML "check a global object's embedder policy" for every connecting
+/// document, not only the one that started it). `Send`.
+pub(crate) struct ConnectCheck {
+    /// The connecting document's policies (`None`: nothing to check).
+    pub(crate) owner: Option<OwnerEmbedder>,
+    /// Identifies the connecting `SharedWorker` object to the document side if it is refused.
+    pub(crate) client: u64,
+    /// The worker's script URL, the blocked URL of a report.
+    pub(crate) url: String,
+}
+
 /// What a worker's thread needs from the page side. `Send`.
 pub(crate) struct WorkerStart {
     id: u64,
@@ -83,8 +128,22 @@ pub(crate) struct WorkerStart {
     origin: Option<String>,
     creator_cluster: Option<crate::page::AgentCluster>,
     creator_secure: bool,
+    /// The creator's Mixed Content / Upgrade Insecure Requests state: the worker's requests keep it.
+    insecure: pyro_net::InsecurePolicy,
+    /// The creator's cross-origin embedder policy (HTML § 7.1.4): a worker has its script response's, which an
+    /// owner whose policy is not `unsafe-none` requires to be the same or stronger, and a `blob:` or
+    /// `data:` worker inherits the owner's. The worker's requests are subject to it.
+    pub(crate) embedder_policy: pyro_net::EmbedderPolicy,
+    /// The owner's policies when a dedicated worker's script must be compatible with them: none
+    /// for a service worker, a shared worker, or an owner without a (report-only) policy.
+    pub(crate) owner_embedder: Option<OwnerEmbedder>,
+    /// The creator's reporting parts of it: a `blob:` or `data:` worker inherits them with the policy.
+    pub(crate) embedder_reporting: pyro_net::EmbedderReporting,
     cookie_partition_key: Option<String>,
     cookie_site_context: pyro_net::cookies::SiteContext,
+    /// The creator's credentialless partition (`crate::credentialless`): the worker's cookies and
+    /// storage keys are the partition's.
+    anonymous: Option<crate::credentialless::Anonymous>,
     user_agent: Option<UserAgentOverride>,
     extra_headers: HeaderMap,
     cache_disabled: bool,
@@ -96,6 +155,7 @@ pub(crate) struct WorkerStart {
     buckets: crate::storage_buckets::catalog::Catalog,
     permissions: crate::navigator_extras::PermissionTable,
     web_locks: crate::web_locks::LockService,
+    pressure: crate::pressure::PressureHub,
     /// `new Worker(url, {type: 'module'})`: the script is a module.
     pub(crate) module: bool,
     /// `WorkerOptions.credentials`: a module worker's main script and every
@@ -119,6 +179,9 @@ pub(crate) struct WorkerStart {
     /// The owner document's CSP: its script's redirects and its module graph's static imports
     /// are checked against it ([`crate::worker::csp_check`]).
     pub(crate) csp: crate::worker::WorkerCsp,
+    /// A dedicated or shared worker that is a service worker client: the link its requests take to
+    /// the worker that controls it (a nested worker shares its creator's).
+    pub(crate) control: Option<Arc<crate::service_worker::ControlLink>>,
 }
 
 impl WorkerStart {
@@ -134,6 +197,8 @@ impl WorkerStart {
         let net = page.net.borrow().clone()?;
         let poster = page.remote_poster()?;
         let script = (url.scheme() == "blob").then(|| page.blob_url(url.as_str()).map(|(bytes, _)| bytes)).flatten();
+        // (A Document-Isolation-Policy's workers inherit it: nothing to check.)
+        let owner_embedder = OwnerEmbedder::of(page, false);
         Some(WorkerStart {
             id,
             url,
@@ -147,6 +212,11 @@ impl WorkerStart {
             creator_cluster: Some(page.agent_cluster()),
             cookie_partition_key: page.cookie_partition_key(),
             cookie_site_context: page.cookie_site_context(),
+            anonymous: page.anonymous(),
+            insecure: page.insecure_policy(),
+            embedder_policy: page.embedder_policy(),
+            owner_embedder,
+            embedder_reporting: page.embedder_reporting(),
             creator_secure: s.global_data::<WorkerGlobalScope>()
                 .map_or_else(|| crate::secure_context::secure(s, page), |parent| parent.secure),
             user_agent: page.identity.borrow().value.clone(),
@@ -158,6 +228,7 @@ impl WorkerStart {
             buckets: page.local_storage.borrow().buckets(),
             permissions: page.context_services().permissions.clone(),
             web_locks: page.context_services().web_locks.clone(),
+            pressure: page.context_services().pressure().clone(),
             module: false,
             credentials: Credentials::SameOrigin,
             referrer: None,
@@ -166,6 +237,7 @@ impl WorkerStart {
             service: None,
             shared_worker: false,
             csp: Default::default(),
+            control: None,
         })
     }
 
@@ -199,7 +271,12 @@ impl WorkerStart {
             creator_cluster: None,
             cookie_partition_key: service.partition_key.clone(),
             cookie_site_context: service.cookie_site_context,
+            anonymous: None,
             creator_secure: true,
+            insecure: page.insecure_policy(),
+            embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
+            owner_embedder: None,
+            embedder_reporting: Default::default(),
             user_agent: page.identity.borrow().value.clone(),
             extra_headers: page.extra_http_headers(),
             cache_disabled: page.cache_disabled(),
@@ -209,6 +286,7 @@ impl WorkerStart {
             buckets: page.local_storage.borrow().buckets(),
             permissions: page.context_services().permissions.clone(),
             web_locks: page.context_services().web_locks.clone(),
+            pressure: page.context_services().pressure().clone(),
             module,
             credentials: Credentials::SameOrigin,
             referrer: None,
@@ -217,6 +295,7 @@ impl WorkerStart {
             service: Some(service),
             shared_worker: false,
             csp: Default::default(),
+            control: None,
         })
     }
 }
@@ -383,7 +462,7 @@ impl GraphPhase {
 /// What a worker that is still starting was sent.
 enum Held {
     Message(WireMessage),
-    Connect(WireMessage),
+    Connect(WireMessage, ConnectCheck),
 }
 
 impl LoopState for WorkerLoop {
@@ -397,7 +476,7 @@ impl LoopState for WorkerLoop {
             for held in std::mem::take(&mut self.held) {
                 match held {
                     Held::Message(message) => self.receive(message),
-                    Held::Connect(message) => self.connect(message),
+                    Held::Connect(message, check) => self.connect(message, check),
                 }
                 self.engine.drain_finalized();
                 self.page.after_task();
@@ -423,12 +502,23 @@ impl WorkerLoop {
 
     /// A document connected to this shared worker: `connect` at the global,
     /// with the port `message` transfers as `ports[0]` and `source`.
-    pub(crate) fn connect(&mut self, message: WireMessage) {
+    pub(crate) fn connect(&mut self, message: WireMessage, check: ConnectCheck) {
         if self.starting.get() {
-            return self.held.push(Held::Connect(message));
+            return self.held.push(Held::Connect(message, check));
         }
         if self.shared.closing.load(Ordering::Acquire) {
             return;
+        }
+        // HTML "check a global object's embedder policy": a connecting document whose policy is not
+        // `unsafe-none` needs the worker's to be one too (the worker's is its script's, whichever document
+        // started it). A refused connection gets no `connect`, and its SharedWorker object an `error`.
+        if let Some(owner) = &check.owner {
+            let url = pyro_net::Url::parse(&check.url).ok();
+            if url.is_some_and(|url| !owner_accepts_worker(owner, &url, self.page.embedder_policy())) {
+                let (id, client) = (self.id, check.client);
+                (self.poster)(Box::new(move || deliver_up(id, Up::ConnectRefused(client))));
+                return;
+            }
         }
         let Ok(s) = self.realm.scope() else { return };
         let Some(target) = self.page.window_target() else { return };
@@ -530,6 +620,23 @@ impl PageHooks for ScopeHooks {
                 task();
             }
         });
+    }
+
+    fn set_media_timer(&self, delay: Duration, task: Box<dyn FnOnce()>) -> Option<u64> {
+        let task = RefCell::new(Some(task));
+        // A host timer for internal polling (Compute Pressure): it does not keep the worker's loop busy.
+        let id = self.sched.set_timer(delay, false, false, move |_| {
+            if let Some(task) = task.borrow_mut().take() {
+                task();
+            }
+        });
+        Some(u64::from(id.0))
+    }
+
+    fn clear_media_timer(&self, id: u64) {
+        if let Ok(id) = u32::try_from(id) {
+            self.sched.clear_timer(TimerId(id));
+        }
     }
 
     fn navigate(&self, _request: NavigationRequest) {}
@@ -677,6 +784,11 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         let _ = dom.borrow_mut().inherit_csp_policies(document, &start.csp.inherited);
     }
     let page = PageDom::new(dom, document);
+    // The same for the owner's `Connection-Allowlist`; a fetched script's own is its response's
+    // (`fetch_script`; a service worker's, which its registration fetched, comes in `inherited_allowlist`).
+    if matches!(start.url.scheme(), "data" | "blob") || start.service.is_some() {
+        page.set_connection_allowlist(start.csp.inherited_allowlist.clone());
+    }
     // Dedicated workers, including data/blob workers and nested workers, use
     // their creator's cluster. Shared and service workers own a distinct cluster.
     if !start.shared_worker {
@@ -686,9 +798,12 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
     }
     let cookie_site = if start.url.scheme() == "data" { pyro_net::cookies::SiteContext::CrossSite } else { start.cookie_site_context };
     page.set_cookie_context(start.cookie_partition_key.clone(), cookie_site);
+    page.set_anonymous(start.anonymous.clone());
     page.set_context_services(Rc::new(crate::navigator_extras::ContextServices::for_worker(
-        start.permissions.clone(), start.web_locks.clone(),
+        start.permissions.clone(), start.web_locks.clone(), start.pressure.clone(),
     )));
+    // A controlled worker's requests go through its controller (`service_worker::route`).
+    crate::service_worker::set_worker_control(&page, start.control.clone());
     // The worker's time origin: `performance.now()`, `Event.timeStamp` and
     // its Resource Timing entries count from here.
     let started = Instant::now();
@@ -696,7 +811,11 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
     page.set_event_clock(Rc::new(move |at| crate::performance::time_since(started, at)));
     page.set_user_agent_override(start.user_agent.clone()).map_err(|e| JsError::Type(e.to_string().into()))?;
     page.set_extra_http_headers(start.extra_headers.clone());
+    page.set_no_accept_ch(start.service.is_some());
     page.set_cache_disabled(start.cache_disabled);
+    page.set_creator_insecure(start.insecure);
+    page.set_embedder_policy(start.embedder_policy);
+    page.set_embedder_reporting(start.embedder_reporting.clone());
     page.set_storage_namespaces(
         crate::storage::StorageNamespace::with_shared(
             start.indexed_db.clone(), start.caches.clone(), start.opfs.clone(), start.buckets.clone(),
@@ -707,6 +826,17 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
     let window = page.create_window_target(document);
     *page.net.borrow_mut() = Some(start.net.clone());
     page.set_hooks(Some(Rc::new(ScopeHooks { sched: event_loop.scheduler(), handle: event_loop.handle() })));
+    // A synchronous request parks this thread: `terminate()` must still end it.
+    let closing = start.shared.clone();
+    crate::xhr::set_sync_watch(&page, Box::new(move || closing.closing.load(Ordering::Acquire)));
+    let (script, response_url) = load_main_script(&page, &start);
+    // HTML "run a worker" step: the worker global's URL (`location`, the base URL of its
+    // `importScripts`, XHR and nested workers, the name of its script) is the main script
+    // response's URL, so after a redirect the final one, not the one `new Worker` asked for.
+    let url = response_url.clone().unwrap_or_else(|| start.url.clone());
+    if url.as_str() != start.url.as_str() {
+        let _ = page.dom.borrow_mut().set_document_url(document, url.as_str());
+    }
     let worker_origin = if start.url.scheme() == "data" {
         Some(start.url.origin().ascii_serialization())
     } else {
@@ -719,8 +849,8 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         id: start.id,
         shared: start.shared.clone(),
         poster: start.poster.clone(),
-        url: start.url.clone(),
-        secure: pyro_net::is_potentially_trustworthy_url(&start.url)
+        url: url.clone(),
+        secure: pyro_net::is_potentially_trustworthy_url(&url)
             && (start.creator_secure || start.shared_worker || start.service.is_some()),
         name: start.name.clone(),
         user_agent: crate::window::user_agent(&page),
@@ -731,7 +861,8 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         started,
         origin_wall_ms,
         performance: Cell::new(None),
-        response_url: RefCell::new(None),
+        // The URL its nested workers' requests are sent with as their referrer.
+        response_url: RefCell::new(response_url),
     };
     if start.service.is_some() {
         realm.set_global_data::<ServiceWorkerGlobalScope>(scope)?;
@@ -752,7 +883,7 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         credentials: script_credentials(&start),
         origin: worker_origin,
         outside_origin: start.origin.clone(),
-        url: start.url.to_string(),
+        url: url.to_string(),
         sched: event_loop.scheduler(),
         in_flight: Rc::default(),
         service_graph: start.service.is_some().then(|| starting.clone()),
@@ -760,6 +891,7 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         graph: graph.clone(),
         id: start.id,
         poster: start.poster.clone(),
+        owner_policy: start.referrer.as_ref().map(|(_, policy)| *policy),
     })));
     {
         let s = realm.scope()?;
@@ -775,16 +907,6 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
             crate::service_worker_scope::install(&s, service, start.poster.clone(), start.shared.clone())?;
             crate::cookie_store::bind_environment(&s, &page)?;
             crate::cookie_store::exposure::install(&s, true)?;
-        }
-    }
-    // A synchronous request parks this thread: `terminate()` must still end it.
-    let closing = start.shared.clone();
-    crate::xhr::set_sync_watch(&page, Box::new(move || closing.closing.load(Ordering::Acquire)));
-    let (script, response_url) = load_main_script(&page, &start);
-    // The URL its nested workers' requests are sent with as their referrer.
-    if let Some(url) = response_url {
-        if let Some(g) = realm.scope()?.global_data::<WorkerGlobalScope>() {
-            *g.response_url.borrow_mut() = Some(url);
         }
     }
     let state = WorkerLoop {
@@ -804,7 +926,7 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         let id = start.id;
         (start.poster)(Box::new(move || deliver_up(id, Up::LoadFailed)));
     }
-    Ok((state, script.map(|text| (text, start.url.to_string()))))
+    Ok((state, script.map(|text| (text, url.to_string()))))
 }
 
 /// The main script request's referrer, in; its response's URL (after
@@ -812,11 +934,26 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
 struct MainRequest {
     referrer: Option<(pyro_net::Url, pyro_net::ReferrerPolicy)>,
     response_url: RefCell<Option<pyro_net::Url>>,
+    /// The worker keeps its owner's embedder policy whatever its script's response says (a worker of
+    /// a document with a Document-Isolation-Policy shares the document's isolation).
+    inherit_embedder: bool,
+    /// A shared worker: a Document-Isolation-Policy applies to documents and dedicated workers, not to it,
+    /// so only the COEP headers of its script response make its embedder policy.
+    coep_only: bool,
+    /// The worker is not a secure context: HTML "obtain an embedder policy" gives its script response the
+    /// default policy, whatever the response says.
+    insecure: bool,
 }
 
 /// The script and, when it was fetched, its response's URL.
 fn load_main_script(page: &Rc<PageDom>, start: &WorkerStart) -> (Option<String>, Option<pyro_net::Url>) {
-    let main = MainRequest { referrer: start.referrer.clone(), response_url: RefCell::new(None) };
+    let main = MainRequest {
+        referrer: start.referrer.clone(),
+        response_url: RefCell::new(None),
+        inherit_embedder: !start.shared_worker && (start.embedder_reporting.dip || start.embedder_reporting.report_only_dip),
+        coep_only: start.shared_worker,
+        insecure: !(pyro_net::is_potentially_trustworthy_url(&start.url) && (start.creator_secure || start.shared_worker || start.service.is_some())),
+    };
     let script = load_main_bytes(page, start, &main).map(|bytes| script_text(&bytes));
     (script, main.response_url.take())
 }
@@ -852,7 +989,15 @@ fn load_main_bytes(page: &Rc<PageDom>, start: &WorkerStart, main: &MainRequest) 
             if let Some(guard) = &start.csp.guard {
                 post_violations(start.id, &start.poster, guard.take_violations());
             }
-            let (bytes, mime) = fetched.ok()?;
+            let (bytes, mime, response_url) = fetched.ok()?;
+            // HTML "run a worker": a dedicated worker whose script's embedder policy is not
+            // compatible with its owner's is a failure to load (the owner's `require-corp` or
+            // `credentialless` needs the worker's own), and the owner reports it.
+            if let Some(owner) = start.owner_embedder.as_ref().filter(|_| start.service.is_none()) {
+                if matches!(response_url.scheme(), "http" | "https") && !owner_accepts_worker(owner, &start.url, page.embedder_policy()) {
+                    return None;
+                }
+            }
             // A module worker's script is a module script: strict MIME
             // checking (HTML "fetch a single module script").
             if start.module && crate::module_script::mime_error(pyro_js::ModuleType::JavaScript, &mime, "").is_some() {
@@ -862,6 +1007,32 @@ fn load_main_bytes(page: &Rc<PageDom>, start: &WorkerStart, main: &MainRequest) 
         }
     };
     Some(bytes)
+}
+
+/// HTML "check a global object's embedder policy" for a dedicated or shared worker whose script response has the
+/// embedder policy `worker`: a policy that is not `unsafe-none` needs the worker's to be one too. The
+/// owner reports a mismatch of its report-only policy (`reporting`) and one of its enforced policy
+/// (`enforce`, which fails the worker); whether the worker may run is the second.
+fn owner_accepts_worker(owner: &OwnerEmbedder, url: &pyro_net::Url, worker: pyro_net::EmbedderPolicy) -> bool {
+    let compatible = |owner: pyro_net::EmbedderPolicy| owner == pyro_net::EmbedderPolicy::UnsafeNone || worker != pyro_net::EmbedderPolicy::UnsafeNone;
+    let report = |report_only: bool| {
+        if let Some(report) = &owner.report {
+            (report.sink)(pyro_net::CorpViolation {
+                kind: "worker initialization",
+                blocked_url: url.as_str().to_owned(),
+                destination: None,
+                report_only,
+            });
+        }
+    };
+    if !compatible(owner.report_only) {
+        report(true);
+    }
+    let accepted = compatible(owner.policy);
+    if !accepted {
+        report(false);
+    }
+    accepted
 }
 
 /// The credentials mode of a worker's main script and module fetches.
@@ -895,11 +1066,27 @@ fn run_script(state: &WorkerLoop, script: &(String, String), module: bool) -> bo
     let Ok(s) = state.realm.scope() else { return false };
     sync_compile_gate(&s, state);
     if !module {
-        if let Err(e) = s.eval(&script.0, Some(&script.1), 1) {
-            s.report_exception(&e);
-            return false;
-        }
-        return true;
+        // HTML "run a classic script": the exception is reported before the clean-up's microtask
+        // checkpoint, so the evaluation and the report share one script frame (the checkpoint
+        // follows the report; WPT microtasks/evaluation-order-1-throw-importScripts).
+        let (source, name) = (script.0.clone(), script.1.clone());
+        let ok = s.in_script_frame(move |s| match s.eval(&source, Some(&name), 1) {
+            Ok(_) => true,
+            Err(e) => {
+                s.report_exception(&e);
+                false
+            }
+        });
+        return match ok {
+            Ok(ok) => ok,
+            Err(_) => match s.eval(&script.0, Some(&script.1), 1) {
+                Ok(_) => true,
+                Err(e) => {
+                    s.report_exception(&e);
+                    false
+                }
+            },
+        };
     }
     // A module's graph loads, then it evaluates: an import that fails or a
     // throw at its top level rejects the evaluation promise, which reports
@@ -1044,6 +1231,10 @@ struct WorkerModuleFetcher {
     graph: Rc<GraphPhase>,
     id: u64,
     poster: RemotePoster,
+    /// The referrer policy of the worker's creator (its `new Worker` or `new SharedWorker` call's
+    /// document): the top-level graph's static imports are fetched under it, an `import()`
+    /// under the worker script's own `Referrer-Policy`.
+    owner_policy: Option<pyro_net::ReferrerPolicy>,
 }
 
 /// Violations of the owner's CSP found on the worker's thread go to the owner's document.
@@ -1140,6 +1331,11 @@ impl pyro_js::ModuleFetcher for WorkerModuleFetcher {
         let (page, net, shared, in_flight, credentials) =
             (self.page.clone(), self.net.clone(), self.shared.clone(), self.in_flight.clone(), self.credentials);
         let (csp, id, poster) = (self.csp.clone(), self.id, self.poster.clone());
+        // HTML "fetch the descendants of a module script" / HostLoadImportedModule: the request's
+        // referrer is the importing script's URL; its policy the creator's for a static import
+        // and the worker script's own for an `import()`.
+        let referrer_url = request.referrer_url().and_then(|u| pyro_net::Url::parse(&u).ok());
+        let owner_policy = self.owner_policy;
         let request = RefCell::new(Some(request));
         self.sched.post(TaskSource::Networking, move |_| {
             // Every request of the fetch, taken out before any completes: one
@@ -1178,6 +1374,13 @@ impl pyro_js::ModuleFetcher for WorkerModuleFetcher {
                                                 pyro_js::ModuleType::Text => Destination::Text,
                                                 _ => Destination::Script,
                                             };
+                                            let policy = match graph_request {
+                                                GraphRequest::Dynamic => page.referrer_policy(),
+                                                _ => owner_policy.unwrap_or_else(|| page.referrer_policy()),
+                                            };
+                                            let import = referrer_url
+                                                .clone()
+                                                .map(|url| MainRequest { referrer: Some((url, policy)), response_url: RefCell::new(None), inherit_embedder: false, coep_only: false, insecure: false });
                                             fetch_script(
                                                 &page,
                                                 &net,
@@ -1188,9 +1391,10 @@ impl pyro_js::ModuleFetcher for WorkerModuleFetcher {
                                                 RequestMode::Cors,
                                                 credentials,
                                                 false,
-                                                None,
+                                                import.as_ref(),
                                                 guard.clone(),
                                             )
+                                            .map(|(bytes, mime, _)| (bytes, mime))
                                         }
                                     };
                                     // The guard's findings go where its policy is: the owner's
@@ -1266,7 +1470,7 @@ fn fetch_script(
     main: bool,
     main_request: Option<&MainRequest>,
     csp: Option<Arc<pyro_net::csp::RequestCsp>>,
-) -> Result<(Bytes, String), String> {
+) -> Result<(Bytes, String, pyro_net::Url), String> {
     let mut request = Request::get(url, destination);
     request.mode = mode;
     request.credentials = credentials;
@@ -1285,6 +1489,7 @@ fn fetch_script(
     });
     // An imported script is in the worker's timeline (the main one is in
     // its document's); the entry is added when the timeline is next read.
+    let request_url = request.url.clone();
     let sink = if main {
         sink
     } else {
@@ -1294,11 +1499,14 @@ fn fetch_script(
     let id = net.fetch(request, sink);
     let mut body: Vec<u8> = Vec::new();
     let mut mime = String::new();
+    // The response's URL after redirects (a script that ends cross-origin is "muted").
+    let mut final_url: Option<pyro_net::Url> = None;
     loop {
         match rx.recv_timeout(CLOSING_POLL) {
             Ok(ResponseEvent::Redirect { .. }) => {}
             Ok(ResponseEvent::Response(head)) => {
                 mime = head.mime.clone();
+                final_url = Some(head.url.clone());
                 if !head.status.is_success() && !matches!(head.kind, ResponseKind::Opaque) {
                     net.cancel(id);
                     return Err(format!("HTTP status {}", head.status.as_u16()));
@@ -1315,6 +1523,17 @@ fn fetch_script(
                     *main_request.response_url.borrow_mut() = Some(head.url.clone());
                 }
                 if main {
+                    // The worker global's embedder policy is its script response's (HTML "run a
+                    // worker"); a `data:` script's stays its owner's.
+                    if matches!(head.url.scheme(), "http" | "https") && !main_request.is_some_and(|m| m.inherit_embedder || m.insecure) {
+                        let (policy, reporting) = if main_request.is_some_and(|m| m.coep_only) {
+                            crate::coep_report::obtain_coep(&head.headers, &head.url)
+                        } else {
+                            crate::coep_report::obtain_embedder(&head.headers, &head.url)
+                        };
+                        page.set_embedder_policy(policy);
+                        page.set_embedder_reporting(reporting);
+                    }
                     page.set_referrer_policy_header(pyro_net::ReferrerPolicy::from_header(
                         head.headers.get_all("referrer-policy").iter().filter_map(|v| v.to_str().ok()),
                     ));
@@ -1327,10 +1546,26 @@ fn fetch_script(
                     if !enforce.is_empty() || !report_only.is_empty() {
                         let _ = page.dom.borrow_mut().set_trusted_types_policies(page.document(), &enforce, &report_only);
                     }
+                    // ... and its `Connection-Allowlist`, which governs the worker's own requests.
+                    let header = |name: &str| {
+                        let values: Vec<&str> = head.headers.get_all(name).iter().filter_map(|v| v.to_str().ok()).collect();
+                        (!values.is_empty()).then(|| values.join(", "))
+                    };
+                    let (allow, allow_report_only) = (header("connection-allowlist"), header("connection-allowlist-report-only"));
+                    if allow.is_some() || allow_report_only.is_some() {
+                        page.set_connection_allowlist(pyro_net::connection_allowlist::ConnectionPolicy::from_headers(
+                            allow.as_deref(),
+                            allow_report_only.as_deref(),
+                            &head.url,
+                        ));
+                    }
                 }
             }
             Ok(ResponseEvent::Data(bytes)) => body.extend_from_slice(&bytes),
-            Ok(ResponseEvent::Finished { .. }) => return Ok((Bytes::from(body), mime)),
+            Ok(ResponseEvent::Finished { .. }) => {
+                let url = final_url.unwrap_or_else(|| request_url.clone());
+                return Ok((Bytes::from(body), mime, url));
+            }
             Ok(ResponseEvent::Failed(error)) => return Err(error.to_string()),
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 if shared.closing.load(Ordering::Acquire) {
@@ -1451,6 +1686,22 @@ impl JsClass for WorkerGlobalScope {
             },
             |s, g, v| crate::lazy_module::replace(s, &g.target.page, "Notification", v),
         );
+        // `Permissions` and `PermissionStatus` are exposed to workers too.
+        macro_rules! permission_interface {
+            ($name:literal) => {
+                def.global_value_accessor(
+                    $name,
+                    |s, g| {
+                        let value = crate::navigator_extras::member(s, &g.target.page, $name)?;
+                        crate::lazy_module::replace(s, &g.target.page, $name, value)?;
+                        Ok(value)
+                    },
+                    |s, g, v| crate::lazy_module::replace(s, &g.target.page, $name, v),
+                );
+            };
+        }
+        permission_interface!("Permissions");
+        permission_interface!("PermissionStatus");
         // [Replaceable] (WindowOrWorkerGlobalScope): assignment shadows it
         // with an own data property; the realm's origin is left as it is.
         def.accessor(
@@ -1486,6 +1737,7 @@ impl JsClass for WorkerGlobalScope {
         crate::observable::define_globals(def);
         crate::scheduler::define_global(def);
         crate::canvas::define_worker_globals(def);
+        crate::media_capabilities::define_globals(def);
         // CSS Font Loading: `FontFace` and the worker's `FontFaceSet`.
         crate::font_loading::define_globals(def);
         crate::typed_om::define_globals(def);
@@ -1538,7 +1790,9 @@ impl JsClass for WorkerGlobalScope {
             }
             let mut urls = Vec::with_capacity(a.len());
             for value in a.iter() {
-                let input = value.to_string()?;
+                // Trusted Types (importScripts step 1): every argument is made a compliant TrustedScriptURL
+                // string under the worker's own policies before anything is fetched.
+                let input = crate::trusted_types::compliant_string(s, &g.target.page, crate::trusted_types::Kind::ScriptUrl, value, "WorkerGlobalScope importScripts", false)?;
                 let url = g.url.join(&input).map_err(|_| {
                     JsError::dom(
                         "SyntaxError",
@@ -1562,7 +1816,7 @@ impl JsClass for WorkerGlobalScope {
                     )
                 })?;
                 let fetched = match page.blob_url(&name) {
-                    Some((bytes, _)) => Ok(bytes),
+                    Some((bytes, _)) => Ok((bytes, None)),
                     None => fetch_script(
                         page,
                         &net,
@@ -1576,19 +1830,49 @@ impl JsClass for WorkerGlobalScope {
                         None,
                         guard.clone(),
                     )
-                    .map(|(b, _)| b),
+                    .map(|(b, mime, final_url)| (b, Some((mime, final_url)))),
                 };
                 crate::csp::report_guard(page, guard.as_ref(), None);
-                let bytes = fetched.map_err(|e| {
+                let (bytes, response) = fetched.map_err(|e| {
                     JsError::dom(
                         "NetworkError",
                         format!("Failed to execute 'importScripts': The script at '{name}' failed to load: {e}."),
                     )
                 })?;
-                scripts.push((script_text(&bytes), name));
+                // HTML issue 3255 (and Chrome): an imported script needs a JavaScript
+                // MIME type; text/html, text/plain, application/octet-stream ... fail.
+                // A response without a Content-Type is let through, as before.
+                let mut muted = false;
+                if let Some((mime, final_url)) = &response {
+                    // A service worker's imports must have a JavaScript MIME type, an absent one fails too.
+                    let sw = s.global_data::<ServiceWorkerGlobalScope>().is_some();
+                    if (!mime.is_empty() || sw) && !pyro_net::is_javascript_mime(mime) {
+                        return Err(JsError::dom(
+                            "NetworkError",
+                            format!("Failed to execute 'importScripts': The script at '{name}' failed to load: MIME type ('{mime}') is not executable."),
+                        ));
+                    }
+                    // A script whose response ended cross-origin has muted errors.
+                    // (Only a response from another http(s) origin: a `data:` or `blob:` script is
+                    // CORS-same-origin, its errors are the script's own; WPT importScripts/004, 006.)
+                    muted = matches!(final_url.scheme(), "http" | "https") && !pyro_net::cors::same_origin(final_url, &g.url);
+                }
+                scripts.push((script_text(&bytes), name, muted));
             }
-            for (text, name) in scripts {
-                s.eval(&text, Some(&name), 1)?;
+            for (text, name, muted) in scripts {
+                match s.eval(&text, Some(&name), 1) {
+                    // HTML "run a classic script", rethrow errors: a muted script's
+                    // error is a NetworkError, so nothing of it leaks (step 8.2).
+                    Err(JsError::Terminated) => return Err(JsError::Terminated),
+                    Err(_) if muted => {
+                        return Err(JsError::dom(
+                            "NetworkError",
+                            format!("Failed to execute 'importScripts' on 'WorkerGlobalScope': The script at '{name}' failed to load."),
+                        ));
+                    }
+                    Err(e) => return Err(e),
+                    Ok(_) => {}
+                }
             }
             Ok(s.undefined())
         });
@@ -1765,7 +2049,9 @@ impl JsClass for WorkerNavigator {
         def.getter("language", |s, _ua| Ok(s.string("en-US")));
         def.getter("locks", |s, _ua| crate::web_locks::locks(s, &crate::target::page_of(s)?));
         def.getter("storage", |s, _ua| crate::storage_manager::storage(s, &crate::target::page_of(s)?));
+        def.getter("permissions", |s, _ua| crate::navigator_extras::member(s, &crate::target::page_of(s)?, "permissions"));
         def.getter("storageBuckets", |s, _ua| crate::storage_buckets::manager(s, &crate::target::page_of(s)?));
+        def.getter("mediaCapabilities", |s, _ua| crate::media_capabilities::media_capabilities(s, &crate::target::page_of(s)?));
     }
 }
 
@@ -1931,6 +2217,10 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>, global: &str) -> JsResult<()> {
             crate::image_decoder::install_worker(s)?;
         }
         crate::storage_buckets::install_worker(s)?;
+        // `[Exposed=(DedicatedWorker,SharedWorker,Window)]`.
+        if s.global_data::<DedicatedWorkerGlobalScope>().is_some() || s.global_data::<SharedWorkerGlobalScope>().is_some() {
+            crate::pressure::install_worker(s)?;
+        }
     } else if let Some(class) = s.global().get_atom("WorkerNavigator")?.as_object() {
         if let Some(proto) = class.get_atom("prototype")?.as_object() {
             proto.delete("locks")?;

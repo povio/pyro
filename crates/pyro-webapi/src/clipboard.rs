@@ -102,6 +102,17 @@ fn selected(page: &Rc<PageDom>, source: &Source) -> Option<(String, Option<Strin
     Some((text, html))
 }
 
+/// The selected text of the focused text control (`Selection.toString()` reports it, as Chrome does: the user selected
+/// text in a control, whose selection the document's own selection does not hold); `None` when no control is focused or
+/// its selection is empty.
+pub(crate) fn focused_control_selection(page: &Rc<PageDom>) -> Option<String> {
+    let src = source(page);
+    match src {
+        Source::Control(_) => selected(page, &src).map(|(text, _)| text),
+        _ => None,
+    }
+}
+
 fn write(page: &PageDom, items: Vec<(String, String)>) {
     page.context_services().write_clipboard_strings(items);
 }

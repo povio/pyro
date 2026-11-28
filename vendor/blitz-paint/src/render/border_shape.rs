@@ -394,6 +394,34 @@ impl ElementCx<'_, '_> {
         })
     }
 
+    /// pyro: whether `p` (device px from the border box's origin) is in the element's own box as
+    /// painted: the outer edge of its `border-shape` (the shape grown by half the stroke with
+    /// one), else the border box with its rounded or shaped corners (`border-radius`,
+    /// `corner-shape`); `true` for a plain rectangle.
+    pub(super) fn own_shape_contains(&self, p: Point) -> bool {
+        if let Some(shape) = self.border_shape() {
+            return super::clip_path::path_contains(&shape.outer_path(), Fill::NonZero, p);
+        }
+        if !self.frame.has_border_radius() {
+            return true;
+        }
+        super::clip_path::path_contains(&self.frame.border_box_path(), Fill::NonZero, p)
+    }
+
+    /// pyro: whether `p` (device px from the border box's origin) is in what the element's
+    /// `border-shape` leaves of the content its `overflow` clips: the shape's inner edge (what
+    /// clips the overflow); `true` without a shape, or when `overflow` is `visible`.
+    pub(super) fn overflow_shape_contains(&self, p: Point) -> bool {
+        use style::values::computed::Overflow;
+        let Some(shape) = self.border_shape() else { return true };
+        if matches!(self.style.clone_overflow_x(), Overflow::Visible)
+            && matches!(self.style.clone_overflow_y(), Overflow::Visible)
+        {
+            return true;
+        }
+        super::clip_path::path_contains(&shape.inner_path(), Fill::NonZero, p)
+    }
+
     /// The box a `border-shape` shape is drawn in (CSS px from the border box's origin):
     /// `half-border-box` is the border box less half of each border width; `fill-box` is the
     /// content box and `stroke-box` and `view-box` the border box, as for `clip-path`.

@@ -79,37 +79,20 @@ pub enum Resize {
     Both,
     Horizontal,
     Vertical,
+    // pyro: the logical values stay logical in the computed value (Chromium and css-logical-1
+    // "resize": the resolved value is `block`/`inline`); nothing in layout reads `resize`.
+    Inline,
+    Block,
 }
 
 impl ToComputedValue for specified::Resize {
     type ComputedValue = Resize;
 
     #[inline]
-    fn to_computed_value(&self, context: &Context) -> Resize {
-        let is_vertical = context.style().writing_mode.is_vertical();
+    fn to_computed_value(&self, _context: &Context) -> Resize {
         match self {
-            specified::Resize::Inline => {
-                context
-                    .rule_cache_conditions
-                    .borrow_mut()
-                    .set_writing_mode_dependency(context.builder.writing_mode);
-                if is_vertical {
-                    Resize::Vertical
-                } else {
-                    Resize::Horizontal
-                }
-            },
-            specified::Resize::Block => {
-                context
-                    .rule_cache_conditions
-                    .borrow_mut()
-                    .set_writing_mode_dependency(context.builder.writing_mode);
-                if is_vertical {
-                    Resize::Horizontal
-                } else {
-                    Resize::Vertical
-                }
-            },
+            specified::Resize::Inline => Resize::Inline,
+            specified::Resize::Block => Resize::Block,
             specified::Resize::None => Resize::None,
             specified::Resize::Both => Resize::Both,
             specified::Resize::Horizontal => Resize::Horizontal,
@@ -124,6 +107,8 @@ impl ToComputedValue for specified::Resize {
             Resize::Both => specified::Resize::Both,
             Resize::Horizontal => specified::Resize::Horizontal,
             Resize::Vertical => specified::Resize::Vertical,
+            Resize::Inline => specified::Resize::Inline,
+            Resize::Block => specified::Resize::Block,
         }
     }
 }
@@ -195,7 +180,10 @@ impl ToAnimatedValue for Zoom {
 
     #[inline]
     fn from_animated_value(animated: Self::AnimatedValue) -> Self {
-        Zoom(animated.max(0.0))
+        // A value at or below zero (an extrapolated zoom) computes to 1, as `zoom: 0` does, not to the
+        // `document` keyword that `0` stands for (WPT css-viewport `animations/zoom-interpolation`).
+        let n = animated.max(0.0);
+        if n == 0.0 { Zoom::ONE } else { Zoom(n) }
     }
 }
 

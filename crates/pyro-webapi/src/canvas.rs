@@ -154,6 +154,17 @@ pub(crate) fn rect_value<'s>(s: &Scope<'s>, page: &Rc<PageDom>, readonly: bool, 
     MODULE.helper(s, page, "rectValue", &[s.number(rect.x), s.number(rect.y), s.number(rect.width), s.number(rect.height), s.boolean(readonly)])
 }
 
+/// A `SVGRect` (`getBBox()`, `createSVGRect()`): a DOMRect whose members take finite numbers only.
+pub(crate) fn svg_rect_value<'s>(s: &Scope<'s>, page: &Rc<PageDom>, rect: pyro_dom::layout::Rect) -> JsResult<Value<'s>> {
+    MODULE.helper(s, page, "svgRectValue", &[s.number(rect.x), s.number(rect.y), s.number(rect.width), s.number(rect.height)])
+}
+
+/// The live `SVGRect` of an `SVGAnimatedRect` (`baseVal`, or `animVal` when `animated`): `read` returns
+/// the four numbers and `write(index, number)` sets one.
+pub(crate) fn view_box_rect<'s>(s: &Scope<'s>, page: &Rc<PageDom>, read: Object<'s>, write: Object<'s>, animated: bool) -> JsResult<Value<'s>> {
+    MODULE.helper(s, page, "viewBoxRect", &[read.value(), write.value(), s.boolean(animated)])
+}
+
 pub(crate) fn rect_list<'s>(s: &Scope<'s>, page: &Rc<PageDom>, rects: &[Value<'s>]) -> JsResult<Value<'s>> {
     MODULE.helper(s, page, "rectList", &[s.array(rects)?.value()])
 }
@@ -173,6 +184,15 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         })
     })?;
     natives.set_atom("parseColor", parse.value())?;
+    // `addColorStop`'s color: `[serialization, legacy]` (whether it was written in a legacy color
+    // syntax, from the parser), or null.
+    let parse_stop = s.function("parseStopColor", |s, _this, a| {
+        Ok(match parsed_color(&dom_string(a.get(0))?) {
+            Some(c) => s.array(&[s.string(&c.css), s.boolean(c.legacy)])?.value(),
+            None => s.null(),
+        })
+    })?;
+    natives.set_atom("parseStopColor", parse_stop.value())?;
     let is_blob =
         s.function("isBlob", |s, _this, a| Ok(s.boolean(s.unwrap::<crate::file::Blob>(a.get(0)).is_some())))?;
     natives.set_atom("isBlob", is_blob.value())?;
@@ -192,11 +212,20 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         {
             let mut commits = page.canvas_commits.borrow_mut();
             commits.retain(|c| c.surface.strong_count() > 0);
+            c.placeholder_canvas.set(canvas_of_placeholder(&page, &placeholder));
             commits.push(FrameCommit { surface: Rc::downgrade(&c.surface), clean: c.clean.clone(), placeholder, committed: Cell::new(None) });
         }
         Ok(context.value())
     })?;
     natives.set_atom("offscreenContext", offscreen.value())?;
+    // offscreenElementImageSize(placeholder or null, elementImage or element): HTML-in-Canvas
+    // `OffscreenCanvas.getElementImageDefaultSize`.
+    let element_size = s.function("offscreenElementImageSize", |s, _this, a| {
+        let page = crate::target::page_of(s)?;
+        let canvas = placeholder_of(a.get(0))?.and_then(|placeholder| canvas_of_placeholder(&page, &placeholder));
+        crate::html_in_canvas::offscreen_default_size(s, &page, canvas, a.get(1))
+    })?;
+    natives.set_atom("offscreenElementImageSize", element_size.value())?;
     let resize = s.function("resizeContext", |s, _this, a| {
         if let Some(c) = s.unwrap::<OffscreenCanvasRenderingContext2D>(a.get(0)) {
             let (w, h) = (size_u32(a.get(1).to_number()?), size_u32(a.get(2).to_number()?));
@@ -494,6 +523,9 @@ enum Target {
 pub struct ContextData {
     page: Rc<PageDom>,
     target: Target,
+    /// An OffscreenCanvas of `transferControlToOffscreen`: the placeholder `<canvas>` it draws
+    /// for, the canvas whose ElementImages (and only those) it may draw.
+    placeholder_canvas: Cell<Option<NodeId>>,
     state: RefCell<State>,
     stack: RefCell<Vec<State>>,
     path: RefCell<Path>,
@@ -648,6 +680,7 @@ fn new_context<'s>(
     let data = ContextData {
         page: page.clone(),
         target,
+        placeholder_canvas: Cell::new(None),
         state: RefCell::new(State::new()),
         stack: RefCell::new(Vec::new()),
         path: RefCell::new(Path::default()),
@@ -927,7 +960,11 @@ fn bitmap_triple<'s>(s: &Scope<'s>, handle: ImageHandle) -> JsResult<Value<'s>> 
 fn is_frame_canvas_source(s: &Scope<'_>, value: Value<'_>) -> JsResult<bool> {
     if let Some(node) = s.unwrap::<crate::node::Node>(value) {
         let dom = node.page().dom.borrow();
-        return Ok(dom.element(node.id).is_ok_and(|e| e.is_html() && &*e.name.local == "canvas"));
+        // Image sources whose pixels `image_source` reads: a canvas, an <img>, a <video> (its current frame)
+        // and an SVG <image>.
+        return Ok(dom.element(node.id).is_ok_and(|e| {
+            (e.is_html() && matches!(&*e.name.local, "canvas" | "img" | "video")) || (!e.is_html() && &*e.name.local == "image")
+        }));
     }
     let Some(realm) = value.as_object().and_then(|o| s.object_realm(o)) else { return Ok(false) };
     let home = realm.scope()?;
@@ -1399,6 +1436,9 @@ fn gradient_paint(record: Object<'_>, space: Space) -> JsResult<Option<pyro_canv
     let Some(stops) = record.get_atom("stops")?.as_object() else { return Ok(None) };
     let len = stops.get_atom("length")?.to_number()? as u32;
     let mut list = Vec::with_capacity(len as usize / 2);
+    // A stop written in a non-legacy color syntax (`color()`, `lab()`, `color-mix()`, `rgb(from ...)`)
+    // makes the gradient interpolate in Oklab, as Chrome does; the parser said so when it was added.
+    let oklab = record.get_atom("nonLegacy")?.to_bool();
     for i in (0..len).step_by(2) {
         let offset = stops.get_index(i)?.to_number()? as f32;
         // Stops keep their serialization (currentcolor is black); painted
@@ -1420,7 +1460,7 @@ fn gradient_paint(record: Object<'_>, space: Space) -> JsResult<Option<pyro_canv
         ("conic", 3) => pyro_canvas::GradientKind::Conic { center: p(1), angle: v[0] },
         _ => return Ok(None),
     };
-    Ok(Some(pyro_canvas::Gradient { kind, stops: list }))
+    Ok(Some(pyro_canvas::Gradient { kind, stops: list, oklab }))
 }
 
 fn pattern_paint(record: Object<'_>) -> JsResult<Option<(Paint, bool)>> {
@@ -1666,7 +1706,7 @@ fn layout_text(c: &ContextData, text: &str, state: &State) -> pyro_canvas::text:
 /// loaded faces of the realm's `FontFaceSet` (a document's or a worker's) and, in a document, the
 /// `@font-face` rules whose `url()` source its layout loaded, each only when the list names its
 /// family. The key names the set (no faces: plain layout); the faces are made once per key.
-fn canvas_web_faces(page: &PageDom, family: &str) -> (u64, Rc<Vec<pyro_canvas::text::WebFace>>) {
+pub(crate) fn canvas_web_faces(page: &PageDom, family: &str) -> (u64, Rc<Vec<pyro_canvas::text::WebFace>>) {
     use std::hash::{Hash, Hasher};
     let wanted: Vec<String> = family
         .split(',')
@@ -1769,8 +1809,9 @@ fn draw_image<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResult<Value
     Ok(s.undefined())
 }
 
-/// HTML-in-Canvas `drawElementImage(element, dx, dy)`, `(element, dx, dy, dw, dh)` and
-/// `(element, sx, sy, sw, sh, dx, dy, dw, dh)`: draws a drawable element of this context's
+/// HTML-in-Canvas `drawElementImage(element, dx, dy)`, `(element, dx, dy, dw, dh)`,
+/// `(element, sx, sy, sw, sh, dx, dy)` (the destination as large as the source) and
+/// `(element, sx, sy, sw, sh, dx, dy, dw, dh)`, each with a trailing options dictionary: draws a drawable element of this context's
 /// `<canvas content=drawable>`, painted alone at its CSS size (`crate::html_in_canvas::element_image`,
 /// which throws InvalidStateError for an element it may not draw), as `drawImage` draws a bitmap
 /// (the source rectangle in the element's CSS px). Returns the transform from the element's box to
@@ -1780,7 +1821,7 @@ fn draw_element_image<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResu
     a.require(3, "CanvasRenderingContext2D.drawElementImage")?;
     let mut n = a.len();
     // A trailing DrawElementImageOptions dictionary ({preserveElementGeometry}).
-    let options = (matches!(n, 4 | 6 | 10) && a.get(n - 1).is_object()).then(|| a.get(n - 1));
+    let options = (matches!(n, 4 | 6 | 8 | 10) && a.get(n - 1).is_object()).then(|| a.get(n - 1));
     if options.is_some() {
         n -= 1;
     }
@@ -1788,10 +1829,11 @@ fn draw_element_image<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResu
         Some(o) => o.get("preserveElementGeometry")?.to_bool(),
         None => false,
     };
-    if !matches!(n, 3 | 5) && n < 9 {
-        return Err(JsError::Type(format!("Failed to execute 'drawElementImage' on 'CanvasRenderingContext2D': Valid arities are: [3, 5, 9], but {n} arguments provided.").into()));
+    if !matches!(n, 3 | 5 | 7) && n < 9 {
+        return Err(JsError::Type(format!("Failed to execute 'drawElementImage' on 'CanvasRenderingContext2D': Valid arities are: [3, 5, 7, 9], but {n} arguments provided.").into()));
     }
     // An ElementImage (`captureElementImage`) draws what it captured.
+    let closed = s.unwrap::<crate::html_in_canvas::ElementImageClass>(a.get(0)).is_some_and(|image| image.closed.get());
     let snapshot = s.unwrap::<crate::html_in_canvas::ElementImageClass>(a.get(0)).map(|image| {
         crate::html_in_canvas::ElementImage {
             width: image.width,
@@ -1809,9 +1851,26 @@ fn draw_element_image<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResu
                 .ok_or_else(|| JsError::Type("Failed to execute 'drawElementImage' on 'CanvasRenderingContext2D': parameter 1 is not of type '(Element or ElementImage)'.".into()))?,
         ),
     };
-    let Target::Element(canvas) = c.target else {
+    // The canvas an ElementImage must come from: this context's `<canvas>`, or the placeholder
+    // of an OffscreenCanvas that took its control. A standalone OffscreenCanvas has none.
+    let owner = match c.target {
+        Target::Element(canvas) => Some(canvas),
+        Target::Offscreen => c.placeholder_canvas.get(),
+    };
+    let Some(canvas) = owner else {
         return Err(JsError::dom("InvalidStateError", "Failed to execute 'drawElementImage': The canvas has no drawable content."));
     };
+    if element.is_some() && !matches!(c.target, Target::Element(_)) {
+        return Err(JsError::dom("InvalidStateError", "Failed to execute 'drawElementImage': An Element can only be drawn by the 2D context of its <canvas>."));
+    }
+    if let Some(from) = s.unwrap::<crate::html_in_canvas::ElementImageClass>(a.get(0)).map(|image| image.owner) {
+        if from != crate::html_in_canvas::owner_key(&c.page, canvas) {
+            return Err(JsError::dom("InvalidStateError", "Failed to execute 'drawElementImage': The ElementImage was captured from a different canvas."));
+        }
+    }
+    if closed {
+        return Err(JsError::dom("InvalidStateError", "Failed to execute 'drawElementImage': The ElementImage is closed."));
+    }
     // WebIDL: the numbers are converted (their valueOf run) before the method's steps can throw.
     let v = finite_args_from(&a, 1, if n >= 9 { 8 } else { n - 1 })?;
     let image = match (snapshot, element) {
@@ -1824,12 +1883,16 @@ fn draw_element_image<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResu
     let (src, dst) = match v.len() {
         2 => (Rect::new(0.0, 0.0, w, h), Rect::new(v[0], v[1], v[0] + w, v[1] + h)),
         4 => (Rect::new(0.0, 0.0, w, h), Rect::new(v[0], v[1], v[0] + v[2], v[1] + v[3])),
+        6 => (Rect::new(v[0], v[1], v[0] + v[2], v[1] + v[3]), Rect::new(v[4], v[5], v[4] + v[2], v[5] + v[3])),
         _ => (Rect::new(v[0], v[1], v[0] + v[2], v[1] + v[3]), Rect::new(v[4], v[5], v[4] + v[6], v[5] + v[7])),
     };
+    // A negative width or height moves the rectangle's origin instead of mirroring the element
+    // (Chrome; WPT drawElementImage-dest-rect/-src-rect read the element transform back).
+    let (src, dst) = (src.abs(), dst.abs());
     c.sync_size();
     let state = c.state.borrow().clone();
     // Privacy: what the page must not read back (an image of unknown origin, a nested
-    // document, a visited link) leaves the canvas not origin-clean, as a cross-origin drawImage;
+    // document) leaves the canvas not origin-clean, as a cross-origin drawImage;
     // so does a filter that taints (as drawImage's `filter_taints`).
     if image.taints || state.filter_taints {
         c.clean.set(false);
@@ -2872,6 +2935,8 @@ pub(crate) struct FrameCommit {
 pub(crate) fn commit_frames(page: &PageDom) {
     let Ok(commits) = page.canvas_commits.try_borrow() else { return };
     if commits.is_empty() {
+        drop(commits);
+        sync_placeholder_sizes(page);
         return;
     }
     let mut gone = false;
@@ -2892,6 +2957,53 @@ pub(crate) fn commit_frames(page: &PageDom) {
     if gone {
         page.canvas_commits.borrow_mut().retain(|c| c.surface.strong_count() > 0);
     }
+    sync_placeholder_sizes(page);
+}
+
+/// HTML "update the placeholder canvas" of an OffscreenCanvas resize: the committed frame's size
+/// becomes the placeholder `<canvas>`'s `width` and `height` attributes, a task after the resize
+/// (WPT offscreencanvas.resize). Free without a placeholder.
+fn sync_placeholder_sizes(page: &PageDom) {
+    let resized: Vec<(NodeId, u32, u32)> = {
+        let Ok(list) = page.canvas_placeholders.try_borrow() else { return };
+        list.iter()
+            .filter_map(|(canvas, placeholder)| {
+                let (w, h) = {
+                    let frame = placeholder.frame();
+                    (frame.width, frame.height)
+                };
+                (canvas_size(page, *canvas) != (w, h)).then_some((*canvas, w, h))
+            })
+            .collect()
+    };
+    for (canvas, w, h) in resized {
+        let (cw, ch) = canvas_size(page, canvas);
+        let mut dom = page.dom.borrow_mut();
+        if cw != w {
+            let _ = dom.set_attribute(canvas, "width", &w.to_string());
+        }
+        if ch != h {
+            let _ = dom.set_attribute(canvas, "height", &h.to_string());
+        }
+    }
+}
+
+/// The `width` / `height` setters of an `HTMLCanvasElement` whose control was transferred to an
+/// OffscreenCanvas throw InvalidStateError, even for the value it has (HTML: the IDL setters
+/// check "placeholder canvas element"; the content attributes are not guarded).
+pub(crate) fn ensure_not_placeholder(page: &PageDom, canvas: NodeId, attribute: &str) -> JsResult<()> {
+    if placeholder_frame(page, canvas).is_some() {
+        return Err(JsError::dom(
+            "InvalidStateError",
+            format!("Cannot resize canvas after call to transferControlToOffscreen(): the {attribute} cannot be set."),
+        ));
+    }
+    Ok(())
+}
+
+/// The `<canvas>` whose control was transferred to the OffscreenCanvas `placeholder` belongs to.
+fn canvas_of_placeholder(page: &PageDom, placeholder: &Arc<Placeholder>) -> Option<NodeId> {
+    page.canvas_placeholders.borrow().iter().find(|(_, p)| Arc::ptr_eq(p, placeholder)).map(|(canvas, _)| *canvas)
 }
 
 /// The frame shown on `canvas` if its control was transferred.

@@ -2305,7 +2305,6 @@ affects = "paint"
 type = "Transform"
 initial = "generics::transform::Transform::none()"
 struct = "box"
-extra_prefixes = ["moz:layout.css.prefixes.transforms"]
 flags = "CAN_ANIMATE_ON_COMPOSITOR SCROLL_LINKED_EFFECTIVE"
 spec = "https://drafts.csswg.org/css-transforms/#propdef-transform"
 servo_restyle_damage = "recalculate_overflow"
@@ -4169,7 +4168,7 @@ initial = "computed::MathStyle::Normal"
 
 [math-shift]
 struct = "font"
-engine = "gecko"
+servo_pref = "layout.css.math-properties.enabled"
 spec = "https://w3c.github.io/mathml-core/#the-math-shift"
 animation_type = "discrete"
 affects = "layout"
@@ -4357,6 +4356,16 @@ animation_type = "discrete"
 affects = "layout"
 type = "RubyAlign"
 initial = "computed::RubyAlign::SpaceAround"
+
+# pyro: css-ruby-1 `ruby-overhang` (parsed and computed; ruby layout does not read it).
+[ruby-overhang]
+struct = "inherited_text"
+servo_pref = "layout.css.ruby.enabled"
+spec = "https://drafts.csswg.org/css-ruby-1/#propdef-ruby-overhang"
+animation_type = "discrete"
+affects = "layout"
+type = "RubyOverhang"
+initial = "computed::RubyOverhang::Auto"
 
 [text-combine-upright]
 struct = "inherited_text"

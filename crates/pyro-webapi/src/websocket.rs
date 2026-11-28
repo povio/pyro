@@ -238,7 +238,11 @@ fn deliver(key: u64, event: WsEvent) {
             drop(socket.handshake_abort.borrow_mut().take());
             // The handshake's cookies become visible to script now.
             if let Some(page) = socket.page.upgrade() {
-                if let Some(net) = page.net.borrow().as_ref() {
+                // The handshake's cookies of a third party without storage access are not stored.
+                let mut http_url = socket.url.clone();
+                let _ = http_url.set_scheme(if socket.url.scheme() == "wss" { "https" } else { "http" });
+                let blocked = page.cookie_blocking().is_some_and(|b| b.blocks(&http_url));
+                if let Some(net) = page.net.borrow().as_ref().filter(|_| !blocked) {
                     net.store_websocket_cookies_for(&socket.url, &headers, socket.top_level_site.as_deref(), socket.cookie_site);
                 }
             }
@@ -366,6 +370,12 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
                 .and_then(|u| pyro_net::Url::parse(&u).ok())
                 .map_or_else(|| "null".into(), |u| u.origin().ascii_serialization())
         });
+        // Upgrade Insecure Requests §3.3: a `ws:` URL of a context with the directive connects as `wss:`.
+        let mut conn_url = url.clone();
+        if conn_url.scheme() == "ws" && page.insecure_policy().upgrade {
+            let _ = conn_url.set_scheme("wss");
+        }
+        let url = conn_url;
         let mut http_url = url.clone();
         let _ = http_url.set_scheme(if url.scheme() == "wss" { "https" } else { "http" });
         // Mixed content: a secure context only opens secure connections.

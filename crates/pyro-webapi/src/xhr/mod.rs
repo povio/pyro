@@ -284,7 +284,7 @@ fn define_members<C: JsClass<Data = XhrData, Parent = EventTarget>>(def: &mut Cl
         bytes.extend(value.chars().map(|c| c as u8));
         request.headers.insert(
             key,
-            HeaderValue::from_bytes(&bytes).map_err(|_| JsError::dom("SyntaxError", "Invalid header value"))?,
+            crate::headers::request_header_value(bytes).ok_or_else(|| JsError::dom("SyntaxError", "Invalid header value"))?,
         );
         Ok(s.undefined())
     });
@@ -390,7 +390,11 @@ fn define_members<C: JsClass<Data = XhrData, Parent = EventTarget>>(def: &mut Cl
     });
     def.method("getAllResponseHeaders", 0, |s, d, _| {
         let mut out = String::new();
-        for (name, value) in d.state.headers() {
+        // The spec sorts by the byte order of the lowercased name; Chrome (and xhr/getallresponseheaders.htm,
+        // "__custom" after "foo-test") orders by the uppercased one, which puts '_' after the letters.
+        let mut headers = d.state.headers();
+        headers.sort_by_key(|(name, _)| name.to_ascii_uppercase());
+        for (name, value) in headers {
             out.push_str(&name);
             out.push_str(": ");
             out.push_str(&value);
@@ -507,10 +511,10 @@ impl Xhr {
         let method = crate::headers::byte_string(args.get(0))?;
         let url = dom_string(args.get(1))?;
         let asynchronous = args.len() < 3 || args.get(2).to_bool();
-        let username =
-            if args.get(3).is_null() || args.get(3).is_undefined() { String::new() } else { dom_string(args.get(3))? };
-        let password =
-            if args.get(4).is_null() || args.get(4).is_undefined() { String::new() } else { dom_string(args.get(4))? };
+        // XHR open() steps 11-12: a non-null user name / password is set on the URL (a null one
+        // leaves what the URL had).
+        let username = if args.get(3).is_null() || args.get(3).is_undefined() { None } else { Some(dom_string(args.get(3))?) };
+        let password = if args.get(4).is_null() || args.get(4).is_undefined() { None } else { Some(dom_string(args.get(4))?) };
         let page = self.page()?;
         let upper = method.to_ascii_uppercase();
         let method =
@@ -529,14 +533,18 @@ impl Xhr {
         if !asynchronous && !self.worker && (self.timeout.get() != 0 || !self.response_type.borrow().is_empty()) {
             return Err(sync_access("A synchronous request cannot have a timeout or a responseType"));
         }
-        // Credentials go into the URL (open() steps 11-12); the network
-        // layer does not send them yet (documented gap).
-        if !username.is_empty() || !password.is_empty() {
+        // Credentials go into the URL (open() steps 11-12); the network layer sends them when the
+        // server challenges (pyro-net `run`).
+        if username.is_some() || password.is_some() {
             if url.cannot_be_a_base() {
                 return Err(JsError::dom("SyntaxError", "Invalid URL"));
             }
-            let _ = url.set_username(&username);
-            let _ = url.set_password(if password.is_empty() { None } else { Some(&password) });
+            if let Some(username) = &username {
+                let _ = url.set_username(username);
+            }
+            if let Some(password) = &password {
+                let _ = url.set_password(Some(password));
+            }
         }
         self.generation.set(self.generation.get().checked_add(1).expect("XHR generation exhausted"));
         self.stop();
@@ -610,6 +618,10 @@ impl Xhr {
             return Err(invalid("XHR was reopened during body conversion"));
         }
         let page = self.page()?;
+        // Permissions Policy `sync-xhr`: a document's synchronous send fails as a network error.
+        if self.synchronous.get() && !self.worker && !crate::permissions_policy::check_feature(s, &page, "sync-xhr") {
+            return Err(JsError::dom("NetworkError", "Synchronous XMLHttpRequest is disabled by permissions policy"));
+        }
         // Referrer "client": the document, under its referrer policy.
         request.referrer = page.client_referrer();
         request.referrer_policy = page.referrer_policy();
@@ -714,7 +726,7 @@ impl Xhr {
             false,
             sink,
         );
-        net.fetch_with_id(id, request, sink);
+        crate::service_worker::route_blocking(page, net, id, request, sink);
         let timeout = Some(self.timeout.get()).filter(|t| *t != 0).map(|t| Duration::from_millis(t as u64));
         let deadline = Instant::now() + timeout.unwrap_or(SYNC_WAIT).min(SYNC_WAIT);
         let watch = page.xhr_state.sync_watch.borrow().is_some();

@@ -1,7 +1,7 @@
 // The Navigation API (`window.navigation`) for one realm, made on its first
 // use. `native` reaches the frame's session history (nav.rs):
 //   watch(hook): hook('navigate', type, url, hashChange, cancelable,
-//     canIntercept, destinationKey, formData, sourceElement) fires
+//     canIntercept, destinationKey, formData, sourceElement, userInitiated, sameDocument) fires
 //     `navigate` for a navigation the
 //     page started some other way (link, location, history, traversal) and
 //     returns 'proceed', 'cancel' or 'intercept'; hook('commit', type) follows
@@ -10,10 +10,18 @@
 //   resolve(url) -> absolute URL (SyntaxError otherwise)
 //   navigate(url, replace, stateJSON) -> whether it stayed in the document
 //   commit(url, type, stateJSON): an intercepted navigation's commit
+//     (JS drives the commit of a navigation with a `precommitHandler`: its `navigate` hook
+//     answers 'cancel' so that nothing happens natively, and this commits when the handlers
+//     fulfilled; a traversal is queued again with traverse(key) and its hook answers 'intercept')
+//   hook('stop') follows window.stop().
+//   disabled() -> HTML "has entries and events disabled" (initial about:blank, opaque origin);
+//   opaque(); initialBlank(); inUnload() -> the document is being unloaded.
+//   dispatchTrusted(target, event): delivers an event of this script's making as a trusted one.
 //   reload(); traverse(key) -> 'missing' | 'current' | 'queued';
-//   updateState(stateJSON); reportException(error).
+//   updateState(stateJSON, entryId?); reportException(error);
+//   activation() -> null | [type, entryKey, entryId, entryUrl, null | [key, id, url, stateJSON]].
 // Navigation API state is kept as JSON, as history.state is. Events are made
-// by this script, so their isTrusted is false.
+// by this script and delivered by `native.dispatchTrusted` (their isTrusted is true).
 (function (native) {
   'use strict';
   const token = Symbol('pyro');
@@ -22,6 +30,7 @@
   const EventTargetC = EventTarget;
   const EventC = Event;
   const ErrorEventC = ErrorEvent;
+  const HTMLElementC = HTMLElement;
   const AbortControllerC = AbortController;
   const DOMExceptionC = DOMException;
   const PromiseC = Promise;
@@ -31,7 +40,9 @@
   const ArrayFromKeys = (map) => Array.from(map.keys());
   const stringify = JSON.stringify;
   const addListener = EventTargetC.prototype.addEventListener;
-  const dispatch = EventTargetC.prototype.dispatchEvent;
+  // The user agent's own events (`navigate`, `navigatesuccess`, ...) are trusted: not
+  // `EventTarget.prototype.dispatchEvent`, which untrusts them.
+  const dispatch = (target, event) => native.dispatchTrusted(target, event);
   const illegal = (name) => new TypeErrorC(`Failed to construct '${name}': Illegal constructor`);
   const tag = (C, name) => defineProperty(C.prototype, Symbol.toStringTag, { value: name, configurable: true });
   const ownTag = (o, name) => defineProperty(o, Symbol.toStringTag, { value: name, configurable: true });
@@ -99,7 +110,7 @@
       return native.active() ? entryData.get(this).row.id : '';
     }
     get url() {
-      return native.active() ? entryData.get(this).row.url : null;
+      return native.active() ? entryData.get(this).row.url : '';
     }
     get index() {
       return native.active() ? snapshot().list.indexOf(this) : -1;
@@ -114,6 +125,7 @@
   handlerAttributes(NavigationHistoryEntry, ['dispose'], (o) => entryData.get(o));
   tag(NavigationHistoryEntry, 'NavigationHistoryEntry');
 
+  const removedEntries = [];
   const snapshot = () => {
     const raw = native.entries();
     const rows = [];
@@ -122,7 +134,13 @@
       rows.push({ key: r[0], id: r[1], url: r[2], same: r[3], state: r[4] });
     }
     const ids = new Set(rows.map((r) => r.id));
-    for (const id of ArrayFromKeys(entryObjects)) if (!ids.has(id)) entryObjects.delete(id);
+    // An entry that left the list is disposed: its `dispose` event is fired by `flushDisposals`.
+    for (const id of ArrayFromKeys(entryObjects)) {
+      if (!ids.has(id)) {
+        removedEntries.push(entryObjects.get(id));
+        entryObjects.delete(id);
+      }
+    }
     const list = rows.map((row) => {
       let o = entryObjects.get(row.id);
       if (o === undefined) {
@@ -138,6 +156,12 @@
   const current = () => {
     const { index, list } = snapshot();
     return index >= 0 ? list[index] : null;
+  };
+  // HTML "update the navigation API entries for a same-document navigation": the entries a push, a
+  // replace or a traversal removed are disposed after `currententrychange`.
+  const flushDisposals = () => {
+    snapshot();
+    while (removedEntries.length > 0) dispatch(removedEntries.shift(), new EventC('dispose'));
   };
 
   // ----- destination, events, transition -----------------------------------
@@ -158,8 +182,12 @@
     get id() {
       return native.active() ? destinationData.get(this).id : '';
     }
+    // The index of the destination entry in the entries list, -1 once that entry is gone (a
+    // replace or a push removed it): read when asked.
     get index() {
-      return native.active() ? destinationData.get(this).index : -1;
+      if (!native.active()) return -1;
+      const { id } = destinationData.get(this);
+      return id === '' ? -1 : snapshot().list.findIndex((e) => entryData.get(e).row.id === id);
     }
     get sameDocument() {
       return destinationData.get(this).sameDocument;
@@ -172,11 +200,14 @@
 
   const eventData = new WeakMap();
   const NAVIGATION_TYPES = ['push', 'replace', 'reload', 'traverse'];
-  // HTML "process scroll behavior". Only a traversal's is done here (its restore was
-  // suppressed when it was intercepted); push, replace and reload keep the scroll of commit.
+  // HTML "process scroll behavior". A traversal's restore was suppressed when it was
+  // intercepted, so it is done here; a push, replace or reload (Chrome: also the reload, whatever
+  // its saved scroll position) scrolls to the destination URL's fragment, or to the top of the
+  // document when there is none or no element is indicated.
   const processScroll = (d) => {
     d.interception = 'scrolled';
     if (d.navigationType === 'traverse') native.restoreScroll();
+    else native.scrollToFragment(d.destination.url);
   };
   class NavigateEvent extends EventC {
     constructor(type, init) {
@@ -210,10 +241,13 @@
         hasUAVisualTransition: !!init.hasUAVisualTransition,
         sourceElement: init.sourceElement ?? null,
         handlers: [],
+        precommit: [],
+        trusted: false,
         dispatching: false,
         // HTML NavigateEvent "interception state" and "scroll behavior".
         interception: 'none',
         scrollBehavior: null,
+        focusReset: null,
       });
     }
     intercept(options) {
@@ -221,6 +255,10 @@
       if (d === undefined) throw new TypeErrorC('Illegal invocation');
       if (!native.active()) {
         throw invalidState("Failed to execute 'intercept' on 'NavigateEvent': The document is not fully active.");
+      }
+      // HTML "intercept": a synthetic event (one the page made) is a SecurityError first.
+      if (!d.trusted) {
+        throw new DOMExceptionC("Failed to execute 'intercept' on 'NavigateEvent': intercept() may only be called on a trusted event.", 'SecurityError');
       }
       if (!d.dispatching) {
         throw invalidState("Failed to execute 'intercept' on 'NavigateEvent': intercept() may only be called while the navigate event is being dispatched.");
@@ -235,6 +273,22 @@
       if (handler !== undefined && typeof handler !== 'function') {
         throw new TypeErrorC("Failed to execute 'intercept' on 'NavigateEvent': Failed to read the 'handler' property from 'NavigationInterceptOptions': The provided value is not a function.");
       }
+      const focusReset = options === undefined || options === null ? undefined : options.focusReset;
+      let focusResetValue;
+      if (focusReset !== undefined) {
+        focusResetValue = String(focusReset);
+        if (focusResetValue !== 'after-transition' && focusResetValue !== 'manual') {
+          throw new TypeErrorC("Failed to execute 'intercept' on 'NavigateEvent': Failed to read the 'focusReset' property from 'NavigationInterceptOptions': The provided value '" + focusResetValue + "' is not a valid enum value of type NavigationFocusReset.");
+        }
+      }
+      const precommitHandler = options === undefined || options === null ? undefined : options.precommitHandler;
+      if (precommitHandler !== undefined && typeof precommitHandler !== 'function') {
+        throw new TypeErrorC("Failed to execute 'intercept' on 'NavigateEvent': Failed to read the 'precommitHandler' property from 'NavigationInterceptOptions': The provided value is not a function.");
+      }
+      // HTML "intercept": a precommit handler needs a navigation that can be canceled.
+      if (precommitHandler !== undefined && !this.cancelable) {
+        throw invalidState("Failed to execute 'intercept' on 'NavigateEvent': intercept() with a precommitHandler may not be called on a non-cancelable event.");
+      }
       const scroll = options === undefined || options === null ? undefined : options.scroll;
       if (scroll !== undefined) {
         const value = String(scroll);
@@ -243,21 +297,28 @@
         }
         d.scrollBehavior = value;
       }
+      // The last `intercept()` that gives a `focusReset` decides.
+      if (focusResetValue !== undefined) d.focusReset = focusResetValue;
       d.handlers.push(handler === undefined ? () => undefined : handler);
+      if (precommitHandler !== undefined) d.precommit.push(precommitHandler);
       d.interception = 'intercepted';
     }
     scroll() {
       const d = eventData.get(this);
       if (d === undefined) throw new TypeErrorC('Illegal invocation');
+      if (!native.active()) {
+        throw invalidState("Failed to execute 'scroll' on 'NavigateEvent': The document is not fully active.");
+      }
+      // HTML "ensure the event is ok to process scroll behavior": a synthetic event is never ok.
+      if (!d.trusted) {
+        throw new DOMExceptionC("Failed to execute 'scroll' on 'NavigateEvent': scroll() may only be called on a trusted event.", 'SecurityError');
+      }
       if (d.handlers.length === 0) {
         throw invalidState("Failed to execute 'scroll' on 'NavigateEvent': scroll() may only be called on an intercepted navigation.");
       }
-      // HTML "ensure the event is ok to process scroll behavior": only once, after commit.
+      // ... only once, after commit and before the navigation finished.
       if (d.interception !== 'committed') {
         throw invalidState("Failed to execute 'scroll' on 'NavigateEvent': scroll() may only be called after commit, and only once.");
-      }
-      if (!native.active()) {
-        throw invalidState("Failed to execute 'scroll' on 'NavigateEvent': The document is not fully active.");
       }
       processScroll(d);
     }
@@ -335,6 +396,11 @@
     return apiResult(r);
   };
 
+  // A navigation of a document with entries and events disabled: no event fires, so neither
+  // promise ever settles.
+  const never = () => apiResult(newResult());
+  const unloading = (method) => rejectedResult(invalidState(`Failed to execute '${method}' on 'Navigation': The document is unloading.`));
+
   let ongoing = null;
   let transition = null;
   let lastEntry = null;
@@ -343,11 +409,50 @@
   // HTML "abort the ongoing navigation" / "reject the finished promise":
   // `navigateerror` fires while `navigation.transition` is still this one,
   // then the transition's `finished` rejects and it is cleared.
-  const fail = (o, error) => {
+  // HTML "potentially reset the focus" of an intercepted navigation, before `navigatesuccess` and
+  // `navigateerror`: unless `focusReset: "manual"`, or the page moved the focus itself since the
+  // navigation began, the focused element is blurred (focus goes back to the document). The
+  // document's autofocus candidates are not processed.
+  // "Focus changed during ongoing navigation" is set by any focus update, so a page that moved the
+  // focus away and back still counts as having moved it: `focusEpoch` counts the focus changes.
+  let focusEpoch = 0;
+  const countFocus = () => { focusEpoch++; };
+  addListener.call(window, 'focusin', countFocus, true);
+  addListener.call(window, 'focusout', countFocus, true);
+  const resetFocus = (o) => {
+    if (o.handlers.length === 0 || o.event.focusReset === 'manual' || !native.active()) return;
+    const active = document.activeElement;
+    if (focusEpoch !== o.focusEpoch || active !== o.focused || active === null || active === document.body || active === document.documentElement) return;
+    try {
+      HTMLElementC.prototype.blur.call(active);
+    } catch (e) {
+      // Not an HTMLElement (an SVG element): left focused.
+    }
+  };
+  // The ErrorEvent's message, as the console shows an uncaught throw ("TypeError: a message").
+  const errorMessage = (error) => {
+    try {
+      if (error !== null && typeof error === 'object' && typeof error.name === 'string' && error.message !== undefined) {
+        return error.name + ': ' + String(error.message);
+      }
+      return String(error);
+    } catch (e) {
+      return '';
+    }
+  };
+  const fail = (o, error, resetsFocus, quiet) => {
     if (ongoing === o) ongoing = null;
+    o.pending = false;
+    o.event.interception = 'finished';
+    if (resetsFocus === true) resetFocus(o);
     if (!o.controller.signal.aborted) o.controller.abort(error);
-    const ev = new ErrorEventC('navigateerror', { error, message: error && error.message !== undefined ? String(error.message) : String(error) });
-    dispatch.call(navigation, ev);
+    // `filename` is the document's URL when the navigation began; Chrome reports the throw site
+    // as the position, here any position (1:1) stands for it.
+    // A document that is no longer fully active (detached inside the handler) fires nothing.
+    if (quiet !== true) {
+      const ev = new ErrorEventC('navigateerror', { error, message: errorMessage(error), filename: o.href, lineno: 1, colno: 1 });
+      dispatch(navigation, ev);
+    }
     if (o.result !== null) {
       o.result.committed.reject(error);
       o.result.finished.reject(error);
@@ -358,8 +463,128 @@
     }
   };
 
-  const fireNavigate = (type, url, hashChange, cancelable, canIntercept, key, result, info, state, formData, sourceElement) => {
-    if (ongoing !== null) fail(ongoing, abortError('The navigation was aborted by a new navigation.'));
+  // HTML NavigationPrecommitController: handed to the `precommitHandler`s of an intercepted
+  // navigation, which run before the navigation commits (the URL, the entries and
+  // `location` are still the old ones).
+  const controllerData = new WeakMap();
+  const precommitData = (c, method) => {
+    const o = controllerData.get(c);
+    if (o === undefined) throw new TypeErrorC('Illegal invocation');
+    if (!native.active()) {
+      throw invalidState(`Failed to execute '${method}' on 'NavigationPrecommitController': The document is not fully active.`);
+    }
+    if (!o.pending || ongoing !== o) {
+      throw invalidState(`Failed to execute '${method}' on 'NavigationPrecommitController': The navigation has already committed or was aborted.`);
+    }
+    return o;
+  };
+  class NavigationPrecommitController {
+    constructor(t, o) {
+      if (t !== token) throw illegal('NavigationPrecommitController');
+      controllerData.set(this, o);
+    }
+    redirect(url, options) {
+      if (arguments.length === 0) {
+        throw new TypeErrorC("Failed to execute 'redirect' on 'NavigationPrecommitController': 1 argument required, but only 0 present.");
+      }
+      options = options ?? {};
+      const history = options.history === undefined ? 'auto' : String(options.history);
+      if (!['auto', 'push', 'replace'].includes(history)) {
+        throw new TypeErrorC(`Failed to execute 'redirect' on 'NavigationPrecommitController': Failed to read the 'history' property from 'NavigationPrecommitControllerRedirectOptions': The provided value '${history}' is not a valid enum value of type NavigationHistoryBehavior.`);
+      }
+      const o = precommitData(this, 'redirect');
+      // Only a push or a replace can be redirected (a reload or a traversal keeps its entry).
+      if (o.type === 'reload' || o.type === 'traverse') {
+        throw invalidState("Failed to execute 'redirect' on 'NavigationPrecommitController': A reload or a traversal cannot be redirected.");
+      }
+      const target = native.resolve(String(url));
+      // HTML: the URL must "can have its URL rewritten" (same components, and the path for a
+      // non-http(s) scheme), not merely share an origin (opaque origins differ).
+      if (!native.canRewrite(target)) {
+        throw new DOMExceptionC("Failed to execute 'redirect' on 'NavigationPrecommitController': Cannot redirect to '" + target + "' from a document with origin '" + location.origin + "'.", 'SecurityError');
+      }
+      // HTML serializes the state only for a navigation that has an API method tracker.
+      const hasState = options.state !== undefined && o.result !== null;
+      const state = hasState ? serialize(options.state) : undefined;
+      if (history !== 'auto') o.type = history;
+      o.url = target;
+      o.event.navigationType = o.type;
+      o.transitionData.navigationType = o.type;
+      const destination = destinationData.get(o.event.destination);
+      destination.url = target;
+      if (options.info !== undefined) o.event.info = options.info;
+      if (hasState) {
+        o.commitState = state;
+        destination.state = state;
+      }
+    }
+    addHandler(handler) {
+      if (arguments.length === 0) {
+        throw new TypeErrorC("Failed to execute 'addHandler' on 'NavigationPrecommitController': 1 argument required, but only 0 present.");
+      }
+      if (typeof handler !== 'function') {
+        throw new TypeErrorC("Failed to execute 'addHandler' on 'NavigationPrecommitController': The callback provided as parameter 1 is not a function.");
+      }
+      const o = precommitData(this, 'addHandler');
+      // The handler joins the commit handlers, after those `intercept()` gave.
+      o.handlers.push(handler);
+    }
+  }
+  tag(NavigationPrecommitController, 'NavigationPrecommitController');
+
+  // The traversal whose commit is queued again after its precommit handlers (see `commitDeferred`).
+  let resume = null;
+  // HTML "intercept" commit step of a navigation with precommit handlers: they fulfilled, so the
+  // navigation commits now (the entry changes, `currententrychange`, the handlers run).
+  const commitDeferred = (o) => {
+    if (ongoing !== o) return;
+    if (!native.active()) {
+      fail(o, abortError('The navigation was aborted because the document is no longer active.'));
+      return;
+    }
+    o.pending = false;
+    if (o.type === 'traverse') {
+      // The traversal is queued again; its `navigate` hook answers 'intercept' (see native.watch)
+      // and the commit comes through the 'commit' hook.
+      resume = { o, key: o.key };
+      if (native.traverse(o.key) !== 'queued') {
+        resume = null;
+        fail(o, invalidState('The traversal could not be committed.'));
+      }
+      return;
+    }
+    native.commit(o.url, o.type, o.commitState);
+    onCommit(o.type);
+  };
+  // Runs the `precommitHandler`s in order, then commits when all fulfilled; the first rejection
+  // fails the navigation (it never committed: `committed` and `finished` reject with the reason).
+  const runPrecommit = (o) => {
+    const controller = new NavigationPrecommitController(token, o);
+    let remaining = o.precommit.length;
+    let failed = false;
+    for (const handler of o.precommit) {
+      let run;
+      try {
+        run = PromiseC.resolve(handler(controller));
+      } catch (e) {
+        run = PromiseC.reject(e);
+      }
+      run.then(
+        () => {
+          if (--remaining === 0 && !failed) commitDeferred(o);
+        },
+        (error) => {
+          if (failed) return;
+          failed = true;
+          if (ongoing === o) fail(o, error);
+        },
+      );
+    }
+  };
+
+  const fireNavigate = (type, url, hashChange, cancelable, canIntercept, key, result, info, state, formData, sourceElement, userInitiated, sameDocument) => {
+    // A `navigateerror` listener may start a navigation of its own, which this one aborts in turn.
+    while (ongoing !== null) fail(ongoing, abortError('The navigation was aborted by a new navigation.'));
     const from = current();
     let destination;
     if (type === 'traverse') {
@@ -377,21 +602,34 @@
         info = p.info;
       }
     } else {
-      destination = new NavigationDestination(token, { url, key: '', id: '', index: -1, sameDocument: hashChange, state });
+      // A reload's destination state is the current entry's unless the page gave one.
+      if (type === 'reload' && state === undefined && from !== null) state = entryData.get(from).row.state;
+      destination = new NavigationDestination(token, { url, key: '', id: '', index: -1, sameDocument, state });
     }
     const controller = new AbortControllerC();
     const event = new NavigateEvent('navigate', {
-      navigationType: type, destination, canIntercept, userInitiated: false, hashChange, signal: controller.signal,
+      navigationType: type, destination, canIntercept, userInitiated, hashChange, signal: controller.signal,
       info, cancelable, formData, sourceElement,
     });
     const d = eventData.get(event);
-    const o = { type, from, result, controller, handlers: [], transition: null, transitionFinished: null, state, event: d };
+    d.trusted = true;
+    const o = {
+      type, from, result, controller, handlers: [], transition: null, transitionFinished: null, state, event: d, href: location.href, focused: document.activeElement, focusEpoch,
+      // A navigation with precommit handlers: not committed while `pending`; `url`, `type` and `commitState` can be redirected.
+      precommit: [], pending: false, url, key, commitState: state, transitionData: null,
+    };
     ongoing = o;
     d.dispatching = true;
     try {
-      dispatch.call(navigation, event);
+      dispatch(navigation, event);
     } finally {
       d.dispatching = false;
+    }
+    // HTML "inner navigate event firing": a document detached by a listener aborts the navigation
+    // (both promises reject AbortError of this realm, `event.signal` aborts).
+    if (!native.active()) {
+      if (ongoing === o) fail(o, abortError('The navigation was aborted because the document is no longer active.'), false, true);
+      return 'cancel';
     }
     if (ongoing !== o) return 'proceed';
     if (event.defaultPrevented && cancelable) {
@@ -401,8 +639,14 @@
     if (d.handlers.length > 0) {
       o.handlers = d.handlers;
       o.transitionFinished = deferred();
-      o.transition = new NavigationTransition(token, { navigationType: type, from, finished: o.transitionFinished.promise });
+      o.transitionData = { navigationType: type, from, finished: o.transitionFinished.promise };
+      o.transition = new NavigationTransition(token, o.transitionData);
       transition = o.transition;
+      if (d.precommit.length > 0) {
+        o.precommit = d.precommit;
+        o.pending = true;
+        return 'defer';
+      }
       return 'intercept';
     }
     return 'proceed';
@@ -413,24 +657,20 @@
     const entry = current();
     const from = o !== null && o.from !== null ? o.from : lastEntry;
     lastEntry = entry;
-    if (type !== 'reload' && from !== null) {
-      dispatch.call(navigation, new NavigationCurrentEntryChangeEvent('currententrychange', { navigationType: type, from }));
+    if (from !== null) {
+      dispatch(navigation, new NavigationCurrentEntryChangeEvent('currententrychange', { navigationType: type, from }));
     }
+    flushDisposals();
     if (o === null) return;
     if (o.result !== null) o.result.committed.resolve(entry);
     if (o.handlers.length > 0) {
       o.event.interception = 'committed';
       o.event.scrollAtCommit = native.viewportScroll();
     }
-    const runs = o.handlers.map((handler) => {
-      try {
-        return PromiseC.resolve(handler());
-      } catch (e) {
-        return PromiseC.reject(e);
-      }
-    });
-    PromiseC.all(runs).then(
-      () => {
+    // HTML "react to" each handler promise directly: `navigatesuccess` fires one microtask after the
+    // last handler settled, so it precedes the reactions the page attached to `committed` right after
+    // the method returned. (`Promise.all` would add two ticks and put them first.)
+    const succeed = () => {
         if (ongoing !== o) return;
         // HTML "potentially process scroll behavior": after the handlers, unless "manual" or
         // `scroll()` already did.
@@ -443,24 +683,63 @@
             processScroll(o.event);
           }
         }
+        resetFocus(o);
+        o.event.interception = 'finished';
         ongoing = null;
         // HTML: `navigatesuccess` fires with `navigation.transition` still
         // set; then the method's and the transition's `finished` resolve and
         // the transition is cleared.
-        dispatch.call(navigation, new EventC('navigatesuccess'));
+        dispatch(navigation, new EventC('navigatesuccess'));
         if (o.result !== null) o.result.finished.resolve(entry);
         if (o.transitionFinished !== null) o.transitionFinished.resolve();
         if (o.transition !== null && transition === o.transition) transition = null;
-      },
-      (error) => {
-        if (ongoing === o) fail(o, error);
-      },
-    );
+    };
+    if (o.handlers.length === 0) {
+      PromiseC.resolve().then(succeed);
+      return;
+    }
+    let remaining = o.handlers.length;
+    let failed = false;
+    for (const handler of o.handlers) {
+      let run;
+      try {
+        run = PromiseC.resolve(handler());
+      } catch (e) {
+        run = PromiseC.reject(e);
+      }
+      run.then(
+        () => {
+          if (--remaining === 0 && !failed) succeed();
+        },
+        (error) => {
+          if (failed) return;
+          failed = true;
+          if (ongoing === o) fail(o, error, true);
+        },
+      );
+    }
   };
 
-  native.watch((kind, a, b, c, d, e, f, formData, sourceElement) => {
-    if (kind === 'navigate') return fireNavigate(a, b, c, d, e, f, null, undefined, undefined, formData, sourceElement);
+  native.watch((kind, a, b, c, d, e, f, formData, sourceElement, userInitiated, sameDocument) => {
+    if (kind === 'navigate') {
+      // The queued-again traversal of a navigation whose precommit handlers fulfilled: it commits.
+      if (resume !== null && a === 'traverse' && f === resume.key) {
+        const r = resume;
+        resume = null;
+        if (ongoing === r.o) return 'intercept';
+      }
+      const decision = fireNavigate(a, b, c, d, e, f, null, undefined, undefined, formData, sourceElement, userInitiated, sameDocument);
+      // Nothing happens natively until the precommit handlers fulfilled: the navigation is
+      // canceled there and committed from `commitDeferred`.
+      if (decision === 'defer') {
+        runPrecommit(ongoing);
+        return 'cancel';
+      }
+      return decision;
+    }
     if (kind === 'commit') onCommit(a);
+    // HTML "stop loading": a navigation still before its commit is aborted.
+    if (kind === 'stop' && ongoing !== null && ongoing.pending) fail(ongoing, abortError('The navigation was aborted by window.stop().'));
     return undefined;
   });
 
@@ -472,8 +751,13 @@
     const hashChange = type !== 'reload' && target.hash !== '' && target.hash !== here.hash
       && target.href.split('#')[0] === here.href.split('#')[0];
     const canIntercept = target.origin === here.origin && target.protocol === here.protocol;
-    const decision = fireNavigate(type, url, hashChange, true, canIntercept, '', result, info, state);
+    const sameDocument = type !== 'reload' && target.href.includes('#') && target.href.split('#')[0] === here.href.split('#')[0];
+    const decision = fireNavigate(type, url, hashChange, true, canIntercept, '', result, info, state, undefined, undefined, false, sameDocument);
     if (decision === 'cancel') return apiResult(result);
+    if (decision === 'defer') {
+      runPrecommit(ongoing);
+      return apiResult(result);
+    }
     if (decision === 'intercept') {
       native.commit(url, type, state);
       onCommit(type);
@@ -487,7 +771,12 @@
 
   const traverse = (key, info) => {
     if (!native.active()) return rejectedResult(invalidState('The document is not fully active.'));
-    const answer = native.traverse(key);
+    if (native.inUnload()) return unloading('traverseTo');
+    // HTML: only an entry of `entries()` can be traversed to.
+    // A traversal to the entry already being traversed to is that traversal.
+    const repeated = pendingTraversals.find((p) => p.key === key);
+    if (repeated !== undefined) return apiResult(repeated.result);
+    const answer = snapshot().list.some((e) => entryData.get(e).row.key === key) ? native.traverse(key) : 'missing';
     if (answer === 'missing') {
       return rejectedResult(invalidState("Failed to execute 'traverseTo' on 'Navigation': Invalid key"));
     }
@@ -500,6 +789,36 @@
       pendingTraversals.push({ key, result, info });
     }
     return apiResult(result);
+  };
+
+  // HTML `navigation.activation`: how this document's navigation came about, fixed when the
+  // document committed (same-document navigations leave it). `entry` and `from` are the objects of
+  // the entries of `entries()` while those are in it, and keep their last object once they left
+  // it (index -1).
+  const activationInfo = native.activation();
+  let activationObject = null;
+  const activationEntries = { entry: null, from: null };
+  const activationEntry = (slot, row) => {
+    snapshot();
+    const live = entryObjects.get(row.id);
+    if (live !== undefined) {
+      activationEntries[slot] = live;
+      return live;
+    }
+    if (activationEntries[slot] === null) activationEntries[slot] = new NavigationHistoryEntry(token, row);
+    return activationEntries[slot];
+  };
+  const makeActivation = () => {
+    const [type, entryKey, entryId, entryUrl, fromRow] = activationInfo;
+    return new NavigationActivation(token, {
+      get entry() {
+        return activationEntry('entry', { key: entryKey, id: entryId, url: entryUrl, same: true, state: undefined });
+      },
+      get from() {
+        return fromRow === null ? null : activationEntry('from', { key: fromRow[0], id: fromRow[1], url: fromRow[2], same: false, state: fromRow[3] });
+      },
+      type,
+    });
   };
 
   const navigationData = { handlers: {} };
@@ -526,14 +845,23 @@
     get transition() {
       return transition;
     }
+    get activation() {
+      return activationInfo === null ? null : (activationObject ??= makeActivation());
+    }
     updateCurrentEntry(options) {
       if (options === null || typeof options !== 'object' || !('state' in options)) {
         throw new TypeErrorC("Failed to execute 'updateCurrentEntry' on 'Navigation': Failed to read the 'state' property from 'NavigationUpdateCurrentEntryOptions': Required member is undefined.");
       }
-      native.updateState(serialize(options.state));
+      // HTML: InvalidStateError (not fully active, entries disabled) before DataCloneError.
+      if (!native.active() || native.disabled()) {
+        throw invalidState("Failed to execute 'updateCurrentEntry' on 'Navigation': The document is not fully active, or its entries are disabled.");
+      }
+      // The entry the call began with gets the state, whatever the state's getters did meanwhile.
+      const began = current();
+      native.updateState(serialize(options.state), began === null ? undefined : entryData.get(began).row.id);
       const from = lastEntry ?? current();
       lastEntry = current();
-      dispatch.call(this, new NavigationCurrentEntryChangeEvent('currententrychange', { navigationType: null, from }));
+      dispatch(this, new NavigationCurrentEntryChangeEvent('currententrychange', { navigationType: null, from }));
     }
     navigate(url, options) {
       if (arguments.length === 0) {
@@ -555,7 +883,16 @@
         return rejectedResult(new DOMExceptionC('A navigation to a javascript: URL cannot be done with navigation.navigate().', 'NotSupportedError'));
       }
       if (!native.active()) return rejectedResult(invalidState("Failed to execute 'navigate' on 'Navigation': The document is not fully active."));
+      if (native.inUnload()) return unloading('navigate');
+      if (history === 'push' && native.initialBlank()) {
+        return rejectedResult(new DOMExceptionC("Failed to execute 'navigate' on 'Navigation': A \"push\" navigation was explicitly requested, but only a \"replace\" navigation is possible when navigating away from the initial about:blank.", 'NotSupportedError'));
+      }
       const replace = history === 'replace' || (history === 'auto' && target === location.href);
+      // No navigate event fires for this document: the navigation happens, nothing tracks it.
+      if (native.disabled()) {
+        native.navigate(target, replace, state);
+        return never();
+      }
       return start(replace ? 'replace' : 'push', target, options.info, state);
     }
     reload(options) {
@@ -567,6 +904,11 @@
         return rejectedResult(e);
       }
       if (!native.active()) return rejectedResult(invalidState("Failed to execute 'reload' on 'Navigation': The document is not fully active."));
+      if (native.inUnload()) return unloading('reload');
+      if (native.disabled()) {
+        if (!native.initialBlank()) native.reload();
+        return never();
+      }
       return start('reload', location.href, options.info, state);
     }
     traverseTo(key, options) {
@@ -574,12 +916,14 @@
     }
     back(options) {
       if (!native.active()) return rejectedResult(invalidState("Failed to execute 'back' on 'Navigation': The document is not fully active."));
+      if (native.inUnload()) return unloading('back');
       const { index, list } = snapshot();
       if (index <= 0) return rejectedResult(invalidState("Failed to execute 'back' on 'Navigation': Cannot go back."));
       return traverse(list[index - 1].key, (options ?? {}).info);
     }
     forward(options) {
       if (!native.active()) return rejectedResult(invalidState("Failed to execute 'forward' on 'Navigation': The document is not fully active."));
+      if (native.inUnload()) return unloading('forward');
       const { index, list } = snapshot();
       if (index < 0 || index >= list.length - 1) {
         return rejectedResult(invalidState("Failed to execute 'forward' on 'Navigation': Cannot go forward."));
@@ -623,6 +967,6 @@
   lastEntry = current();
   return {
     navigation, Navigation, NavigateEvent, NavigationHistoryEntry, NavigationDestination, NavigationTransition,
-    NavigationCurrentEntryChangeEvent, NavigationActivation, activation,
+    NavigationCurrentEntryChangeEvent, NavigationActivation, NavigationPrecommitController, activation,
   };
 })

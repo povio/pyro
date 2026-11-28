@@ -162,8 +162,22 @@ pub(crate) fn perform_scroll(
     boxes: &[Option<NodeId>],
     write: impl FnOnce(&pyro_dom::Dom, &mut pyro_dom::layout::Layout) -> Vec<Option<NodeId>>,
 ) -> Option<Rc<crate::smooth_scroll::Waiter>> {
+    // A smooth scroll may head where one already running on a box goes: that no-op leaves the
+    // running one alone, so those boxes are not stopped before the scroll is known.
+    let running: Vec<Option<NodeId>> = boxes
+        .iter()
+        .copied()
+        .filter(|&t| crate::smooth_scroll::running_to(page, t).is_some())
+        .filter(|&t| match behavior {
+            ScrollBehavior::Smooth => true,
+            ScrollBehavior::Instant => false,
+            ScrollBehavior::Auto => crate::smooth_scroll::css_smooth(page, t),
+        })
+        .collect();
     for &target in boxes {
-        crate::smooth_scroll::cancel(page, target);
+        if !running.contains(&target) {
+            crate::smooth_scroll::cancel(page, target);
+        }
     }
     let before = (behavior != ScrollBehavior::Instant).then(|| page.layout.borrow().scroll_positions());
     let moved = {
@@ -172,6 +186,7 @@ pub(crate) fn perform_scroll(
         write(&*dom, &mut *layout)
     };
     let mut waiter: Option<Rc<crate::smooth_scroll::Waiter>> = None;
+    let moved_targets = moved.clone();
     for target in moved {
         let smooth = match behavior {
             ScrollBehavior::Smooth => true,
@@ -194,7 +209,16 @@ pub(crate) fn perform_scroll(
             to
         };
         let w = waiter.get_or_insert_with(crate::smooth_scroll::Waiter::new);
+        if running.contains(&target) && crate::smooth_scroll::running_to(page, target) == Some(to) && crate::smooth_scroll::join(page, target, w) {
+            continue;
+        }
         crate::smooth_scroll::start(page, target, from, to, w);
+    }
+    // A box this scroll did not move (or none) still stops the smooth scroll running on it.
+    for &target in &running {
+        if !moved_targets.contains(&target) {
+            crate::smooth_scroll::cancel(page, target);
+        }
     }
     waiter
 }
@@ -286,6 +310,16 @@ pub(crate) fn window_scroll<'s>(
 }
 
 pub(crate) fn queue_scroll(page: &Rc<PageDom>, target: Option<NodeId>, scrollend: bool) {
+    // pyro: a scroll the page asked for (script, input, a smooth scroll's step) is a scroll to
+    // report whatever offset it ends at: only a layout adjustment that undoes itself is none
+    // (`scroll_back_where_reported`; `clamp_scrolls` queues those through `queue_layout_scroll`).
+    page.scroll_reported.borrow_mut().remove(&(page.document(), target));
+    queue_layout_scroll(page, target, scrollend);
+}
+
+/// [`queue_scroll`] for an adjustment layout made (a clamp, a re-snap, scroll anchoring): it keeps
+/// the offset its last `scroll` event reported, so an adjustment brought back there fires nothing.
+fn queue_layout_scroll(page: &Rc<PageDom>, target: Option<NodeId>, scrollend: bool) {
     // HTML "run the scroll steps": a scrolled target is queued once and its
     // scroll event fires in the next rendering update before animation
     // callbacks. A 16 ms fallback also delivers it when no frame was requested.
@@ -297,7 +331,7 @@ pub(crate) fn queue_scroll(page: &Rc<PageDom>, target: Option<NodeId>, scrollend
     // Scrolls that complete (instant ones: programmatic, reveal, wheel; a
     // smooth scroll's last step) are followed by `scrollend` in the same
     // update, as Chromium fires it after instant programmatic scrolls (Gap
-    // 35); layout clamps and a smooth scroll's other steps fire `scroll` only.
+    // 35); layout clamps and re-snaps end with `scrollend` too; a smooth scroll's other steps fire `scroll` only.
     let doc = page.document();
     let token = {
         let mut pending = page.pending_scrolls.borrow_mut();
@@ -318,7 +352,12 @@ pub(crate) fn queue_scroll(page: &Rc<PageDom>, target: Option<NodeId>, scrollend
                 pending.iter().position(|(_, _, entry)| Rc::ptr_eq(entry, &token)).map(|i| pending.remove(i).1)
             };
             let Some(end) = pending else { return };
-            dispatch_scroll(&p, doc, target, "scroll");
+            // (A scroller back where its last `scroll` left it fires none, but a scroll that ended
+            // there still ends: a smooth scroll interrupted and sent back to where it started
+            // reports its last step at the same offset, then its `scrollend`.)
+            if !scroll_back_where_reported(&p, doc, target) {
+                dispatch_scroll(&p, doc, target, "scroll");
+            }
             if end {
                 fire_snap_events(&p);
                 dispatch_scroll(&p, doc, target, "scrollend");
@@ -343,6 +382,9 @@ pub(crate) fn run_scroll_steps(page: &Rc<PageDom>) {
     if queued {
         // The delayed task that was to do it finds nothing owed.
         page.scroll_clamp.set((checked, false));
+        // (The offsets script just wrote reach the engine before the clamp lays out: this runs
+        // ahead of the frame, which would push them only after its callbacks.)
+        push_scroll_offsets(page);
         clamp_scrolls(page, true);
     }
     flush_pending_scrolls(page);
@@ -488,27 +530,95 @@ pub fn record_remembered_sizes(page: &PageDom) {
 /// before script that waits a frame scrolls it), running smooth scrolls advance a frame, the
 /// queued scroll events fire, and so do the snap events of snap targets that changed without a
 /// scroll to report them (the initial snap's, as Chromium; CSS Scroll Snap 2 § 5.1).
-pub fn run_frame_scroll_steps(page: &Rc<PageDom>) {
+pub fn run_frame_scroll_steps(page: &Rc<PageDom>, deliver_scrolls: bool) {
     if page.is_disposed() {
         return;
     }
+    // pyro: the frame's scroll offsets reach the layout engine before anything lays the document
+    // out: the layout the steps below force (the visual viewport's scrollbars, the owed clamp)
+    // samples the scroll-driven animations at the offsets it was told, and the animation stamp it
+    // computes is kept for the rest of the task (a view timeline showed the previous frame's
+    // progress; WPT scroll-animations `view-timeline-relative-ancestor`).
+    push_scroll_offsets(page);
+    // The resize steps for the visual viewport (its classic scrollbars changed).
+    page.fire_visual_viewport_resize();
+    // HTML "update the rendering": the scroll to the load's fragment is tried again.
+    crate::highlights::try_fragment_scroll(page, false);
     if let (Ok(dom), Ok(mut layout)) = (page.dom.try_borrow(), page.layout.try_borrow_mut()) {
         layout.snap_initial_positions(&dom);
     }
+    // pyro: what script changed since the offsets were last settled (a revert in a `scroll`
+    // handler) is laid out and adjusted for (anchoring, clamping) before this frame's callbacks,
+    // as Chromium's layout does; the delayed re-clamp would come after callbacks that wait two
+    // frames (WPT scroll-anchoring `after-scrollable-range-shrinkage-*`).
+    let owed = {
+        let (checked, queued) = page.scroll_clamp.get();
+        queued || (page.dom.try_borrow().is_ok_and(|dom| checked != Some(dom.version())) && page.layout.try_borrow().is_ok_and(|layout| layout.has_scroll_offsets()))
+    };
+    if owed {
+        let (checked, _) = page.scroll_clamp.get();
+        page.scroll_clamp.set((checked, false));
+        // The frame's scroll offsets reach the layout engine first (scroll timelines, scroll
+        // markers, `position-try` fallbacks that follow a scroller): the clamp lays the document
+        // out, and a layout made with the offsets of before the script scroll left the first frame
+        // after it showing the old fallback and active marker (WPT css-anchor-position
+        // `anchor-scroll-position-try-003`, css-overflow `scroll-marker-controls-scroll-tracking-003`).
+        if let Some(layout) = page.try_layout() {
+            if layout.push_scroll() {
+                layout.set_scroll_pushed_at(crate::event::page_now_ms(page));
+            }
+            if let Ok(dom) = page.dom.try_borrow() {
+                layout.push_stuck(&dom);
+            }
+        }
+        clamp_scrolls(page, true);
+    }
     crate::smooth_scroll::step(page);
-    flush_pending_scrolls(page);
+    if deliver_scrolls {
+        flush_pending_scrolls(page);
+    }
     fire_snap_events(page);
+}
+
+/// pyro: tells the layout engine the scroll offsets as they are now (scroll timelines, scroll
+/// markers, `position-try` fallbacks that follow a scroller) before a layout a clamp or a frame
+/// forces: that layout would choose with the offsets of the last push.
+fn push_scroll_offsets(page: &Rc<PageDom>) {
+    if let Some(layout) = page.try_layout() {
+        if layout.push_scroll() {
+            layout.set_scroll_pushed_at(crate::event::page_now_ms(page));
+        }
+        if let Ok(dom) = page.dom.try_borrow() {
+            layout.push_stuck(&dom);
+        }
+    }
 }
 
 pub fn flush_pending_scrolls(page: &Rc<PageDom>) {
     let pending = std::mem::take(&mut *page.pending_scrolls.borrow_mut());
     for ((doc, target), end, _) in pending {
-        dispatch_scroll(page, doc, target, "scroll");
+        if !scroll_back_where_reported(page, doc, target) {
+            dispatch_scroll(page, doc, target, "scroll");
+        }
         if end {
             fire_snap_events(page);
             dispatch_scroll(page, doc, target, "scrollend");
         }
     }
+}
+
+/// pyro: whether the scroller is where its last `scroll` event left it: an adjustment that was
+/// made and undone before the rendering update (scroll anchoring over a toggled `display`, as
+/// WPT scroll-anchoring `infinite-scroll-event`) is no scroll, and Chromium reports none; its
+/// handler would otherwise toggle again, every frame.
+fn scroll_back_where_reported(page: &Rc<PageDom>, doc: NodeId, target: Option<NodeId>) -> bool {
+    let Some(reported) = page.scroll_reported.borrow().get(&(doc, target)).copied() else { return false };
+    let Ok(layout) = page.layout.try_borrow() else { return false };
+    let now = match target {
+        Some(el) => (layout.scroll_left(el), layout.scroll_top(el)),
+        None => (layout.scroll_x(), layout.scroll_y()),
+    };
+    now == reported
 }
 
 /// pyro: CSS Scroll Snap 2 § 5.1: `scrollsnapchanging`, then `scrollsnapchange`, at each scroller
@@ -558,6 +668,15 @@ fn dispatch_scroll(p: &Rc<PageDom>, doc: NodeId, target: Option<NodeId>, kind: &
     if p.is_disposed() || p.document() != doc {
         return;
     }
+    if kind == "scroll" {
+        if let Ok(layout) = p.layout.try_borrow() {
+            let now = match target {
+                Some(el) => (layout.scroll_left(el), layout.scroll_top(el)),
+                None => (layout.scroll_x(), layout.scroll_y()),
+            };
+            p.scroll_reported.borrow_mut().insert((doc, target), now);
+        }
+    }
     match target {
         Some(el) => {
             let connected = {
@@ -565,6 +684,13 @@ fn dispatch_scroll(p: &Rc<PageDom>, doc: NodeId, target: Option<NodeId>, kind: &
                 dom.is_connected(el).unwrap_or(false) && dom.node_document(el).ok() == Some(doc)
             };
             if connected {
+                // (The scroll targets and offsets are the engine's before the handlers read the
+                // active scroll marker.)
+                if kind == "scrollend" {
+                    if let Ok(layout) = p.layout.try_borrow() {
+                        layout.push_scroll();
+                    }
+                }
                 crate::input::fire_simple(p, el, kind, false, false);
                 // (A scroll can move the active scroll marker: the layout engine follows it.)
                 if kind == "scrollend" {
@@ -577,6 +703,11 @@ fn dispatch_scroll(p: &Rc<PageDom>, doc: NodeId, target: Option<NodeId>, kind: &
             }
         }
         None => {
+            if kind == "scrollend" {
+                if let Ok(layout) = p.layout.try_borrow() {
+                    layout.push_scroll();
+                }
+            }
             crate::input::fire_simple(p, doc, kind, true, false);
         }
     }
@@ -605,21 +736,50 @@ pub(crate) fn clamp_scrolls(page: &Rc<PageDom>, now: bool) {
         moved
     };
     let doc = page.document();
+    // A clamp or re-snap is a scroll that finished: `scroll` is followed by `scrollend` (Chromium;
+    // WPT `scrollend-event-fired-after-layout-clamping`, `scrollend-event-fired-for-mandatory-snap-
+    // point-after-load`). `moved` holds only real offset changes.
+    let mut ended = Vec::new();
     for target in moved {
         let node = match target {
             pyro_dom::layout::ScrollTarget::Container(node) => Some(node),
             pyro_dom::layout::ScrollTarget::Viewport => None,
         };
         if !now {
-            queue_scroll(page, node, false);
-        } else if !page.pending_scrolls.borrow().iter().any(|(key, _, _)| *key == (doc, node)) {
+            queue_layout_scroll(page, node, true);
+        } else if scroll_back_where_reported(page, doc, node) {
+            // (A queued `scroll` finds the same at its flush.)
+            continue;
+        } else if page.pending_scrolls.borrow().iter().any(|(key, _, _)| *key == (doc, node)) {
+            // Its queued `scroll` is still to come: let it carry the `scrollend`.
+            queue_layout_scroll(page, node, true);
+        } else {
             dispatch_scroll(page, doc, node, "scroll");
+            ended.push(node);
         }
     }
     // pyro: a re-snap's snap events, after its `scroll` (a script read's at the next rendering
     // update).
     if now {
         fire_snap_events(page);
+        for node in ended {
+            dispatch_scroll(page, doc, node, "scrollend");
+        }
+    }
+}
+
+/// pyro: a script read of geometry (`getBoundingClientRect`, `offsetTop`, ...) lays out, which
+/// adjusts the scroll offsets of the scrollers whose anchor moved (CSS Scroll Anchoring 1 § 3;
+/// Chromium does it in layout, before the read returns; WPT `contain-paint-offscreen-container`
+/// reads a rect after the change). The `scroll` events follow at the next frame.
+pub(crate) fn apply_owed_scroll_anchors(page: &Rc<PageDom>) {
+    let owed = match (page.dom.try_borrow(), page.layout.try_borrow()) {
+        (Ok(dom), Ok(layout)) => layout.scroll_anchors_owed(&dom),
+        _ => false,
+    };
+    // (A caller that still holds the layout cannot have it adjusted here: the next frame does.)
+    if owed && page.layout.try_borrow_mut().is_ok() {
+        clamp_scrolls(page, false);
     }
 }
 
@@ -651,6 +811,7 @@ pub(crate) fn schedule_scroll_clamp(page: &Rc<PageDom>) {
             let (checked, queued) = p.scroll_clamp.get();
             p.scroll_clamp.set((checked, false));
             if queued && !p.is_disposed() {
+                push_scroll_offsets(&p);
                 clamp_scrolls(&p, true);
             }
         }),
@@ -732,6 +893,62 @@ pub fn restore_viewport_scroll(page: &Rc<PageDom>, (x, y): (i32, i32)) {
 /// start, inline nearest), or the top of the document for an empty fragment or `top`. Nothing
 /// moves when no element is indicated.
 pub fn scroll_to_fragment(page: &Rc<PageDom>, fragment: &str) {
+    scroll_to_fragment_or(page, fragment, false);
+}
+
+/// [`scroll_to_fragment`] of a document load, which tries again until it can: true when there is
+/// nothing more to do (the top of the document, or an element was scrolled to), false when no
+/// element is indicated (yet).
+pub fn try_scroll_to_fragment(page: &Rc<PageDom>, fragment: &str) -> bool {
+    let decoded = percent_encoding::percent_decode_str(fragment).decode_utf8_lossy();
+    if fragment.is_empty() || decoded.eq_ignore_ascii_case("top") {
+        return true;
+    }
+    scroll_to_fragment_or(page, fragment, false)
+}
+
+/// URL Fragment Text Directives "scroll a range into view": the element holding the text a
+/// directive matched (`node`, a text node) is centered in the viewport, as Chrome does, and so
+/// is each same-origin ancestor frame's element showing it (a cross-origin parent is not
+/// scrolled: it would learn where the text is).
+pub fn scroll_to_text_match(page: &Rc<PageDom>, node: NodeId) {
+    let el = {
+        let dom = page.dom.borrow();
+        if dom.node_type(node).ok() == Some(pyro_dom::NodeType::Element) { Some(node) } else { dom.parent_element(node).ok().flatten() }
+    };
+    let Some(el) = el else { return };
+    scroll_centered(page, el);
+    let mut current = page.clone();
+    while let Some(crate::page::FrameContainer::Frame(parent, owner)) = current.hooks().map(|h| h.container()) {
+        if parent.origin_key() != current.origin_key() {
+            break;
+        }
+        scroll_centered(&parent, owner);
+        current = parent;
+    }
+}
+
+/// `el` scrolled into the center of every scrolling box around it, the viewport included.
+fn scroll_centered(page: &Rc<PageDom>, el: NodeId) {
+    use pyro_dom::layout::ScrollAlign;
+    crate::animation_events::layout_flush(page, page.document());
+    perform_scroll(page, ScrollBehavior::Auto, &[], |dom, layout| {
+        layout
+            .scroll_into_view_aligned_script_targets(dom, el, ScrollAlign::Center, ScrollAlign::Center)
+            .iter()
+            .map(scroll_target_node)
+            .collect()
+    });
+}
+
+/// [`scroll_to_fragment`] that, with `top_if_missing`, also scrolls to the top of the document
+/// when no element is indicated (the Navigation API's "process scroll behavior", which Chrome
+/// does for a missing fragment as for an empty one).
+pub fn scroll_to_fragment_or_top(page: &Rc<PageDom>, fragment: &str) {
+    scroll_to_fragment_or(page, fragment, true);
+}
+
+fn scroll_to_fragment_or(page: &Rc<PageDom>, fragment: &str, top_if_missing: bool) -> bool {
     use pyro_dom::layout::ScrollAlign;
     let doc = page.document();
     let decoded = percent_encoding::percent_decode_str(fragment).decode_utf8_lossy().into_owned();
@@ -788,13 +1005,15 @@ pub fn scroll_to_fragment(page: &Rc<PageDom>, fragment: &str) {
                     crate::input::blur_element(page, focused);
                 }
             }
+            true
         }
-        None if fragment.is_empty() || decoded.eq_ignore_ascii_case("top") => {
+        None if top_if_missing || fragment.is_empty() || decoded.eq_ignore_ascii_case("top") => {
             perform_scroll(page, ScrollBehavior::Auto, &[None], |dom, layout| {
                 layout.window_scroll_to(dom, Some(0), Some(0)).then_some(None).into_iter().collect()
             });
+            true
         }
-        None => {}
+        None => false,
     }
 }
 
@@ -1012,8 +1231,16 @@ pub(crate) fn metric<'s>(s: &Scope<'s>, n: &NodeData, which: &str) -> JsResult<V
         "offsetHeight" => Metric::OffsetHeight,
         _ => return Ok(s.number(0.0)),
     };
-    let v = l.metric(&dom, n.id, metric);
+    let v = l.metric_css(&dom, n.id, metric);
     Ok(s.number(v))
+}
+
+/// `Element.currentCSSZoom` (CSSOM View): the element's effective `zoom`, 1 where it is not rendered.
+pub(crate) fn current_css_zoom<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
+    let page = n.page();
+    crate::animation_events::layout_flush(page, n.id);
+    let zoom = page.layout().effective_zoom(&page.dom.borrow(), n.id);
+    Ok(s.number(zoom))
 }
 
 pub(crate) fn offset_parent<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
@@ -1028,17 +1255,20 @@ pub(crate) fn inner_text<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>>
     Ok(s.string(&t))
 }
 
-pub(crate) fn set_inner_text(s: &Scope<'_>, n: &NodeData, v: Value<'_>) -> JsResult<()> {
-    if crate::trusted_types::is_html_script(n.page(), n.id) {
-        let text =
-            crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Script, v, "HTMLScriptElement innerText", true)?;
-        // Trusted Types: the script is trusted with this text ([[ScriptText]]).
-        let mut dom = n.page().dom.borrow_mut();
-        dom.set_script_text(n.id, &text);
-        return dom.set_inner_text(n.id, &text).js();
-    }
+/// `HTMLElement.innerText`'s setter: the text of a `<script>` set through it is not trusted
+/// ([`set_script_inner_text`] is `HTMLScriptElement.innerText`).
+pub(crate) fn set_inner_text(_s: &Scope<'_>, n: &NodeData, v: Value<'_>) -> JsResult<()> {
     let text = null_to_empty(v)?;
     n.page().dom.borrow_mut().set_inner_text(n.id, &text).js()
+}
+
+/// `HTMLScriptElement.innerText`'s setter, a Trusted Types sink ("HTMLScriptElement innerText"):
+/// the script is trusted with the compliant text ([[ScriptText]]).
+pub(crate) fn set_script_inner_text(s: &Scope<'_>, n: &NodeData, v: Value<'_>) -> JsResult<()> {
+    let text = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Script, v, "HTMLScriptElement innerText", true)?;
+    let mut dom = n.page().dom.borrow_mut();
+    dom.set_script_text(n.id, &text);
+    dom.set_inner_text(n.id, &text).js()
 }
 
 pub(crate) fn set_outer_text(_s: &Scope<'_>, n: &NodeData, v: Value<'_>) -> JsResult<()> {

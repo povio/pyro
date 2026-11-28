@@ -301,6 +301,13 @@ impl ElementCx<'_, '_> {
             }
             None => {
                 let images = &self.element.mask_images;
+                // pyro: HTML-in-Canvas privacy: a mask document from an opaque response is left
+                // out (the layer is then its image, which is left out too).
+                if self.context.privacy.is_some()
+                    && images.get(layer).and_then(Option::as_ref).is_some_and(|data| super::Privacy::opaque(&data.image))
+                {
+                    return false;
+                }
                 let Some((source, id)) = images.get(layer..layer + 1).and_then(|image| external_reference(image, url))
                 else {
                     return false;

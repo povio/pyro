@@ -102,6 +102,8 @@ impl Node {
 impl crate::document::BaseDocument {
     pub fn resolve_stylist(&mut self, now: f64) {
         let _layout_thread_scope = LayoutThreadScope::enter();
+        // pyro: the primary styles highlight styles inherit through are about to change.
+        self.highlight_style_cache.get_mut().clear();
 
         // pyro: shadow roots' sheets (`crate::shadow`).
         self.flush_shadow_styles();
@@ -186,6 +188,7 @@ impl crate::document::BaseDocument {
 
         let mut nodes_needing_style_image_flush = Vec::new();
         let mut style_changes = Vec::new();
+        let mut first_styled = Vec::new();
         if token.should_traverse() {
             // Style the elements, resolving their data
             let mut traverser = RecalcStyle::new(context);
@@ -208,6 +211,7 @@ impl crate::document::BaseDocument {
             self.cis_auto
                 .extend(std::mem::take(traverser.cis_auto_nodes.get_mut().unwrap()));
             style_changes = std::mem::take(traverser.style_changes.get_mut().unwrap());
+            first_styled = std::mem::take(traverser.first_styled.get_mut().unwrap());
             // Sticky: set once an element is styled with a generated
             // `::before` / `::after`, never cleared.
             if traverser.generated_before_after.into_inner() {
@@ -264,6 +268,18 @@ impl crate::document::BaseDocument {
             .extend(nodes_needing_style_image_flush);
         if !style_changes.is_empty() {
             crate::document::note_style_changes(&mut self.style_changes, &mut self.style_change_index, style_changes);
+        }
+        // pyro: an element styled for the first time (parsed, inserted, shown by being attached again)
+        // transitions from its starting style (`@starting-style`, css-transitions-2 §3.2) to its style.
+        for id in first_styled {
+            let Some(after) = self.nodes.get(id).and_then(|node| node.primary_styles().map(|s| (*s).clone())) else { continue };
+            if let Some(before) = self.starting_style(id) {
+                crate::document::note_style_changes(
+                    &mut self.style_changes,
+                    &mut self.style_change_index,
+                    vec![crate::StyleChange { node: id, pseudo: 0, before, after }],
+                );
+            }
         }
 
         for opaque in self.snapshots.keys() {
@@ -508,6 +524,18 @@ impl crate::document::BaseDocument {
         pseudo: &style::selector_parser::PseudoElement,
         generated_only: bool,
     ) -> Option<Arc<ComputedValues>> {
+        self.pseudo_element_style_in_tree(node_id, pseudo, generated_only, false)
+    }
+
+    /// [`Self::pseudo_element_style`] of a pseudo-element of a pseudo-element tree that `only_child`
+    /// says is its parent's only child (`::view-transition-group(x):only-child` matches it).
+    pub fn pseudo_element_style_in_tree(
+        &self,
+        node_id: NodeId,
+        pseudo: &style::selector_parser::PseudoElement,
+        generated_only: bool,
+        only_child: bool,
+    ) -> Option<Arc<ComputedValues>> {
         let node = self.nodes.get(node_id)?;
         if !node.is_element() || !node.flags.is_in_document() {
             return None;
@@ -525,6 +553,12 @@ impl crate::document::BaseDocument {
                 return crate::layout::list::marker_pseudo_style(self, node_id, &primary);
             }
             return stored.and_then(|(_, eager)| eager);
+        }
+        // pyro: a scroll pseudo-element with a generated box answers with the box's own style.
+        if pseudo.is_scroll_button() || matches!(*pseudo, PseudoElement::ScrollMarker | PseudoElement::ScrollMarkerGroup) {
+            if let Some(style) = self.scroll_pseudo_box_style(node_id, pseudo) {
+                return Some(style);
+            }
         }
         let (primary, eager) = match stored {
             Some(styles) => styles,
@@ -590,7 +624,23 @@ impl crate::document::BaseDocument {
                 ));
             }
         }
+        // pyro: a view-transition pseudo-element inherits from its parent pseudo-element (group from
+        // `::view-transition`, image pair from the group, old and new from the pair), not from the
+        // root element, as the UA sheet's `animation-duration: inherit` expects.
+        let view_transition_parent = match pseudo {
+            PseudoElement::ViewTransitionGroup(_) => Some(PseudoElement::ViewTransition),
+            PseudoElement::ViewTransitionPair(arg) => Some(PseudoElement::ViewTransitionGroup(arg.clone())),
+            PseudoElement::ViewTransitionOld(arg) | PseudoElement::ViewTransitionNew(arg) => Some(PseudoElement::ViewTransitionPair(arg.clone())),
+            _ => None,
+        }
+        .and_then(|parent| self.pseudo_element_style(node_id, &parent, false));
         if pseudo.is_lazy() {
+            // pyro: a highlight pseudo inherits from its parent element's same highlight pseudo.
+            if Self::inherits_highlight(pseudo) && !only_child {
+                if let Some(style) = self.inherited_highlight_style(node_id, pseudo) {
+                    return Some(style);
+                }
+            }
             let _layout_thread_scope = LayoutThreadScope::enter();
             let guard = &self.guard;
             let guards = StylesheetGuards {
@@ -601,7 +651,7 @@ impl crate::document::BaseDocument {
             let wanted = pseudo.clone();
             let matches = move |pe: &PseudoElement| wanted.matches_transition_selector(pe)
                 || (wanted.is_highlight() && *pe == PseudoElement::Highlight(style::selector_parser::ANY_HIGHLIGHT));
-            let lazy = self.stylist.lazily_compute_pseudo_element_style(
+            let lazy = self.stylist.lazily_compute_pseudo_element_style_in_tree(
                 &guards,
                 node,
                 &pseudo.rule_map_key(),
@@ -609,11 +659,20 @@ impl crate::document::BaseDocument {
                 &primary,
                 false,
                 (pseudo.is_highlight() || pseudo.transition_argument().is_some()).then_some(&matches as &dyn Fn(&PseudoElement) -> bool),
+                only_child,
             );
             if *pseudo == PseudoElement::Marker {
                 if let Some(style) = self.animated_marker_style(node, &primary, lazy.as_ref()) {
                     return Some(style);
                 }
+            }
+            if let (Some(style), Some(parent)) = (lazy.as_ref(), view_transition_parent.as_ref()) {
+                let inputs = style::context::CascadeInputs {
+                    rules: Some(style.rules().clone()),
+                    flags: style.flags.for_cascade_inputs(),
+                    ..Default::default()
+                };
+                return Some(self.stylist.compute_pseudo_element_style_with_inputs(inputs, pseudo, &guards, Some(parent), Some(node)));
             }
             if lazy.is_some() {
                 return lazy;
@@ -628,6 +687,141 @@ impl crate::document::BaseDocument {
             )
             .build(),
         )
+    }
+
+    /// Whether `pseudo` is a highlight pseudo-element, whose style inherits from the parent's own
+    /// highlight style (css-pseudo-4 § 3 highlight inheritance).
+    fn inherits_highlight(pseudo: &style::selector_parser::PseudoElement) -> bool {
+        pseudo.is_selection()
+            || pseudo.is_highlight()
+            || pseudo.is_target_text()
+            || matches!(*pseudo, PseudoElement::SearchText | PseudoElement::SpellingError | PseudoElement::GrammarError)
+    }
+
+    /// The style of a highlight pseudo-element of `node_id` that inherits from the parent element's
+    /// highlight style (through `display: contents` and shadow and slot boundaries: the flat tree's
+    /// parent), the originating element's own style being the parent only at the root. `None` when
+    /// no rule applies to the pseudo-element on the element or any ancestor (the plain
+    /// originating-element inheritance stands then).
+    fn inherited_highlight_style(&self, node_id: NodeId, pseudo: &style::selector_parser::PseudoElement) -> Option<Arc<ComputedValues>> {
+        self.inherited_highlight_entry(node_id, pseudo).0
+    }
+
+    /// [`Self::inherited_highlight_style`] and whether a highlight rule of this element or of an
+    /// ancestor sets `color` (so a child highlight inherits that value; without one the colour is
+    /// the initial `currentcolor` of highlights, which each element resolves against its own colour:
+    /// WPT css-pseudo `highlight-currentcolor-root-implicit-default-001`).
+    fn inherited_highlight_entry(&self, node_id: NodeId, pseudo: &style::selector_parser::PseudoElement) -> (Option<Arc<ComputedValues>>, bool) {
+        let Some(node) = self.nodes.get(node_id) else { return (None, false) };
+        if !node.is_element() || !node.flags.is_in_document() {
+            return (None, false);
+        }
+        // No rule for the pseudo-element in any sheet that applies here and no shadow sheet in the
+        // document (whose `::slotted()`/`::part()` rules a light-tree ancestor chain can miss):
+        // neither this element nor an ancestor has a highlight style, and the walk is skipped.
+        if self.shadow_sheet_hosts.is_empty() && !self.stylist.may_have_rules_for_pseudo(node, pseudo) {
+            return (None, false);
+        }
+        let generation = self.stylesheet_generation;
+        if let Some((known, style, explicit)) = self.highlight_style_cache.borrow().get(&(node_id, pseudo.clone())) {
+            if *known == generation {
+                return (style.clone(), *explicit);
+            }
+        }
+        let (style, explicit) = self.compute_inherited_highlight_style(node_id, node, pseudo);
+        self.highlight_style_cache.borrow_mut().insert((node_id, pseudo.clone()), (generation, style.clone(), explicit));
+        (style, explicit)
+    }
+
+    fn compute_inherited_highlight_style(&self, node_id: NodeId, node: &Node, pseudo: &style::selector_parser::PseudoElement) -> (Option<Arc<ComputedValues>>, bool) {
+        let (parent, parent_explicit) = node.parent.filter(|&p| self.nodes.get(p).is_some_and(|p| p.is_element()))
+            .map_or((None, false), |p| crate::util::ensure_stack(|| self.inherited_highlight_entry(p, pseudo)));
+        let primary = match node.try_stylo_element_data().and_then(|d| d.get()).and_then(|d| d.styles.get_primary().cloned()) {
+            Some(primary) => primary,
+            None => match self.resolve_undisplayed_styles(node_id, None) {
+                Some(styles) => styles.primary().clone(),
+                None => return (None, false),
+            },
+        };
+        let _layout_thread_scope = LayoutThreadScope::enter();
+        let guard = &self.guard;
+        let guards = StylesheetGuards {
+            author: &guard.read(),
+            ua_or_user: &guard.read(),
+        };
+        // `::highlight(<name>)` rules share one map; the name must match.
+        let wanted = pseudo.clone();
+        let matches = move |pe: &PseudoElement| wanted.matches_transition_selector(pe)
+            || (wanted.is_highlight() && *pe == PseudoElement::Highlight(style::selector_parser::ANY_HIGHLIGHT));
+        let lazy = self.stylist.lazily_compute_pseudo_element_style_in_tree(
+            &guards,
+            node,
+            &pseudo.rule_map_key(),
+            RuleInclusion::All,
+            &primary,
+            // A probe: `None` where no rule of the pseudo-element matches this element, so the ancestors
+            // that have none do not stand in as a parent highlight style.
+            true,
+            pseudo.is_highlight().then_some(&matches as &dyn Fn(&PseudoElement) -> bool),
+            false,
+        );
+        // The parent style of the cascade is the originating element's own style (so `em`, `cqw`, the
+        // container lookup and every property a highlight does not inherit come from the originating
+        // element, as for a pseudo-element without highlight inheritance), carrying only the parent
+        // highlight's values of the inherited properties highlights apply (css-pseudo-4 highlight inheritance).
+        let inheriting_parent = |parent: &ComputedValues| {
+            let mut composite = (*primary).clone();
+            let text = composite.mutate_inherited_text();
+            let from = parent.get_inherited_text();
+            // The colour is inherited only where a highlight rule set it: otherwise it is `currentcolor`.
+            if parent_explicit {
+                text.copy_color_from(from);
+            }
+            text.copy_text_shadow_from(from);
+            text.copy_text_underline_offset_from(from);
+            text.copy_text_underline_position_from(from);
+            composite
+        };
+        let own_color = lazy.as_ref().is_some_and(|style| Self::rules_set_color(style, &guards));
+        let explicit = parent_explicit || own_color;
+        let result = match (lazy, parent) {
+            // Nothing along the chain: the plain originating-element inheritance (the caller's) stands.
+            (None, None) => None,
+            (Some(style), None) => Some(style),
+            (None, Some(parent)) => {
+                let composite = inheriting_parent(&parent);
+                Some(style::properties::StyleBuilder::for_inheritance(self.stylist.device(), Some(&self.stylist), Some(&composite), Some(pseudo)).build())
+            }
+            (Some(style), Some(parent)) => {
+                // Only the rules carry over: the visited style is never exposed.
+                let inputs = style::context::CascadeInputs {
+                    rules: Some(style.rules().clone()),
+                    flags: style.flags.for_cascade_inputs(),
+                    ..Default::default()
+                };
+                let composite = inheriting_parent(&parent);
+                // `color: currentcolor` of a highlight is the originating element's colour, not the inherited one.
+                let originating_color = *primary.get_inherited_text().get_color();
+                let previous = style::values::specified::color::HIGHLIGHT_ORIGINATING_COLOR.replace(Some(originating_color));
+                let cascaded = self.stylist.compute_pseudo_element_style_with_inputs(inputs, pseudo, &guards, Some(&composite), Some(node));
+                style::values::specified::color::HIGHLIGHT_ORIGINATING_COLOR.set(previous);
+                Some(cascaded)
+            }
+        };
+        (result, explicit)
+    }
+
+    /// Whether a rule that `style` was cascaded from declares `color`.
+    fn rules_set_color(style: &ComputedValues, guards: &StylesheetGuards) -> bool {
+        use style::properties::{LonghandId, PropertyDeclarationId};
+        let Some(rules) = style.rules.as_ref() else { return false };
+        rules.self_and_ancestors().any(|node| {
+            node.style_source().is_some_and(|source| {
+                source.read(node.cascade_level().guard(guards)).declarations().iter().any(|declaration| {
+                    matches!(declaration.id(), PropertyDeclarationId::Longhand(LonghandId::Color))
+                })
+            })
+        })
     }
 
     /// The styles [`Self::resolve_undisplayed_style`] resolves, eagerly
@@ -1691,7 +1885,24 @@ impl<'a> TElement for BlitzNode<'a> {
     /// pyro: the edges recorded at the last layout (none until one ran): a change after a layout
     /// restyles the container's subtree (`resolve::refresh_scroll_state_queries`).
     fn query_scrollable_edges(&self) -> style::stylesheets::container_rule::ScrollableEdges {
-        *self.tree().scroll_state_queries.lock().unwrap().entry(self.id).or_default()
+        self.tree().scroll_state_queries.lock().unwrap().entry(self.id).or_default().scrollable
+    }
+
+    /// pyro: the edges of the container's last scroll recorded at the last layout (none until one
+    /// ran), refreshed with `scrollable`.
+    fn query_scrolled_edges(&self) -> style::stylesheets::container_rule::ScrollableEdges {
+        self.tree().scroll_state_queries.lock().unwrap().entry(self.id).or_default().scrolled
+    }
+
+    /// pyro: the axes the container is a snap target on, recorded at the last layout.
+    fn query_snapped_axes(&self) -> style::stylesheets::container_rule::SnappedAxes {
+        self.tree().scroll_state_queries.lock().unwrap().entry(self.id).or_default().snapped
+    }
+
+    /// pyro: the edges the container, a sticky box, is held at by its insets, recorded at the last
+    /// layout.
+    fn query_stuck_edges(&self) -> style::stylesheets::container_rule::ScrollableEdges {
+        self.tree().scroll_state_queries.lock().unwrap().entry(self.id).or_default().stuck
     }
 
     fn query_container_size(
@@ -2068,6 +2279,12 @@ impl Node {
 
         // pyro: an `<mspace>`'s width, height and depth attributes (`mathml_space`).
         for declaration in crate::mathml_space::hints(elem) {
+            push_style(declaration);
+        }
+
+        // pyro: MathML Core § 3.1's `mathcolor`, `mathbackground`, `mathsize` and `scriptlevel`
+        // (`mathml_attrs`).
+        for declaration in crate::mathml_attrs::hints(elem) {
             push_style(declaration);
         }
 
@@ -2684,6 +2901,9 @@ pub struct RecalcStyle<'a> {
     /// pyro: the elements whose primary style this traversal replaced, with the old
     /// and new style, when `track_style_changes` (`BaseDocument::style_changes`).
     style_changes: Mutex<Vec<crate::StyleChange>>,
+    /// pyro: the elements this traversal styled for the first time whose style has `@starting-style`
+    /// rules (`BaseDocument::starting_style` is their before-change style).
+    first_styled: Mutex<Vec<NodeId>>,
     track_style_changes: bool,
     /// pyro: an element styled in this traversal kept a `::first-letter` style.
     first_letter_styles: std::sync::atomic::AtomicBool,
@@ -2724,6 +2944,7 @@ impl<'a> RecalcStyle<'a> {
             sticky_nodes: Mutex::new(Vec::new()),
             cis_auto_nodes: Mutex::new(Vec::new()),
             style_changes: Mutex::new(Vec::new()),
+            first_styled: Mutex::new(Vec::new()),
             track_style_changes: false,
             first_letter_styles: std::sync::atomic::AtomicBool::new(false),
             first_letter_changed: Mutex::new(Vec::new()),
@@ -3002,6 +3223,10 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
                         before: old.clone(),
                         after: new.clone(),
                     });
+                } else if let (None, Some(new)) = (&old_primary, new_primary)
+                    && style::rule_tree::RuleTree::has_starting_style(new.rules())
+                {
+                    self.first_styled.lock().unwrap().push(el.id);
                 }
             }
             // Stylo diffs the old and new style into `data.damage` (nothing when there was no old

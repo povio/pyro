@@ -2917,12 +2917,14 @@ fn calculate_children_base_lines(
     }
 }
 
-/// pyro: an item's last baseline from its block-start edge for the container's baselines: a scroll container's is
-/// synthesized from its border box (as for `last baseline` alignment, `item_baseline_from_near`)
+/// pyro: an item's last baseline from its block-start edge for the container's baselines: a scroll container's
+/// comes from its content as if unscrolled and is clamped to its border box, as its first baseline
+/// (`child_first_baseline`; css-align-3, csswg-drafts#7660; WPT css-flexbox `flex-align-baseline-overflow-001`).
+/// One without a last baseline stays `None`: the caller synthesizes it from the border box.
 #[inline]
-fn item_last_baseline(last_baseline: Option<f32>, overflow_y: Overflow) -> Option<f32> {
+fn item_last_baseline(last_baseline: Option<f32>, height: f32, overflow_y: Overflow) -> Option<f32> {
     match overflow_y.is_scroll_container() {
-        true => None,
+        true => last_baseline.map(|baseline| baseline.min(height).max(0.0)),
         false => last_baseline,
     }
 }
@@ -2944,14 +2946,15 @@ fn item_baseline_from_near(child: &FlexItem, baselines: &Baselines, size: f32, c
                 size,
                 child.overflow.y,
             ),
-            // pyro: a box without a last baseline (or a scroll container) has one synthesized
-            true => match child.overflow.y.is_scroll_container() {
-                true => Some(size),
-                false => {
-                    let last = if central { baselines.dominant_last.or(baselines.last) } else { baselines.last };
-                    last.map(|last| last.min(size))
+            // pyro: a box without a last baseline has one synthesized; a scroll container's is clamped
+            // to its border box, one without a baseline at its bottom edge
+            true => {
+                let last = if central { baselines.dominant_last.or(baselines.last) } else { baselines.last };
+                match child.overflow.y.is_scroll_container() {
+                    true => Some(last.map_or(size, |last| last.min(size).max(0.0))),
+                    false => last.map(|last| last.min(size)),
                 }
-            },
+            }
         });
         // (synthesized from the block-start of the item's writing mode, the container's for an
         // orthogonal item)
@@ -2964,7 +2967,7 @@ fn item_baseline_from_near(child: &FlexItem, baselines: &Baselines, size: f32, c
         let baseline = child.baseline_flow.and_then(|_| {
             let raw = if is_last { baselines.orthogonal_last } else { baselines.orthogonal_first };
             match is_last && child.overflow.x.is_scroll_container() {
-                true => Some(size),
+                true => Some(raw.map_or(size, |baseline| baseline.min(size).max(0.0))),
                 false => child_first_baseline(raw, size, child.overflow.x).map(|baseline| baseline.min(size)),
             }
         });
@@ -3538,7 +3541,7 @@ fn calculate_flex_item(
         child_first_baseline(layout_output.baselines.first, size.height, item.overflow.y).unwrap_or(size.height);
     // pyro: its last baseline, synthesized at its block-end edge without one
     let inner_last_baseline =
-        item_last_baseline(layout_output.baselines.last, item.overflow.y).unwrap_or(size.height);
+        item_last_baseline(layout_output.baselines.last, size.height, item.overflow.y).unwrap_or(size.height);
     if direction.is_row() {
         let baseline_offset_cross =
             total_offset_cross + item.offset_cross + effective_line_offset_cross + item.margin.cross_start(direction);
@@ -3553,7 +3556,7 @@ fn calculate_flex_item(
         item.dominant_last_baseline = (constants.block_baseline_synthesis == 0.5).then(|| {
             let baselines = &layout_output.baselines;
             baseline_offset_cross
-                + item_last_baseline(baselines.dominant_last.or(baselines.last), item.overflow.y)
+                + item_last_baseline(baselines.dominant_last.or(baselines.last), size.height, item.overflow.y)
                     .unwrap_or(size.height * 0.5)
         });
         // pyro: the baseline the item aligned on, where its group's shared baseline is
@@ -3564,7 +3567,21 @@ fn calculate_flex_item(
         let baseline_offset_main = *total_offset_main + item.offset_main + item.margin.main_start(direction);
         item.baseline = baseline_offset_main + inner_baseline;
         item.last_baseline = baseline_offset_main + inner_last_baseline;
-        item.dominant_last_baseline = None;
+        // pyro: a column container in a vertical writing mode exports the central baseline of its main-start
+        // (main-end) item too, offset by that item's main-axis position as the alphabetic ones are (WPT
+        // css-flexbox `flex-align-baseline-flex-002`: nested `flex-direction: column` in `vertical-rl`)
+        item.dominant_baseline = (constants.block_baseline_synthesis == 0.5).then(|| {
+            let baselines = &layout_output.baselines;
+            baseline_offset_main
+                + child_first_baseline(baselines.dominant_first.or(baselines.first), size.height, item.overflow.y)
+                    .unwrap_or(size.height * 0.5)
+        });
+        item.dominant_last_baseline = (constants.block_baseline_synthesis == 0.5).then(|| {
+            let baselines = &layout_output.baselines;
+            baseline_offset_main
+                + item_last_baseline(baselines.dominant_last.or(baselines.last), size.height, item.overflow.y)
+                    .unwrap_or(size.height * 0.5)
+        });
         item.aligned_baseline = None;
     }
 

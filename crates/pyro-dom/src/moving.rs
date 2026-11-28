@@ -47,6 +47,8 @@ impl Dom {
 
     /// Before `node` is unlinked by a move.
     pub(crate) fn resources_before_move(&mut self, node: u32) {
+        // A move leaves its `<picture>` like a removal does: a relevant mutation of the images.
+        self.note_picture_child_change(node);
         if !self.resources.enabled || !self.is_connected_idx(node) {
             return;
         }
@@ -63,6 +65,8 @@ impl Dom {
 
     /// After `node` was linked at its new place by a move from `old_parent`.
     pub(crate) fn resources_after_move(&mut self, node: u32, old_parent: u32) {
+        // ... and enters one like an insertion does.
+        self.note_picture_child_change(node);
         if !self.resources.enabled || !self.is_connected_idx(node) {
             return;
         }

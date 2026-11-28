@@ -21,14 +21,15 @@ impl JsClass for DomParser {
         def.constructor(0, |s, nt, _a| s.wrap_new::<DomParser>((), nt, None));
         def.method("parseFromString", 2, |s, _d, a| {
             a.require(2, "DOMParser.parseFromString")?;
-            let html = dom_string(a.get(0))?;
+            let page = page_of(s)?;
+            // Trusted Types: the markup is a TrustedHTML sink ("DOMParser parseFromString"), converted before the mime enum is checked.
+            let html = crate::trusted_types::compliant_string(s, &page, crate::trusted_types::Kind::Html, a.get(0), "DOMParser parseFromString", false)?;
             let mime = dom_string(a.get(1))?;
             if mime != "text/html" && !XML_TYPES.contains(&mime.as_str()) {
                 return Err(JsError::Type(format!(
                     "Failed to execute 'parseFromString' on 'DOMParser': The provided value '{mime}' is not a valid enum value of type DOMParserSupportedType."
                 ).into()));
             }
-            let page = page_of(s)?;
             let url = page.dom.borrow().document_data(page.document()).map(|d| d.url.to_string()).unwrap_or_default();
             let doc = if mime == "text/html" {
                 pyro_dom::parse::parse_domparser_document(&page.dom, &url, &html)

@@ -255,6 +255,7 @@ impl Browser {
         let mut request = FetchRequest {
             csp: None,
             required_csp: None,
+            purpose: None,
             parser_priority: blocker.is_some(),
             credentials: None,
             post: None,
@@ -269,6 +270,7 @@ impl Browser {
             initiator: Some(pyro_webapi::resource_timing::Initiator::Link),
             module: None,
             part: None,
+            accept_signature: None,
         };
         // CSP `style-src-elem`, with the link's nonce.
         let Some(finish) = self.element_csp_check(page, &mut request, node, Box::new(finish)) else { return };
@@ -626,6 +628,7 @@ impl Browser {
         let request = FetchRequest {
             csp: None,
             required_csp: None,
+            purpose: None,
             parser_priority: self.stylesheets_block_scripts(page),
             credentials: None,
             post: None,
@@ -645,6 +648,7 @@ impl Browser {
             initiator: Some(pyro_webapi::resource_timing::Initiator::Css),
             module: None,
             part: None,
+            accept_signature: None,
         };
         *layout_key.borrow_mut() = Some(crate::layout_key_of(&frame, &request, import.integrity.as_deref()));
         let cancel = self.fetch_document_resource(page, &resource_loader, request, Box::new(finish));

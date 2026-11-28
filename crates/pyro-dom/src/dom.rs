@@ -268,6 +268,7 @@ pub struct Dom {
     pub(crate) svg_points: rustc_hash::FxHashMap<u32, std::rc::Weak<crate::svg_point_list::PointLists>>,
     pub(crate) svg_numbers: rustc_hash::FxHashMap<u32, rustc_hash::FxHashMap<&'static str, std::rc::Weak<crate::svg_point_list::NumberLists>>>,
     pub(crate) svg_lengths: rustc_hash::FxHashMap<u32, rustc_hash::FxHashMap<&'static str, std::rc::Weak<crate::svg_point_list::LengthLists>>>,
+    pub(crate) svg_transforms: rustc_hash::FxHashMap<u32, rustc_hash::FxHashMap<&'static str, std::rc::Weak<crate::svg_point_list::TransformLists>>>,
     pub(crate) svg_strings: rustc_hash::FxHashMap<(u32, crate::svg_string_list::StringListAttribute), Vec<String>>,
     pub(crate) svg_pans: rustc_hash::FxHashMap<u32, (f64, f64, f64)>,
     /// Trusted Types' [[ScriptText]] of the `<script>` elements that have one (`Dom::script_text`),
@@ -318,6 +319,8 @@ pub struct Dom {
     /// A `<select>` was created: the selectedness steps of insertions and
     /// removals (`Dom::options_after_insert`) run (none before).
     pub(crate) select_seen: bool,
+    /// A `dialog` element was created in this DOM (`Dom::dialog_seen`).
+    pub(crate) dialog_seen: bool,
     /// An `<input>` was created: radios joining a group by insertion uncheck
     /// the rest of it (`Dom::radio_joined_group`; none before).
     pub(crate) input_seen: bool,
@@ -365,6 +368,13 @@ pub struct Dom {
     /// The source an `<img>` selected from its `srcset` or its `<picture>`'s `<source>`s (the URL
     /// as written), set by the image loader: what a render snapshot gives as the image's `src`.
     image_sources: rustc_hash::FxHashMap<NodeId, String>,
+    /// The lazy `<img>`s whose fetch waits for the lazy load check (HTML "lazy loading
+    /// attributes"): a render snapshot gives them no `src`, so the renderer does not fetch them.
+    image_deferred: rustc_hash::FxHashSet<NodeId>,
+    /// The `<img>`s whose load never delays `load`: lazy ones, and ones let go from deferral when
+    /// `loading` became eager (HTML "lazy loading attributes"). A render snapshot marks them so
+    /// the renderer's own request of the image is not waited for either, whatever `loading` is now.
+    image_lazy: rustc_hash::FxHashSet<NodeId>,
     /// Named access on the Window, per document (see `window_names`).
     pub(crate) window_names: std::cell::RefCell<rustc_hash::FxHashMap<u32, crate::window_names::WindowNames>>,
     /// Attr nodes of an element's attributes, by element slot (see `attr_node`).
@@ -413,6 +423,7 @@ impl Dom {
             svg_points: Default::default(),
             svg_numbers: Default::default(),
             svg_lengths: Default::default(),
+            svg_transforms: Default::default(),
             svg_strings: Default::default(),
             svg_pans: Default::default(),
             script_texts: Default::default(),
@@ -443,6 +454,7 @@ impl Dom {
             pending_input_value_attr: None,
             selectedcontent_seen: false,
             select_seen: false,
+            dialog_seen: false,
             input_seen: false,
             options_batch_removal: false,
             selectedcontent_updating: false,
@@ -464,6 +476,8 @@ impl Dom {
             natural_sizes: Default::default(),
             reported_natural_sizes: Default::default(),
             image_sources: Default::default(),
+            image_deferred: Default::default(),
+            image_lazy: Default::default(),
             window_names: Default::default(),
             attr_nodes: Default::default(),
         }
@@ -595,6 +609,34 @@ impl Dom {
             Some(s) => self.natural_sizes.insert(el, s) != Some(s),
             None => self.natural_sizes.remove(&el).is_some(),
         };
+        if changed {
+            self.bump();
+            self.note(Change::Attr(i, 0, false));
+        }
+    }
+    /// Whether the lazy `<img>` `el` still waits for the lazy load check ([`Dom::set_image_deferred`]).
+    pub fn image_deferred(&self, el: NodeId) -> bool {
+        self.image_deferred.contains(&el)
+    }
+    /// Records that the image loader defers (or stops deferring) the fetch of `el`; a change is
+    /// journaled like an attribute change of the image.
+    pub fn set_image_deferred(&mut self, el: NodeId, deferred: bool) {
+        let Ok(i) = self.check(el) else { return };
+        let changed = if deferred { self.image_deferred.insert(el) } else { self.image_deferred.remove(&el) };
+        if changed {
+            self.bump();
+            self.note(Change::Attr(i, 0, false));
+        }
+    }
+    /// Whether the `<img>` `el`'s load never delays `load` ([`Dom::set_image_lazy`]).
+    pub fn image_lazy(&self, el: NodeId) -> bool {
+        self.image_lazy.contains(&el)
+    }
+    /// Records that the image loader lets `el`'s load not delay `load` (lazy, or let go from
+    /// deferral); a change is journaled like an attribute change of the image.
+    pub fn set_image_lazy(&mut self, el: NodeId, lazy: bool) {
+        let Ok(i) = self.check(el) else { return };
+        let changed = if lazy { self.image_lazy.insert(el) } else { self.image_lazy.remove(&el) };
         if changed {
             self.bump();
             self.note(Change::Attr(i, 0, false));
@@ -1036,7 +1078,9 @@ impl Dom {
             focused: NIL,
             hovered: NIL,
             activated: NIL,
+            activated_alone: false,
             focus_visible: false,
+            marker_focus: None,
             design_mode: false,
             style_with_css: false,
             default_paragraph_separator: "div",
@@ -1666,6 +1710,23 @@ impl Dom {
         self.registry_associations.get(&node).copied().unwrap_or_else(|| self.implicit_registry(node))
     }
 
+    /// `node` was given a null registry explicitly (the parser's `customelementregistry`
+    /// attribute, `{customElementRegistry: null}`), whatever its document's default is.
+    pub(crate) fn has_explicit_null_registry(&self, node: u32) -> bool {
+        self.registry_associations.get(&node) == Some(&RegistryAssociation::Null)
+    }
+
+    /// The registry the parser gives the element it creates under `parent` (HTML "create an
+    /// element for the token"): none with a `customelementregistry` attribute, else the one
+    /// `parent` looks up.
+    pub(crate) fn parser_registry_for(&self, element: u32, parent: u32) -> RegistryAssociation {
+        if self.n(element).element().is_some_and(|e| e.attr("customelementregistry").is_some()) {
+            RegistryAssociation::Null
+        } else {
+            self.registry_idx(parent)
+        }
+    }
+
     pub(crate) fn set_registry_idx(&mut self, node: u32, registry: RegistryAssociation) {
         if registry == self.implicit_registry(node) {
             if !self.registry_associations.is_empty() { self.registry_associations.remove(&node); }
@@ -1746,8 +1807,10 @@ impl Dom {
             local_name!("audio") | local_name!("video") | local_name!("track") => self.media_seen = true,
             local_name!("canvas") => self.canvas_seen = true,
             local_name!("select") => self.select_seen = true,
+            local_name!("dialog") => self.dialog_seen = true,
             local_name!("input") => self.input_seen = true,
             local_name!("animate") if name.ns == ns!(svg) => self.smil_seen = true,
+            _ if name.ns == ns!(svg) && matches!(&*name.local, "animateTransform" | "set" | "animateMotion") => self.smil_seen = true,
             _ => {}
         }
         self.selectedcontent_seen |= name.ns == ns!(html) && &*name.local == "selectedcontent";
@@ -2928,6 +2991,8 @@ impl Dom {
         if !self.live_iterators.is_empty() {
             self.iterators_before_remove(node);
         }
+        // The moved subtree stays observed through its old ancestors until the observers are notified.
+        self.add_transient_observers(old_parent, node);
         self.unlink(node);
         self.bump_tree();
         self.note(Change::Removed(old_parent, node, old_next));
@@ -3240,6 +3305,11 @@ impl Dom {
             self.iterators_before_remove(node);
         }
         self.unlink(node);
+        // HTML "reset the form owner": the node itself left its place, so the form the parser
+        // gave it from outside its ancestors no longer holds (its ancestors' removal keeps it).
+        if let Some(e) = self.n_mut(node).element_mut() {
+            e.parser_form = None;
+        }
         // Removing steps (form owners) come before disconnectedCallback.
         if self.internals.faces != 0 {
             self.faces_after_tree_change(node);
@@ -3550,6 +3620,9 @@ impl Dom {
                 // pyro: a copy of a `style` attribute CSP blocked declares nothing either (Chrome
                 // copies the element's empty inline style); a clone is not checked again.
                 self.copy_style_attribute_block(n, id);
+                // A copy of an element whose nonce was hidden keeps that nonce in its slot (its
+                // attribute is the emptied one the clone copied).
+                self.copy_hidden_nonce(n, id);
                 id.idx
             }
             NodeKind::Text(s) => {
@@ -3609,7 +3682,8 @@ impl Dom {
             if let NodeKind::Fragment(FragmentData { shadow: Some(mode), flags, ref reference_target, .. }) = self.n(src_sr).kind {
                 if flags & shadow_flags::CLONABLE != 0 {
                     let reference_target = reference_target.clone();
-                    let dst_sr = self.new_shadow_root(copy, mode, flags & !shadow_flags::AVAILABLE_TO_INTERNALS);
+                    // The copy is as available to its host's ElementInternals as the original (Chrome): the host's constructor runs after the clone.
+                    let dst_sr = self.new_shadow_root(copy, mode, flags);
                     if let NodeKind::Fragment(f) = &mut self.n_mut(dst_sr).kind {
                         f.reference_target = reference_target;
                     }
@@ -3942,6 +4016,11 @@ impl Dom {
         }
         if plain && !self.svg_lengths.is_empty() {
             if let Some(lists) = self.svg_lengths.get(&i).and_then(|attrs| attrs.get(&*name.local)).and_then(std::rc::Weak::upgrade) {
+                lists.attribute_changed(self.n(i).element().unwrap().attr_local(&name.local).unwrap_or_default());
+            }
+        }
+        if plain && !self.svg_transforms.is_empty() {
+            if let Some(lists) = self.svg_transforms.get(&i).and_then(|attrs| attrs.get(&*name.local)).and_then(std::rc::Weak::upgrade) {
                 lists.attribute_changed(self.n(i).element().unwrap().attr_local(&name.local).unwrap_or_default());
             }
         }
@@ -4340,17 +4419,8 @@ impl Dom {
             NodeKind::Attr(_) => self.set_attr_node_value(id, value),
             k if k.char_data().is_some() => self.replace_data(id, 0, u32::MAX, value),
             _ => {
-                // Its one text child holds this text already: nothing to
-                // do, as in Chrome (no records, the child stays; the spec's
-                // "replace all" would swap it for an equal one).
-                let first = self.n(i).first_child;
-                if !value.is_empty()
-                    && first != NIL
-                    && self.n(first).next == NIL
-                    && matches!(&self.n(first).kind, NodeKind::Text(s) if s == value)
-                {
-                    return Ok(());
-                }
+                // "String replace all": an element whose one text child holds this text already gets a
+                // new text node and the records for it, as in Chrome.
                 let t = if value.is_empty() {
                     None
                 } else {
@@ -4878,6 +4948,7 @@ impl Dom {
         if !self.svg_numbers.is_empty() { self.svg_numbers.remove(&i); }
         if !self.script_texts.is_empty() { self.script_texts.remove(&i); }
         if !self.svg_lengths.is_empty() { self.svg_lengths.remove(&i); }
+        if !self.svg_transforms.is_empty() { self.svg_transforms.remove(&i); }
         if !self.registry_associations.is_empty() { self.registry_associations.remove(&i); }
         if !self.custom_definition_owners.is_empty() { self.custom_definition_owners.remove(&i); }
         if !self.svg_strings.is_empty() {

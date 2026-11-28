@@ -454,7 +454,7 @@ impl FontFamily {
         generic_font_family!(MONOSPACE, Monospace);
         generic_font_family!(CURSIVE, Cursive);
         generic_font_family!(FANTASY, Fantasy);
-        #[cfg(feature = "gecko")]
+        // pyro: also for servo (MathML Core's `font-family: math`).
         generic_font_family!(MATH, Math);
         #[cfg(feature = "gecko")]
         generic_font_family!(MOZ_EMOJI, MozEmoji);
@@ -470,7 +470,6 @@ impl FontFamily {
             GenericFontFamily::Monospace => &*MONOSPACE,
             GenericFontFamily::Cursive => &*CURSIVE,
             GenericFontFamily::Fantasy => &*FANTASY,
-            #[cfg(feature = "gecko")]
             GenericFontFamily::Math => &*MATH,
             #[cfg(feature = "gecko")]
             GenericFontFamily::MozEmoji => &*MOZ_EMOJI,
@@ -681,7 +680,7 @@ pub enum GenericFontFamily {
     Monospace,
     Cursive,
     Fantasy,
-    #[cfg(feature = "gecko")]
+    // pyro: also for servo (MathML Core's `font-family: math`).
     Math,
     #[parse(condition = "system_ui_enabled")]
     SystemUi,
@@ -697,9 +696,9 @@ impl GenericFontFamily {
     /// the user. See bug 789788 and bug 1730098.
     pub(crate) fn valid_for_user_font_prioritization(self) -> bool {
         match self {
-            Self::None | Self::Cursive | Self::Fantasy | Self::SystemUi => false,
+            Self::None | Self::Cursive | Self::Fantasy | Self::SystemUi | Self::Math => false,
             #[cfg(feature = "gecko")]
-            Self::Math | Self::MozEmoji => false,
+            Self::MozEmoji => false,
             Self::Serif | Self::SansSerif | Self::Monospace => true,
         }
     }
@@ -1248,6 +1247,12 @@ impl FontStyle {
     /// See also https://github.com/w3c/csswg-drafts/issues/2295
     pub const DEFAULT_OBLIQUE_DEGREES: i16 = 14;
 
+    /// pyro: an explicit `oblique 14deg` is stored one fixed-point step (1/256 degree) above the
+    /// keyword `oblique`, so the two serialize apart as in Chrome (`oblique` and `oblique 14deg`).
+    /// The two therefore compare unequal (`==`) by construction, though they select the same face
+    /// (the step is far below what font matching can tell apart).
+    pub const EXPLICIT_DEFAULT_OBLIQUE_DEGREES: f32 = 14.0 + 1.0 / 256.0;
+
     /// The `oblique` keyword with the default degrees.
     pub const OBLIQUE: FontStyle = FontStyle(FontStyleFixedPoint {
         value: Self::DEFAULT_OBLIQUE_DEGREES << FONT_STYLE_FRACTION_BITS,
@@ -1290,6 +1295,9 @@ impl ToCss for FontStyle {
         if *self != Self::OBLIQUE {
             // It's not the default oblique amount, so append the angle in degrees.
             dest.write_char(' ')?;
+            if *self == Self::oblique(Self::EXPLICIT_DEFAULT_OBLIQUE_DEGREES) {
+                return dest.write_str("14deg");
+            }
             Angle::from_degrees(self.oblique_degrees()).to_css(dest)?;
         }
         Ok(())

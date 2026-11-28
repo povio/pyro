@@ -47,6 +47,11 @@ pub enum Initiator {
     Css,
     Img,
     Iframe,
+    Frame,
+    Input,
+    Image,
+    Embed,
+    Object,
     Video,
     Audio,
     Track,
@@ -64,11 +69,34 @@ impl Initiator {
             Initiator::Css => "css",
             Initiator::Img => "img",
             Initiator::Iframe => "iframe",
+            Initiator::Frame => "frame",
+            Initiator::Input => "input",
+            Initiator::Image => "image",
+            Initiator::Embed => "embed",
+            Initiator::Object => "object",
             Initiator::Video => "video",
             Initiator::Audio => "audio",
             Initiator::Track => "track",
             Initiator::Other => "other",
         }
+    }
+}
+
+/// The initiator type of an image-like fetch an element started (Resource Timing: the element's
+/// local name where it has one of its own): `<input type=image>` is "input", an SVG `<image>`
+/// "image", a `<video poster>` "video", `<object>` "object", `<embed>` "embed"; `<img>` (and a
+/// `<picture>`'s) "img"; anything else the caller's `fallback`.
+pub fn element_initiator(dom: &pyro_dom::Dom, node: pyro_dom::NodeId, fallback: Initiator) -> Initiator {
+    let Ok(el) = dom.element(node) else { return fallback };
+    let svg = &*el.name.ns == "http://www.w3.org/2000/svg";
+    match (&*el.name.local, svg) {
+        ("img", false) => Initiator::Img,
+        ("input", false) => Initiator::Input,
+        ("image", true) => Initiator::Image,
+        ("video", false) => Initiator::Video,
+        ("object", false) => Initiator::Object,
+        ("embed", false) => Initiator::Embed,
+        _ => fallback,
     }
 }
 
@@ -95,11 +123,44 @@ pub struct ReportedResponse {
     /// A `no-cors` cross-origin response: status and type are hidden.
     pub opaque: bool,
     pub from_cache: bool,
+    /// A navigation's response was a speculation-rules prefetch's (`deliveryType`
+    /// "navigational-prefetch").
+    pub prefetched: bool,
     pub protocol: Option<pyro_net::http::Version>,
     pub mime: String,
     pub encoded: u64,
     pub decoded: u64,
     pub server_timing: Vec<crate::server_timing::Metric>,
+    /// `contentEncoding` as Resource Timing exposes it (TAO-checked, see [`content_encoding`]).
+    pub content_encoding: &'static str,
+}
+
+/// Resource Timing's `contentEncoding` of a response's `Content-Encoding` header lines: the
+/// lowercase token when it is one Chromium knows ("gzip", "deflate", "br", "zstd", "dcb",
+/// "dcz"), "multiple" for a list of several, "@unknown" for any other single value, and ""
+/// when there is none (an empty value counts as none).
+pub fn content_encoding(headers: &pyro_net::http::HeaderMap) -> &'static str {
+    let tokens: Vec<String> = headers
+        .get_all(pyro_net::http::header::CONTENT_ENCODING)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|line| line.split(','))
+        .map(|t| t.trim().to_ascii_lowercase())
+        .filter(|t| !t.is_empty())
+        .collect();
+    match tokens.as_slice() {
+        [] => "",
+        [one] => match one.as_str() {
+            "gzip" | "x-gzip" => "gzip",
+            "deflate" => "deflate",
+            "br" => "br",
+            "zstd" => "zstd",
+            "dcb" => "dcb",
+            "dcz" => "dcz",
+            _ => "@unknown",
+        },
+        _ => "multiple",
+    }
 }
 
 impl ReportedResponse {
@@ -120,11 +181,13 @@ impl ReportedResponse {
             status: head.status.as_u16(),
             opaque,
             from_cache: head.from_cache,
+            prefetched: false,
             protocol: Some(head.protocol),
             mime: if opaque { String::new() } else { head.mime.clone() },
             encoded: 0,
             decoded: 0,
             server_timing: if allow_metrics { crate::server_timing::parse(&head.headers) } else { Vec::new() },
+            content_encoding: if allow_metrics && !opaque { content_encoding(&head.headers) } else { "" },
         }
     }
 }
@@ -140,6 +203,8 @@ pub struct ResourceEntry {
     pub start: f64,
     pub redirect_start: f64,
     pub redirect_end: f64,
+    /// A service worker's `fetch` handling began (0: none saw the fetch).
+    pub worker_start: f64,
     pub fetch_start: f64,
     pub domain_lookup_start: f64,
     pub domain_lookup_end: f64,
@@ -156,6 +221,7 @@ pub struct ResourceEntry {
     pub redirect_count: u16,
     pub next_hop_protocol: &'static str,
     pub content_type: String,
+    pub content_encoding: &'static str,
     pub render_blocking: bool,
     pub delivery_type: &'static str,
     pub server_timing: Vec<crate::server_timing::Metric>,
@@ -209,8 +275,14 @@ fn entry_with_clock(report: &FetchReport, ms: impl Fn(Instant) -> f64) -> Resour
     let t = &r.timing;
     // A step never comes before the one it follows (clamped forward).
     let after = |floor: f64, t: Option<Instant>| t.map_or(floor, |t| ms(t).max(floor));
+    // A service worker's fetch handling: `workerStart` lies between `startTime` and `fetchStart`
+    // (and `redirectStart`), and is exposed whatever the Timing-Allow-Origin check says.
+    if let Some(worker) = t.worker_start {
+        e.worker_start = ms(worker).max(start);
+        e.fetch_start = e.worker_start;
+    }
     if t.redirect_count > 0 {
-        e.redirect_start = start;
+        e.redirect_start = e.worker_start.max(start);
         e.redirect_end = after(start, t.redirect_end);
         e.fetch_start = after(e.redirect_end, t.fetch_start);
         e.redirect_count = t.redirect_count;
@@ -224,6 +296,7 @@ fn entry_with_clock(report: &FetchReport, ms: impl Fn(Instant) -> f64) -> Resour
         return e;
     }
     e.server_timing.clone_from(&r.server_timing);
+    e.content_encoding = r.content_encoding;
     let fetch_start = e.fetch_start;
     match t.connection {
         Some(c) => {
@@ -256,7 +329,13 @@ fn entry_with_clock(report: &FetchReport, ms: impl Fn(Instant) -> f64) -> Resour
         (Some(_), Some(p)) => protocol_name(p),
         _ => "",
     };
-    e.delivery_type = if r.from_cache { "cache" } else { "" };
+    e.delivery_type = if r.prefetched {
+        "navigational-prefetch"
+    } else if r.from_cache {
+        "cache"
+    } else {
+        ""
+    };
     e
 }
 
@@ -398,6 +477,7 @@ impl PageDom {
         for report in &reports {
             self.add_resource_timing(report);
         }
+        crate::perf::scan::note_fetch_finished(self);
     }
 
     /// Adds the entry of a finished fetch of this document (Resource Timing
@@ -525,7 +605,7 @@ fn timed_sink_with(
     // A navigation's response is the frame's, not the document's: another
     // origin's (or one reached through another origin) keeps its status and
     // type to itself.
-    let navigation_origin = (initiator == Initiator::Iframe)
+    let navigation_origin = matches!(initiator, Initiator::Iframe | Initiator::Frame)
         .then(|| page.document_url_parsed().map_or_else(|| "null".to_owned(), |u| u.origin().ascii_serialization()));
     let start = Instant::now();
     let mut report = Some(FetchReport {
@@ -546,6 +626,7 @@ fn timed_sink_with(
                     }) {
                         response.opaque = true;
                         response.mime.clear();
+                        response.content_encoding = "";
                     }
                     report.response = Some(response);
                 }

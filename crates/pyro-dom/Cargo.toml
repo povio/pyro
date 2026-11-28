@@ -12,6 +12,8 @@ pyro-raster = { path = "../pyro-raster" }
 cssparser = "0.38"
 getrandom = "0.3"
 encoding_rs = "0.8"
+# Encoding detection for unlabelled documents (what Firefox ships).
+chardetng = "1"
 html5ever = "0.40"
 indexmap = "2"
 kurbo = "0.13.1"

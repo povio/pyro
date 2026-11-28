@@ -288,40 +288,67 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         initial_y: f64,
         custom_widget_scenes: &'a CustomWidgetSceneMap,
     ) -> Self {
-        let selection_ranges: HashMap<NodeId, (usize, usize)> = dom
-            .get_text_selection_ranges()
-            .into_iter()
-            .map(|(node_id, start, end)| (node_id, (start, end)))
-            .collect();
+        Self::with_extras(dom, scale, width, height, initial_x, initial_y, custom_widget_scenes, true)
+    }
+
+    /// pyro: [`Self::new`], with `extras` false a painter that only builds boxes' shapes (hit
+    /// testing's `hit_shape_contains`): without the selection, the highlights, the caret and the
+    /// document-wide effect sets, which take a pass over the document.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn with_extras(
+        dom: &'dom BaseDocument,
+        scale: f64,
+        width: u32,
+        height: u32,
+        initial_x: f64,
+        initial_y: f64,
+        custom_widget_scenes: &'a CustomWidgetSceneMap,
+        extras: bool,
+    ) -> Self {
+        let selection_ranges: HashMap<NodeId, (usize, usize)> = if extras {
+            dom.get_text_selection_ranges()
+                .into_iter()
+                .map(|(node_id, start, end)| (node_id, (start, end)))
+                .collect()
+        } else {
+            HashMap::new()
+        };
 
         // pyro: at most 31 highlights below the selection (bits of a mask).
         let mut highlight_layers = Vec::new();
         let mut highlight_ranges: HashMap<NodeId, Vec<(usize, usize, usize)>> = HashMap::new();
-        for (name, ranges) in dom.highlight_layer_ranges().into_iter().take(31) {
-            let layer = highlight_layers.len();
-            highlight_layers.push(crate::highlight::Layer::Named(name));
-            for (node_id, start, end) in ranges {
-                highlight_ranges.entry(node_id).or_default().push((layer, start, end));
+        let mut caret = None;
+        if extras {
+            for (name, ranges) in dom.highlight_layer_ranges().into_iter().take(31) {
+                let layer = highlight_layers.len();
+                highlight_layers.push(crate::highlight::Layer::Named(name));
+                for (node_id, start, end) in ranges {
+                    highlight_ranges.entry(node_id).or_default().push((layer, start, end));
+                }
             }
-        }
-        let selection_layer = highlight_layers.len();
-        highlight_layers.push(crate::highlight::Layer::Selection);
-        for (&node_id, &(start, end)) in &selection_ranges {
-            highlight_ranges.entry(node_id).or_default().push((selection_layer, start, end));
-        }
-        // pyro: the caret, a block one over the character after it as the top highlight.
-        let mut caret = crate::caret::caret_paint(dom);
-        if let Some(paint) = &caret
-            && let Some(end) = paint.covers
-        {
-            let layer = highlight_layers.len();
-            highlight_layers.push(crate::highlight::Layer::Caret(paint.color, paint.text_color));
-            highlight_ranges.entry(paint.node).or_default().push((layer, paint.byte, end));
-            caret = None;
+            let selection_layer = highlight_layers.len();
+            highlight_layers.push(crate::highlight::Layer::Selection);
+            for (&node_id, &(start, end)) in &selection_ranges {
+                highlight_ranges.entry(node_id).or_default().push((selection_layer, start, end));
+            }
+            // pyro: the caret, a block one over the character after it as the top highlight.
+            caret = crate::caret::caret_paint(dom);
+            if let Some(paint) = &caret
+                && let Some(end) = paint.covers
+            {
+                let layer = highlight_layers.len();
+                highlight_layers.push(crate::highlight::Layer::Caret(paint.color, paint.text_color));
+                highlight_ranges.entry(paint.node).or_default().push((layer, paint.byte, end));
+                caret = None;
+            }
         }
 
         let layer_manager = LayerManager::default();
-        let effects = crate::layers::document_effects(dom);
+        let effects = if extras {
+            crate::layers::document_effects(dom)
+        } else {
+            crate::layers::DocumentEffects { blend_isolated: HashSet::new(), backdrop_ancestors: HashSet::new() }
+        };
         let root_element_id = dom.try_root_element().map(|el| el.id);
         let canvas_background = canvas_background_source(dom);
 
@@ -1936,6 +1963,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                         cx.draw_content_gradient(scene);
                     }
                     cx.draw_math_fraction_bar(scene);
+                    cx.draw_math_radical(scene);
+                    cx.draw_math_stretch(scene);
                     #[cfg(feature = "custom-widget")]
                     cx.draw_custom_widget(scene);
                     if !skipped {
@@ -2521,6 +2550,104 @@ enum ColumnShare {
     Cut,
 }
 
+/// pyro: which of an element's shapes a hit test asks about ([`hit_shape_contains`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HitShape {
+    /// The region its `clip-path` leaves: it clips the element and its descendants.
+    ClipPath,
+    /// The element's own box as it is painted: its `border-shape`'s outer edge, or its border box
+    /// with the rounded or shaped (`corner-shape`) corners of its `border-radius`.
+    Own,
+    /// What its `border-shape` leaves of the content an `overflow` other than `visible` clips (the
+    /// shape's inner edge): it clips the element's descendants.
+    Overflow,
+}
+
+/// pyro: whether the point (`x`, `y`) (CSS px from `id`'s border box's origin, in its own
+/// coordinates) is inside the shape `shape` of the element `id`, built as it is painted (zoom,
+/// `corner-shape`, `border-shape`, the reference boxes of a `clip-path`, an SVG `<clipPath>`).
+/// `true` when the element has no such shape: nothing is cut away.
+pub(crate) fn hit_shape_contains(dom: &BaseDocument, id: NodeId, shape: HitShape, x: f64, y: f64) -> bool {
+    let Some(node) = dom.get_node(id) else { return true };
+    if node.element_data().is_none() || node.primary_styles().is_none() {
+        return true;
+    }
+    // pyro: plain `border-radius` corners need no painter (every mouse move asks, for each rounded
+    // box under the pointer): the border box's corner ellipses are tested directly.
+    if shape == HitShape::Own {
+        if let Some(inside) = plain_rounded_corners_contain(node, x, y) {
+            return inside;
+        }
+    }
+    #[cfg(feature = "svg")]
+    let _raster_scope = anyrender_svg::PageRasterScope::enter(&dom.raster_budget);
+    let scale = dom.viewport().scale_f64();
+    let (width, height) = dom.viewport().window_size;
+    let widgets = HashMap::new();
+    let painter = BlitzDomPainter::with_extras(dom, scale, width, height, 0.0, 0.0, &widgets, false);
+    let cx = painter.element_cx(node, *node.final_layout(), Affine::IDENTITY, None);
+    match shape {
+        HitShape::ClipPath => cx.clip_path_contains(Point::new(x, y)),
+        HitShape::Own => cx.own_shape_contains(Point::new(x * scale, y * scale)),
+        HitShape::Overflow => cx.overflow_shape_contains(Point::new(x * scale, y * scale)),
+    }
+}
+
+/// pyro: [`HitShape::Own`] for a box whose corners are plain `border-radius` ones (no `border-shape`,
+/// every `corner-shape` round), answered without a painter: whether the point (`x`, `y`) (CSS px
+/// from the border box's origin) is inside the border box less its corner ellipses, the radii
+/// resolved and scaled to fit as they are painted ([`create_css_rect`], at scale 1). `None` when
+/// the box needs the painter (a `border-shape` or other `corner-shape`, a table's grid box, a
+/// fieldset's legend-shifted border).
+fn plain_rounded_corners_contain(node: &Node, x: f64, y: f64) -> Option<bool> {
+    let style = node.primary_styles()?;
+    let border = style.get_border();
+    if !matches!(border.border_shape, style::values::generics::basic_shape::GenericBorderShape::None) {
+        return None;
+    }
+    let round = |k: f32| (f64::from(k) - 1.0).abs() < 1e-4;
+    if ![border.corner_top_left_shape.k, border.corner_top_right_shape.k, border.corner_bottom_right_shape.k, border.corner_bottom_left_shape.k]
+        .into_iter()
+        .all(round)
+    {
+        return None;
+    }
+    let element = node.element_data()?;
+    if matches!(element.special_data, blitz_dom::node::SpecialElementData::TableRoot(_))
+        || node.data.is_element_with_tag_name(&local_name!("fieldset"))
+    {
+        return None;
+    }
+    let frame = create_css_rect(&style, &node.final_layout(), 1.0);
+    if !frame.has_border_radius() {
+        return Some(true);
+    }
+    let b = frame.border_box;
+    if x < b.x0 || x > b.x1 || y < b.y0 || y > b.y1 {
+        return Some(false);
+    }
+    let r = frame.border_radii;
+    // (Each corner: its radii, and the centre of its ellipse.)
+    for (radius, cx, cy) in [
+        (r.top_left, b.x0 + r.top_left.x, b.y0 + r.top_left.y),
+        (r.top_right, b.x1 - r.top_right.x, b.y0 + r.top_right.y),
+        (r.bottom_right, b.x1 - r.bottom_right.x, b.y1 - r.bottom_right.y),
+        (r.bottom_left, b.x0 + r.bottom_left.x, b.y1 - r.bottom_left.y),
+    ] {
+        if radius.x <= 0.0 || radius.y <= 0.0 {
+            continue;
+        }
+        // In the corner's square (the quarter of the ellipse's box that holds the corner).
+        let (dx, dy) = ((x - cx) / radius.x, (y - cy) / radius.y);
+        let in_corner_x = if cx < (b.x0 + b.x1) / 2.0 { x < cx } else { x > cx };
+        let in_corner_y = if cy < (b.y0 + b.y1) / 2.0 { y < cy } else { y > cy };
+        if in_corner_x && in_corner_y && dx * dx + dy * dy > 1.0 {
+            return Some(false);
+        }
+    }
+    Some(true)
+}
+
 /// pyro: the element whose background paints the canvas (CSS Backgrounds 3 §2.11.2), as Blink's
 /// `LayoutBox::BackgroundTransfersToView` decides it: the root element, unless it is an HTML
 /// `html` element without a background of its own, when it is its first `body` child, if that
@@ -2604,6 +2731,39 @@ pub(crate) struct Privacy {
 }
 
 impl Privacy {
+    /// Whether the document `frame` (the one of the frame element `owner`, in `parent`) may be
+    /// drawn: it is of the origin of `parent` (an `about:` document, `about:srcdoc`, inherits its
+    /// creator's) and not sandboxed without `allow-same-origin` (an opaque origin). A frame of
+    /// another origin is left out, as an opaque image is (HTML-in-Canvas, privacy-preserving
+    /// painting: "cross-origin iframes").
+    pub(crate) fn same_origin_frame(parent: &BaseDocument, frame: &BaseDocument, owner: &ElementData) -> bool {
+        if let Some(sandbox) = owner.attrs().iter().find(|attr| &*attr.name.local == "sandbox")
+            && !sandbox.value.split_ascii_whitespace().any(|token| token.eq_ignore_ascii_case("allow-same-origin"))
+        {
+            return false;
+        }
+        let (parent, frame) = (parent.url(), frame.url());
+        frame.scheme() == "about" || frame.origin() == parent.origin()
+    }
+
+    /// Whether `image` may be drawn: not from an opaque response; the pixels of a raster image
+    /// that is drawn are noted as allowed.
+    pub(crate) fn admit(&self, image: &blitz_dom::node::ImageData) -> bool {
+        if Self::opaque(image) {
+            return false;
+        }
+        if let blitz_dom::node::ImageData::Raster(raster) = image {
+            // A video frame of media a page may not read (`RasterImageData::tainting`) is drawn
+            // but taints the canvas, as `drawImage(video)` does: it is never among the allowed.
+            if raster.tainting {
+                self.unclassified.set(true);
+            } else {
+                self.allowed.borrow_mut().push(raster.data.id());
+            }
+        }
+        true
+    }
+
     /// Whether `image` came from an opaque response, which must not be drawn.
     pub(crate) fn opaque(image: &blitz_dom::node::ImageData) -> bool {
         match image {
@@ -3532,7 +3692,14 @@ impl ElementCx<'_, '_> {
         // pyro: the first line's content is in the `::first-line` box (blitz-dom
         // `TextLayout::first_line`), outside the elements on it, which have their styles there.
         let first_line = text_layout.first_line.filter(|&id| dom.get_node(id).is_some());
+        // pyro: the layout's styles took the visited rules of their elements; the privacy paint
+        // (`UnvisitedPaint`) reads them unvisited.
         let mut first_line_styles = text_layout.first_line_styles.clone();
+        if blitz_dom::node::UnvisitedPaint::active() {
+            for (_, style) in first_line_styles.iter_mut() {
+                *style = blitz_dom::node::UnvisitedPaint::view(style.clone());
+            }
+        }
         let mut item_index = 0usize;
         // pyro: a pass that draws this root's layout in some areas only (an inline element's effect
         // pass, `RunFilter`) needs the fragments of the lines that reach them: the band of the areas,
@@ -4134,6 +4301,11 @@ impl ElementCx<'_, '_> {
         // pyro: HTML-in-Canvas: a canvas with content=drawable lays its content out without
         // painting it in place (on every path: plain, phased, multicol).
         if self.element.is_drawable_canvas() {
+            return;
+        }
+        // pyro: a stretched or large MathML operator is drawn as its variant glyph or glyph
+        // assembly (`draw_math_stretch`) in place of its text.
+        if self.element.math_stretch.is_some() {
             return;
         }
         // (Where a positioned inline box left for its paint-tree entry is painted from: `draw_inline_pass`.)
@@ -5363,6 +5535,14 @@ impl ElementCx<'_, '_> {
         if image.is_none() && !self.generated_marker() {
             return;
         }
+        // pyro: HTML-in-Canvas privacy: a marker image from an opaque response is left out; the
+        // pixels of another are allowed (`Privacy`).
+        if let Some(privacy) = &self.context.privacy
+            && let Some(image) = image
+            && !privacy.admit(&image.image)
+        {
+            return;
+        }
         let Some(text_layout) = self.element.inline_layout_data.as_ref() else { return };
         let Some(line) = text_layout.layout.lines().next() else { return };
         let metrics = line.metrics();
@@ -5771,6 +5951,14 @@ impl ElementCx<'_, '_> {
     ) {
         let image = self.element.list_style_images.first().and_then(Option::as_ref);
         if image.is_none() && !self.generated_marker() {
+            return;
+        }
+        // pyro: HTML-in-Canvas privacy: a marker image from an opaque response is left out; the
+        // pixels of another are allowed (`Privacy`).
+        if let Some(privacy) = &self.context.privacy
+            && let Some(image) = image
+            && !privacy.admit(&image.image)
+        {
             return;
         }
         let (baseline, line_x) = self.marker_baseline(marker_layout);
@@ -7209,7 +7397,7 @@ impl ElementCx<'_, '_> {
         }
         let sub_doc = entry.document.inner();
         let translation = self.transform.translation();
-        let painter = BlitzDomPainter::new(
+        let mut painter = BlitzDomPainter::new(
             &sub_doc,
             scale,
             width.ceil() as u32,
@@ -7218,39 +7406,21 @@ impl ElementCx<'_, '_> {
             translation.y + content.origin().y,
             self.custom_widget_scenes,
         );
+        // pyro: HTML-in-Canvas privacy: the image's document is painted by the same rules (its own
+        // images classified), and what it draws is noted in this paint's.
+        if self.context.privacy.is_some() {
+            painter.privacy = Some(Privacy::default());
+        }
         scene.push_clip_layer(Fill::NonZero, self.transform, &content);
         painter.paint_scene(scene);
         scene.pop_layer();
-        true
-    }
-
-    /// pyro: HTML-in-Canvas privacy: whether this inline `<svg>` references a resource outside the
-    /// document: an `href` that is not a fragment or `data:` URL, or a `url()` in an attribute
-    /// that is not a fragment of this document.
-    #[cfg(feature = "svg")]
-    fn inline_svg_references_resources(&self) -> bool {
-        let tree = self.context.dom.as_ref().tree();
-        let mut stack: Vec<NodeId> = self.node.children.to_vec();
-        while let Some(id) = stack.pop() {
-            let Some(node) = tree.get(id) else { continue };
-            if let Some(element) = node.element_data() {
-                let external = element.attrs().iter().any(|attr| {
-                    let value = attr.value.trim();
-                    if &*attr.name.local == "href" {
-                        return !(value.is_empty() || value.starts_with('#') || value.starts_with("data:"));
-                    }
-                    value.match_indices("url(").any(|(at, _)| {
-                        let rest = value[at + 4..].trim_start().trim_start_matches(['"', '\'']);
-                        !rest.starts_with('#')
-                    })
-                });
-                if external {
-                    return true;
-                }
+        if let (Some(outer), Some(inner)) = (&self.context.privacy, painter.privacy.take()) {
+            outer.allowed.borrow_mut().extend(inner.allowed.into_inner());
+            if inner.unclassified.get() {
+                outer.unclassified.set(true);
             }
-            stack.extend(node.children.iter().copied());
         }
-        false
+        true
     }
 
     #[cfg(feature = "svg")]
@@ -7261,17 +7431,14 @@ impl ElementCx<'_, '_> {
             return;
         };
         // pyro: HTML-in-Canvas privacy: an SVG image from an opaque response (another origin
-        // without CORS, a redirect through one) is left out (`Privacy`). An inline `<svg>` is the
-        // document's own content, unless it references another resource (an `<image>`, `<use>` or
-        // `feImage` href, a `url()` of another document), which it draws as vector paint the scene
-        // scan does not see: that taints.
-        if let Some(privacy) = &self.context.privacy {
-            if blitz_dom::net::is_opaque_image(blitz_dom::net::svg_image_key(svg)) {
-                return;
-            }
-            if self.element.name.local == local_name!("svg") && self.inline_svg_references_resources() {
-                privacy.unclassified.set(true);
-            }
+        // without CORS, a redirect through one) is left out (`Privacy`). An inline `<svg>` is
+        // painted from a source built again for the canvas (`inline_svg_for_privacy`, below):
+        // its colours as for an unvisited link, nothing of other `<svg>`s or sprite files, and
+        // the images of opaque responses left out, so that what it draws is the subtree's and
+        // the document's own.
+        let privacy_inline = self.context.privacy.is_some() && self.element.name.local == local_name!("svg");
+        if self.context.privacy.is_some() && blitz_dom::net::is_opaque_image(blitz_dom::net::svg_image_key(svg)) {
+            return;
         }
         // pyro: its `prefers-color-scheme` blocks and `light-dark()` colours follow this element's
         // used colour scheme (blitz-dom `SvgImageData::for_color_scheme`).
@@ -7313,11 +7480,17 @@ impl ElementCx<'_, '_> {
         // `inline_svg_at_viewport`; WPT css-transforms `transform-percent-010`)
         // pyro: and one with selected text, serialized again with its `::selection` paint
         // (`inline_svg_with_selection`; WPT css-pseudo `svg-text-selection-*`).
-        let with_selection = match self.context.draw_text_context.borrow().runs.is_none() {
+        let with_selection = match self.context.draw_text_context.borrow().runs.is_none() && !privacy_inline {
             true => self.context.dom.as_ref().inline_svg_with_selection(self.node.id, width / units, height / units),
             false => None,
         };
-        let at_viewport = if with_selection.is_some() {
+        let at_viewport = if privacy_inline {
+            // (One that does not parse is left out; the build the page made is not painted for a canvas.)
+            match self.context.dom.as_ref().inline_svg_for_privacy(self.node.id, width / units, height / units) {
+                Some(svg) => Some(svg),
+                None => return,
+            }
+        } else if with_selection.is_some() {
             with_selection
         } else if svg.viewport_dependent {
             self.context.dom.as_ref().inline_svg_at_viewport(self.node.id, width / units, height / units)
@@ -7537,6 +7710,51 @@ impl ElementCx<'_, '_> {
                 }
                 // pyro: with what the document knows of its filters (tainted primitives), and its
                 // `<foreignObject>`s' content painted where usvg draws their images.
+                if let (true, Some(privacy)) = (privacy_inline, &self.context.privacy) {
+                    // pyro: HTML-in-Canvas privacy: painted apart, to note the images it drew as
+                    // the document's own: usvg read only `data:` URLs and the resources
+                    // `inline_svg_for_privacy` left it (no opaque response's, nothing outside the
+                    // subtree), so every image and image-like paint (a pattern, a mask, a filter's
+                    // image) in it is of the subtree's content. What a `<foreignObject>`'s HTML
+                    // painted through this painter is not the svg rebuild's: it classifies its
+                    // images itself (`Privacy`), so the commands it recorded (`foreign`, their
+                    // index ranges) are not noted here.
+                    let mut recording = anyrender::recording::Scene::new();
+                    let mut foreign: Vec<std::ops::Range<usize>> = Vec::new();
+                    let mut handler = |scene: &mut anyrender::recording::Scene, node: &anyrender_svg::usvg::Node| match anyrender_svg::foreign_object() {
+                        Some(fo) => {
+                            let start = scene.commands.len();
+                            self.draw_foreign_object(scene, fo);
+                            foreign.push(start..scene.commands.len());
+                        }
+                        None => anyrender_svg::draw_error_box(scene, node),
+                    };
+                    match crate::filters::svg_filter_notes(self.context.dom, self.node, &svg.tree) {
+                        Some(notes) => anyrender_svg::render_svg_tree_with_notes_and(&mut recording, &svg.tree, transform, notes, &mut handler),
+                        None => anyrender_svg::render_svg_tree_with(&mut recording, &svg.tree, transform, &mut handler),
+                    }
+                    {
+                        use anyrender::recording::RenderCommand;
+                        let mut allowed = privacy.allowed.borrow_mut();
+                        let mut note = |paint: &anyrender::Paint| {
+                            if let anyrender::Paint::Image(brush) = paint {
+                                allowed.push(brush.image.data.id());
+                            }
+                        };
+                        for (index, command) in recording.commands.iter().enumerate() {
+                            if foreign.iter().any(|range| range.contains(&index)) {
+                                continue;
+                            }
+                            match command {
+                                RenderCommand::Fill(fill) => note(&fill.brush),
+                                RenderCommand::Stroke(stroke) => note(&stroke.brush),
+                                RenderCommand::GlyphRun(run) => note(&run.brush),
+                                _ => {}
+                            }
+                        }
+                    }
+                    scene.append_scene(recording, Affine::IDENTITY);
+                } else {
                 let mut handler = |scene: &mut _, node: &anyrender_svg::usvg::Node| match anyrender_svg::foreign_object() {
                     Some(fo) => self.draw_foreign_object(scene, fo),
                     None => anyrender_svg::draw_error_box(scene, node),
@@ -7546,6 +7764,7 @@ impl ElementCx<'_, '_> {
                         anyrender_svg::render_svg_tree_with_notes_and(scene, &svg.tree, transform, notes, &mut handler)
                     }
                     None => anyrender_svg::render_svg_tree_with(scene, &svg.tree, transform, &mut handler),
+                }
                 }
                 if isolate {
                     scene.pop_layer();
@@ -7663,6 +7882,75 @@ impl ElementCx<'_, '_> {
         scene.fill(Fill::NonZero, self.transform, color, None, &rect);
     }
 
+    /// pyro: a MathML radical's overbar and sign (`blitz_dom::layout::math::radical`): the bar
+    /// over the radicand and the sign's glyph at the start of the content box (its end when
+    /// `rtl`), both in the element's `color` (Chromium's `MathMLPainter::PaintRadicalSymbol`).
+    fn draw_math_radical(&self, scene: &mut impl PaintScene) {
+        let Some(radical) = self.element.math_radical.as_deref() else { return };
+        if self.style.get_inherited_box().visibility != StyloVisibility::Visible {
+            return;
+        }
+        let content = self.frame.content_box;
+        let color = self.style.clone_color().as_srgb_color();
+        let scale = self.scale;
+        // The x of a span `[start, start + width]` of the content box's start-edge coordinates.
+        let x = |start: f32, width: f32| {
+            if radical.rtl { content.x1 - (start + width) as f64 * scale } else { content.x0 + start as f64 * scale }
+        };
+        if radical.bar_width > 0.0 && radical.bar_thickness > 0.0 {
+            let left = x(radical.bar_start, radical.bar_width);
+            let top = radical.bar_top as f64 * scale;
+            let rect = Rect::new(left, top, left + radical.bar_width as f64 * scale, top + radical.bar_thickness as f64 * scale);
+            scene.fill(Fill::NonZero, self.transform, color, None, &rect);
+        }
+        if let Some(sign) = &radical.sign {
+            let origin_x = x(sign.start, sign.width);
+            let glyphs = std::iter::once(anyrender::Glyph { id: sign.glyph as _, x: 0.0, y: 0.0 });
+            scene.draw_glyphs(
+                &sign.font,
+                sign.size * self.scale as f32,
+                false,
+                &[],
+                kurbo::Vec2::default(),
+                Fill::NonZero,
+                &anyrender::Paint::from(color),
+                1.0,
+                self.transform * Affine::translate((origin_x, sign.baseline as f64 * scale)),
+                None,
+                glyphs,
+            );
+        }
+    }
+
+    /// pyro: a stretched or large MathML operator's glyphs (`blitz_dom::layout::math::operator`):
+    /// the size variant of its character or the parts of its glyph assembly, in the element's
+    /// `color`, in place of its text (Chromium's `MathMLPainter::PaintStretchyOrLargeOperator`).
+    fn draw_math_stretch(&self, scene: &mut impl PaintScene) {
+        let Some(stretch) = self.element.math_stretch.as_ref() else { return };
+        if self.style.get_inherited_box().visibility != StyloVisibility::Visible {
+            return;
+        }
+        let content = self.frame.content_box;
+        let color = self.style.clone_color().as_srgb_color();
+        let scale = self.scale;
+        for glyph in &stretch.glyphs {
+            let glyphs = std::iter::once(anyrender::Glyph { id: glyph.glyph as _, x: 0.0, y: 0.0 });
+            scene.draw_glyphs(
+                &stretch.font,
+                stretch.size * scale as f32,
+                false,
+                &[],
+                kurbo::Vec2::default(),
+                Fill::NonZero,
+                &anyrender::Paint::from(color),
+                1.0,
+                self.transform * Affine::translate((content.x0 + glyph.x as f64 * scale, glyph.baseline as f64 * scale)),
+                None,
+                glyphs,
+            );
+        }
+    }
+
     /// pyro: Chromium's 16x16 broken-image icon (its `IDR_BROKENIMAGE` resource, as Chrome draws it at
     /// 1x, captured with its alpha) with its top-left corner at `at` (device px), cut to `clip`.
     fn draw_broken_image_icon(&self, scene: &mut impl PaintScene, at: Point, clip: Rect) {
@@ -7744,17 +8032,19 @@ impl ElementCx<'_, '_> {
         // pyro: HTML-in-Canvas privacy: an image from an opaque response is left out; the pixels
         // of any other are allowed (`Privacy`), whichever source (`src`, `srcset`, `<picture>`,
         // generated content) chose it.
-        // A canvas's or a video's pixels come from the page (a canvas a cross-origin image tainted,
-        // a cross-origin video frame), not from a response noted here: they taint.
+        // A canvas's pixels come from the page (a canvas a cross-origin image tainted), not from a
+        // response noted here: they taint. A `<video>`'s image is its poster (classified as an
+        // image response) or the frame the page was given (`RasterImageData::tainting` when its
+        // media is not origin-clean: drawn, and it taints), an `<embed>`'s or `<object>`'s
+        // its image: left out when opaque. An inline `<svg>` is the document's own content (`draw_svg`
+        // taints for what it references).
         if let Some(privacy) = &self.context.privacy
             && let Some(image) = self.element.image_data()
         {
-            if !matches!(&*self.element.name.local, "img" | "input" | "image") {
+            if !matches!(&*self.element.name.local, "img" | "input" | "image" | "video" | "embed" | "object" | "svg") {
                 privacy.unclassified.set(true);
-            } else if Privacy::opaque(image) {
+            } else if !privacy.admit(image) {
                 return;
-            } else if let Some(raster) = self.element.raster_image_data() {
-                privacy.allowed.borrow_mut().push(raster.data.id());
             }
         }
         if let Some(image) = self.element.raster_image_data() {
@@ -7869,6 +8159,11 @@ impl ElementCx<'_, '_> {
 
     fn draw_sub_document(&self, scene: &mut impl PaintScene) {
         if let Some(sub_doc) = self.element.sub_doc_data().map(|doc| doc.inner()) {
+            // pyro: HTML-in-Canvas privacy: the document of another origin (or a sandboxed one)
+            // is left out; the drawn ones are painted under the same rules (below).
+            if self.context.privacy.is_some() && !Privacy::same_origin_frame(self.context.dom, &sub_doc, self.element) {
+                return;
+            }
             let scale = self.scale;
             let width = self.frame.content_box.width() as u32;
             let height = self.frame.content_box.height() as u32;
@@ -7889,12 +8184,23 @@ impl ElementCx<'_, '_> {
                 0.0,
                 self.custom_widget_scenes,
             );
+            // pyro: HTML-in-Canvas privacy: its own frames and images are left out by the same
+            // rules, and what it draws is noted in this paint's.
+            if self.context.privacy.is_some() {
+                painter.privacy = Some(Privacy::default());
+            }
             let mut recording = anyrender::recording::Scene::new();
             if let Some(budget) = self.capture_budget {
                 painter.capture_budget = Some(budget);
                 painter.paint_scene(&mut crate::capture::Recording(&mut recording, budget));
                 if budget.exhausted.get() { return; }
             } else { painter.paint_scene(&mut recording); }
+            if let (Some(outer), Some(inner)) = (&self.context.privacy, painter.privacy.take()) {
+                outer.allowed.borrow_mut().extend(inner.allowed.into_inner());
+                if inner.unclassified.get() {
+                    outer.unclassified.set(true);
+                }
+            }
             let clip = Rect::new(0.0, 0.0, width as f64, height as f64);
             scene.push_clip_layer(Fill::NonZero, transform, &clip);
             scene.append_scene(recording, transform);

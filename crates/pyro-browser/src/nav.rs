@@ -21,7 +21,7 @@ use pyro_js::{ClassDef, JsClass, JsError, JsResult, NoParent, Persistent, Scope,
 use pyro_runtime::{Scheduler, TaskSource};
 use pyro_webapi::performance::{
     self as perf, navigation_fields, resource_object, NavigationValues, PerformanceEntryData,
-    PerformanceNavigationTiming, PerformancePaintTiming, UserTiming, RESOURCE_TIMES, TIMING_ATTRIBUTES,
+    PerformanceNavigationTiming, UserTiming, RESOURCE_TIMES, TIMING_ATTRIBUTES,
 };
 use pyro_webapi::resource_timing::ResourceEntry;
 use std::cell::{Cell, RefCell};
@@ -44,6 +44,47 @@ impl std::fmt::Debug for HistoryState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("HistoryState")
     }
+}
+
+/// What the Navigation API needs to know of an entry's document once it is not the active one:
+/// its origin (an `about:blank`, `srcdoc` or `blob:` document inherits one its URL does not show)
+/// and whether its referrer policy was `no-referrer` when it was left (`NavigationHistoryEntry.url`
+/// reads null then). Recorded while the document is alive; never part of an entry's identity.
+#[derive(Debug, Clone, Default)]
+struct DocFacts {
+    origin: Option<String>,
+    no_referrer: bool,
+}
+impl PartialEq for DocFacts {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+impl Eq for DocFacts {}
+
+/// A 64-bit finalizer (splitmix64's): a bijection, so distinct inputs stay distinct.
+fn mix64(mut x: u64) -> u64 {
+    x = (x ^ (x >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    x ^ (x >> 31)
+}
+
+/// The Navigation API's key or id of an entry: a version 4 (variant 1) UUID shaped string made of the
+/// frame's random `salt` and the entry's counter value `n`. Unique per counter value within a frame
+/// (the first half is a bijection of `salt + n`), different between frames and not guessable from
+/// the counter, as Chrome's random keys; the same `n` always gives the same string.
+fn uuid_of(salt: u64, n: u64) -> String {
+    let a = mix64(salt.wrapping_add(n));
+    let b = mix64(a ^ salt.rotate_left(32) ^ 0x7079_7230_4e41_0000);
+    format!(
+        "{:08x}-{:04x}-4{:03x}-{:x}{:03x}-{:012x}",
+        a >> 32,
+        (a >> 16) & 0xffff,
+        a & 0xfff,
+        8 | ((b >> 60) & 3),
+        (b >> 48) & 0xfff,
+        b & 0xffff_ffff_ffff
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,6 +110,8 @@ struct Entry {
     /// when true. A new document's entry starts "auto"; pushState and replaceState keep the
     /// current entry's.
     scroll_manual: bool,
+    /// See [`DocFacts`].
+    facts: DocFacts,
 }
 
 /// The ids [`PageNav::history_entries`] gives the steps only a child frame
@@ -180,6 +223,21 @@ struct NavState {
     /// `window.stop()` calls (HTML "stop loading" aborts the document): a
     /// document load begun before one fires no DOMContentLoaded or load.
     aborts: u64,
+    /// HTML `navigation.activation` of the active document: how its navigation came to be
+    /// (`None` for the initial about:blank document). Fixed when the document commits;
+    /// same-document navigations leave it alone.
+    activation: Option<Activation>,
+}
+
+/// A document's NavigationActivation data: its navigation type, the document's first session
+/// history entry as (key, id, url), and the entry the navigation left as (key, id, url, Navigation
+/// API state) when the Navigation API exposes it (same origin as the new document), else `None`.
+#[derive(Clone)]
+struct Activation {
+    ty: &'static str,
+    entry: (u64, u64, String),
+    /// The url is `None` when the left document's referrer policy was `no-referrer`.
+    from: Option<(u64, u64, Option<String>, Option<String>)>,
 }
 
 impl NavState {
@@ -191,6 +249,8 @@ impl NavState {
 
 /// Per-page navigation state shared by the page and its windows.
 pub struct PageNav {
+    /// Random per frame: mixed into the Navigation API entry keys and ids (`uuid_of`).
+    salt: u64,
     page: PageId,
     frame_id: FrameId,
     observer: ObserverCell,
@@ -212,6 +272,14 @@ pub struct PageNav {
     first_paint: Cell<Option<f64>>,
     /// `PerformanceNavigationTiming.type` of the current document.
     nav_type: Cell<&'static str>,
+    /// The URL the current document was created with (its navigation's final URL): the
+    /// navigation entry's `name`, which `document.open()` and fragment navigations leave alone.
+    creation_url: RefCell<String>,
+    /// When the previous document's unload ran (set by `Browser::commit_document` for a
+    /// same-origin previous document, taken by the commit).
+    pending_unload: Cell<Option<(Instant, Instant)>>,
+    /// The current document's `unloadEventStart`/`unloadEventEnd` (time-origin ms; 0: not exposed).
+    unload_times: Cell<(f64, f64)>,
     /// The fetch of the document about to commit (`begin_document`): its
     /// start becomes the time origin, its phases the Navigation Timing.
     incoming_fetch: RefCell<Option<Box<pyro_webapi::resource_timing::FetchReport>>>,
@@ -229,6 +297,11 @@ pub struct PageNav {
     /// A navigation that navigation.js started (and fired `navigate` for)
     /// is running: the native paths fire no event of their own.
     navigation_api_call: Cell<bool>,
+    /// Whether the navigation being requested has a user activation of its initiator (URL
+    /// Fragment Text Directives: a directive activates only for one that has). `None`: nothing
+    /// said, as for a browser-initiated navigation. Taken by the commit or the fragment
+    /// navigation it is for.
+    pub(crate) directive_gesture: Cell<Option<bool>>,
     /// Chrome's navigation rate limiter (crbug.com/1038223): the start of
     /// the current period and the history updates and navigations counted
     /// in it.
@@ -287,6 +360,12 @@ pub(crate) struct NavigateSource {
     /// document's own URL is not made a "replace" (HTML navigate: the URL comparison is only
     /// for a same-origin initiator, which can see it).
     pub cross_origin: bool,
+    /// `NavigateEvent.userInitiated`: the activation behavior of a trusted click (a followed
+    /// link, a submitted form).
+    pub user_initiated: bool,
+    /// `history.pushState` / `replaceState`: HTML's "URL and history update steps" fire a
+    /// `navigate` event that is never a `hashChange`.
+    pub history_api: bool,
 }
 
 impl PageNav {
@@ -321,6 +400,7 @@ impl PageNav {
         joint: Rc<JointHistory>,
     ) -> Rc<PageNav> {
         let nav = Rc::new(PageNav {
+            salt: pyro_webapi::crypto::random_u64(),
             page,
             frame_id,
             observer,
@@ -339,17 +419,22 @@ impl PageNav {
                 first_blank: false,
                 stops: 0,
                 aborts: 0,
+                activation: None,
             }),
             document: RefCell::new(None),
             page_dom: RefCell::new(std::rc::Weak::new()),
             time_origin: Cell::new(crate::clock::now()),
             first_paint: Cell::new(None),
             nav_type: Cell::new("navigate"),
+            creation_url: RefCell::new(String::new()),
+            pending_unload: Cell::new(None),
+            unload_times: Cell::new((0.0, 0.0)),
             incoming_fetch: RefCell::new(None),
             fetch_timing: RefCell::new(None),
             timeline_watchers: RefCell::new(Vec::new()),
             navigation_hooks: RefCell::new(Vec::new()),
             navigation_api_call: Cell::new(false),
+            directive_gesture: Cell::new(None),
             rate_limit: Cell::new((Instant::now(), 0)),
             joint,
             queued_navigations: Rc::new(Cell::new(0)),
@@ -367,6 +452,16 @@ impl PageNav {
 
     pub fn url(&self) -> String {
         self.state.borrow().url.clone()
+    }
+
+    /// The step of the page's first (top-level) frame's entry that covers `current`: its last
+    /// entry at or before it. `current` when that frame has none, or is this one.
+    fn covering_step(&self, current: u64) -> u64 {
+        let members = self.joint.members.borrow();
+        let top = members.first().and_then(std::rc::Weak::upgrade);
+        let Some(top) = top.filter(|top| !std::ptr::eq(Rc::as_ptr(top), self)) else { return current };
+        let step = top.state.try_borrow().ok().and_then(|st| st.entries.iter().rev().find(|e| e.step <= current).map(|e| e.step));
+        step.unwrap_or(current)
     }
 
     /// `history.length`: the steps of the page's joint session history.
@@ -426,6 +521,22 @@ impl PageNav {
         self.state.borrow().initial
     }
 
+    /// HTML "has entries and events disabled": the document is the initial about:blank one or
+    /// has an opaque origin. The Navigation API fires no events for it (not even for a fragment
+    /// navigation or `history.pushState`) and its methods' promises never settle.
+    pub(crate) fn navigation_disabled(&self) -> bool {
+        self.is_initial_blank() || self.has_opaque_origin()
+    }
+
+    /// The active document has an opaque origin (a sandbox, a data: URL, about:blank of those):
+    /// the Navigation API lists no entries for it.
+    pub(crate) fn has_opaque_origin(&self) -> bool {
+        self.page_dom
+            .borrow()
+            .upgrade()
+            .is_some_and(|page| page.has_opaque_origin() || (page.dom.try_borrow().is_ok() && page.origin_key().starts_with("opaque")))
+    }
+
     /// The active document is the frame's initial about:blank one, whether
     /// or not a script has opened it since (no document has been fetched).
     pub(crate) fn is_first_blank(&self) -> bool {
@@ -451,9 +562,29 @@ impl PageNav {
     /// that has not started is dropped too ([`PageNav::stop_count`]), as one
     /// fetching is canceled.
     pub(crate) fn abort_document(&self) {
-        let mut st = self.state.borrow_mut();
-        st.aborts += 1;
-        st.stops += 1;
+        {
+            let mut st = self.state.borrow_mut();
+            st.aborts += 1;
+            st.stops += 1;
+        }
+        self.navigation_stopped();
+    }
+
+    /// `window.stop()` ran: the Navigation API aborts a navigation still waiting for its
+    /// `precommitHandler`s (navigation.js `hook('stop')`).
+    fn navigation_stopped(&self) {
+        if self.navigation_hooks.borrow().is_empty() {
+            return;
+        }
+        for (realm, hook) in self.navigation_hooks() {
+            let Some(realm) = realm.upgrade() else { continue };
+            let Ok(s) = realm.scope() else { continue };
+            if let Some(f) = hook.get(&s).as_object() {
+                if let Err(e) = f.call(None, &[s.string("stop")]) {
+                    s.report_exception(&e);
+                }
+            }
+        }
     }
 
     /// Changes when `window.stop()` aborts the frame's document.
@@ -483,10 +614,33 @@ impl PageNav {
         document: Option<(DomRef, NodeId)>,
     ) {
         self.pending_frame_url.borrow_mut().take();
-        self.traversal_from.set(None);
+        let traversal_from = self.traversal_from.take();
         self.container_policy.set(self.container_policy_pending.take());
         self.ancestor_origins.borrow_mut().clear();
+        // The document this navigation leaves is still the frame's: what its entries need later.
+        let leaving = self.page_dom.borrow().upgrade().filter(|p| p.dom.try_borrow().is_ok()).map(|p| {
+            let origin = Some(p.origin_key()).filter(|k| !k.starts_with("opaque"));
+            (origin, matches!(p.referrer_policy(), pyro_net::ReferrerPolicy::NoReferrer))
+        });
         let mut st = self.state.borrow_mut();
+        if let Some((origin, no_referrer)) = leaving {
+            let doc = st.doc_seq;
+            for e in st.entries.iter_mut().filter(|e| e.doc == doc) {
+                e.facts = DocFacts { origin: origin.clone().or_else(|| e.facts.origin.take()), no_referrer };
+            }
+        }
+        // The entry this navigation leaves (HTML `navigation.activation.from`): a traversal's is
+        // the one it started from (the index is already the target's), any other the current one.
+        // The initial about:blank document has none.
+        let left = if st.entries.is_empty() {
+            None
+        } else {
+            let i = match (history, traversal_from) {
+                (HistoryHandling::Traverse, Some((i, ..))) => i,
+                _ => st.index,
+            };
+            st.entries.get(i).cloned()
+        };
         st.doc_seq += 1;
         let id = st.next_entry_id();
         // A push to the current entry's URL replaces it (HTML navigate step:
@@ -497,7 +651,14 @@ impl PageNav {
             Some(current) if replaces => current.key,
             _ => st.next_entry_id(),
         };
-        let current_step = st.entries.get(st.index).map_or(self.joint.current.get(), |e| e.step);
+        let current_step = match st.entries.get(st.index) {
+            Some(e) => e.step,
+            // A frame's first (initial about:blank) entry joins the step of the page's top-level
+            // document that covers the current step, not a step a removed frame pushed (the
+            // current step stays at it, and a frame inserted since would otherwise add a step
+            // to `history.length`).
+            None => self.covering_step(self.joint.current.get()),
+        };
         let mut entry = Entry {
             url: entry_url.to_string(),
             state: None,
@@ -507,6 +668,7 @@ impl PageNav {
             nav_state: None,
             step: current_step,
             scroll_manual: false,
+            facts: DocFacts::default(),
         };
         let initial = std::mem::take(&mut st.initial);
         st.first_blank = false;
@@ -525,10 +687,15 @@ impl PageNav {
             HistoryHandling::Traverse | HistoryHandling::Reload => {
                 // The entry at the index (set by traverse() for traversals)
                 // keeps its id and state; a redirect updates its URL.
+                // The entries that shared the restored entry's document share the new one
+                // (`entry.sameDocument` of the entries around it holds again).
                 let (i, doc) = (st.index, st.doc_seq);
-                let e = &mut st.entries[i];
-                e.doc = doc;
-                e.url = entry_url.to_string();
+                let shared = st.entries[i].doc;
+                for e in st.entries.iter_mut().filter(|e| e.doc == shared) {
+                    e.doc = doc;
+                    e.facts = DocFacts::default();
+                }
+                st.entries[i].url = entry_url.to_string();
             }
             HistoryHandling::Replace => {
                 let i = st.index;
@@ -549,6 +716,36 @@ impl PageNav {
             }
         }
         st.url = url.to_string();
+        // `from` is null across origins (and for an opaque origin such as about:blank's): the
+        // Navigation API shows only the same-origin entries around the current one.
+        let activation = st.entries.get(st.index).and_then(|entry| {
+            // A push the initial about:blank document or a same-URL entry takes is a replace.
+            let ty = match history {
+                HistoryHandling::Push if initial || same_url => "replace",
+                HistoryHandling::Push => "push",
+                HistoryHandling::Replace => "replace",
+                HistoryHandling::Traverse => "traverse",
+                HistoryHandling::Reload => "reload",
+            };
+            let origin = |url: &str| Url::parse(url).ok().map(|u| u.origin());
+            let here = origin(&entry.url);
+            let from = left.as_ref().filter(|left| {
+                here.as_ref().is_some_and(|o| o.is_tuple()) && origin(&left.url) == here
+            });
+            // An entry of a no-referrer document shows no URL once that document was left.
+            // The frame's own initial about:blank document is not a navigation's result.
+            if left.is_none() && url == "about:blank" {
+                return None;
+            }
+            Some(Activation {
+                ty,
+                entry: (entry.key, entry.id, entry.url.clone()),
+                from: from.map(|left| {
+                    (left.key, left.id, Some(left.url.clone()).filter(|_| !left.facts.no_referrer), left.nav_state.clone())
+                }),
+            })
+        });
+        st.activation = activation;
         drop(st);
         if let Some(from) = pushed_from {
             self.joint.prune_forward(self, from);
@@ -563,6 +760,7 @@ impl PageNav {
         // the navigation's start), so its phases have their own times.
         let now = crate::clock::now();
         let fetch = self.incoming_fetch.take();
+        let cross_origin_redirect = fetch.as_ref().and_then(|f| f.response.as_ref()).is_some_and(|r| r.timing.cross_origin_redirect);
         let origin = fetch
             .as_ref()
             .and_then(|f| now.checked_sub(Instant::now().saturating_duration_since(f.start)))
@@ -579,11 +777,27 @@ impl PageNav {
             Rc::new(entry)
         });
         self.first_paint.set(None);
+        // Exposed only without a cross-origin redirect (the unload says what the previous document did).
+        let hidden = self.fetch_timing.borrow().as_ref().is_none() || cross_origin_redirect;
+        self.unload_times.set(match self.pending_unload.take() {
+            Some((start, end)) if !hidden => {
+                let ms = |t: Instant| (t.saturating_duration_since(origin).as_micros() / 100) as f64 / 10.0;
+                (ms(start), ms(end).max(ms(start)))
+            }
+            _ => (0.0, 0.0),
+        });
+        *self.creation_url.borrow_mut() = url.to_owned();
         self.nav_type.set(match history {
             HistoryHandling::Reload => "reload",
             HistoryHandling::Traverse => "back_forward",
             _ => "navigate",
         });
+    }
+
+    /// Records when the previous document's unload ran, for the commit that follows
+    /// (`None`: not exposed to the next document).
+    pub(crate) fn set_unload_span(&self, span: Option<(Instant, Instant)>) {
+        self.pending_unload.set(span);
     }
 
     /// The fetch of the document that commits next (see `incoming_fetch`);
@@ -687,11 +901,12 @@ impl PageNav {
             let replace_key = current.filter(|_| kind == SameDocumentKind::Replace).map(|e| e.key);
             let step = current.map_or(self.joint.current.get(), |e| e.step);
             let scroll_manual = current.is_some_and(|e| e.scroll_manual);
+            let facts = current.map(|e| e.facts.clone()).unwrap_or_default();
             let key = match replace_key {
                 Some(key) => key,
                 None => st.next_entry_id(),
             };
-            let mut entry = Entry { url: url.to_string(), state, doc, id, key, nav_state, step, scroll_manual };
+            let mut entry = Entry { url: url.to_string(), state, doc, id, key, nav_state, step, scroll_manual, facts };
             if kind != SameDocumentKind::Replace {
                 st.initial = false;
             }
@@ -742,16 +957,28 @@ impl PageNav {
         let frame_id = self.frame_id.clone();
         let document = self.state.borrow().doc_seq;
         let url = url.to_owned();
+        // HTML "navigate to a javascript: URL" makes this the navigable's ongoing navigation as it is asked
+        // for: a navigation started before the task runs (a link's default action after its onclick set
+        // `location = "javascript:..."`) supersedes it, and nothing is evaluated.
+        let asked = self.page_dom.borrow().upgrade().map(|dom| dom.navigation_started());
         self.sched.post(TaskSource::Navigation, move |b| {
             let Some(key) = b.page(page).and_then(|p| p.frames.key(&frame_id)) else { return };
             let Some(doc) = b.doc(key).filter(|p| p.nav.state.borrow().doc_seq == document) else { return };
             let (realm, page_dom) = (doc.main_frame.main_realm().cloned(), doc.main_frame.page_dom.clone());
             drop(doc);
             let (Some(realm), Some(page_dom)) = (realm, page_dom) else { return };
+            if asked.is_some_and(|asked| page_dom.navigation_started() != asked) {
+                return;
+            }
             // CSP `script-src-elem` of the initiator for a navigation ('unsafe-inline', or with
             // 'unsafe-hashes' a hash of the whole URL): blocked, nothing runs.
             let initiator = initiator.unwrap_or_else(|| pyro_webapi::csp::NavigationInitiator::of(&page_dom));
             if !initiator.allows_javascript_url(&url) {
+                return;
+            }
+            // The script then runs in the target document: its own policies apply too, after the
+            // initiator's (Chrome checks the parent's first; its violation fires in the target).
+            if !Rc::ptr_eq(&initiator.page, &page_dom) && !pyro_webapi::csp::NavigationInitiator::of(&page_dom).allows_javascript_url(&url) {
                 return;
             }
             let Ok(scope) = realm.scope() else { return };
@@ -836,6 +1063,14 @@ impl PageNav {
                 }
                 return;
             }
+            // HTML "reload" of a lazy iframe still on its deferred initial about:blank: the lazy
+            // load resumption steps are kept, so the check's navigation to `src` still happens
+            // (WPT iframe-loading-lazy-reload-location-reload, -navigation-reload).
+            if history == HistoryHandling::Reload
+                && b.page(page.page).is_some_and(|p| p.frames.lazy_frames.borrow().iter().any(|(k, _)| *k == page))
+            {
+                return;
+            }
             let opts = NavigateOpts {
                 post: None,
                 url,
@@ -862,6 +1097,16 @@ impl PageNav {
     /// The frame is about to leave its document for another one: a script
     /// navigation is queued (its fetch, once started, is the frame's
     /// pending loader). Not for the frame's initial about:blank document.
+    /// A link, form or `window.open` navigation of this frame to another document is queued
+    /// ([`PageNav::leaving_document`]); `leaving_navigation_ran` when its task starts.
+    pub(crate) fn queue_leaving_navigation(&self) {
+        self.queued_navigations.set(self.queued_navigations.get().saturating_add(1));
+    }
+
+    pub(crate) fn leaving_navigation_ran(&self) {
+        self.queued_navigations.set(self.queued_navigations.get().saturating_sub(1));
+    }
+
     pub(crate) fn leaving_document(&self) -> bool {
         self.queued_navigations.get() > 0 && !self.is_first_blank()
     }
@@ -1073,7 +1318,10 @@ impl PageNav {
         if target.fragment().is_none() || !same_document_except_fragment(&current, &target) {
             return false;
         }
-        self.take_fragment_directive(&mut target);
+        // URL Fragment Text Directives: a same-document navigation activates one when it has a
+        // user activation or its initiator is same-origin with the document.
+        let activated = self.directive_gesture.take() == Some(true);
+        let directives = self.take_fragment_directive(&mut target).filter(|_| !source.cross_origin || activated);
         let kind = if (current == target && !source.cross_origin) || source.replace {
             SameDocumentKind::Replace
         } else {
@@ -1089,7 +1337,7 @@ impl PageNav {
             NavigateDecision::Proceed => {}
         }
         self.same_document(target.as_str(), None, kind);
-        self.scroll_to_fragment(&target);
+        self.scroll_to_fragment_or_text(&target, directives.as_deref());
         self.navigation_committed(navigation_type);
         self.fire_fragment_popstate();
         self.queue_hashchange(current.as_str(), target.as_str());
@@ -1097,19 +1345,27 @@ impl PageNav {
     }
 
     /// URL Fragment Text Directives: a same-document navigation's directive (`:~:text=...`)
-    /// leaves its URL and selects the document's target text.
-    fn take_fragment_directive(&self, target: &mut Url) {
-        let Some((fragment, directives)) = target
+    /// leaves its URL, whether or not it may activate. Returns the directives it held.
+    fn take_fragment_directive(&self, target: &mut Url) -> Option<String> {
+        let (fragment, directives) = target
             .fragment()
             .and_then(pyro_webapi::highlights::split_fragment_directive)
-            .map(|(fragment, directives)| (fragment.to_owned(), directives.to_owned()))
-        else {
-            return;
-        };
+            .map(|(fragment, directives)| (fragment.to_owned(), directives.to_owned()))?;
         target.set_fragment(Some(&fragment));
-        if let Some(page) = self.page_dom.borrow().upgrade() {
-            pyro_webapi::highlights::apply_fragment_directive(&page, &directives);
+        Some(directives)
+    }
+
+    /// HTML "scroll to the fragment" of a same-document navigation to `target`, which first
+    /// invokes its text `directives` (the first matching one is scrolled to, centered, and the
+    /// text is painted as `::target-text`); the element the fragment names is the fallback.
+    fn scroll_to_fragment_or_text(&self, target: &Url, directives: Option<&str>) {
+        if let Some(directives) = directives {
+            let page = self.page_dom.borrow().upgrade();
+            if page.is_some_and(|page| pyro_webapi::highlights::invoke_text_directives(&page, directives)) {
+                return;
+            }
         }
+        self.scroll_to_fragment(target);
     }
 
     /// HTML "persist the history entry state": the viewport's scroll position, kept for the
@@ -1157,6 +1413,15 @@ impl PageNav {
         let Some(fragment) = target.fragment() else { return };
         if let Some(page) = self.page_dom.borrow().upgrade() {
             pyro_webapi::layout_api::scroll_to_fragment(&page, fragment);
+        }
+    }
+
+    /// HTML "process scroll behavior" of a push, replace or reload the Navigation API
+    /// intercepted (as Chrome does it): the scroll to `target`'s fragment, or to the top of the
+    /// document when the URL has none or no element is indicated.
+    fn scroll_to_fragment_or_top(&self, target: &Url) {
+        if let Some(page) = self.page_dom.borrow().upgrade() {
+            pyro_webapi::layout_api::scroll_to_fragment_or_top(&page, target.fragment().unwrap_or(""));
         }
     }
 
@@ -1318,7 +1583,7 @@ impl PageNav {
         key: Option<u64>,
         source: &NavigateSource,
     ) -> NavigateDecision {
-        if self.navigation_hooks.borrow().is_empty() || self.navigation_api_call.get() {
+        if self.navigation_hooks.borrow().is_empty() || self.navigation_api_call.get() || self.navigation_disabled() {
             return NavigateDecision::Proceed;
         }
         let Some(page) = self.page_dom.borrow().upgrade() else { return NavigateDecision::Proceed };
@@ -1326,11 +1591,28 @@ impl PageNav {
             return NavigateDecision::Proceed;
         }
         let (current, target) = (Url::parse(&self.url()).ok(), Url::parse(url).ok());
+        // Whether a traversal to the entry `key` stays in the current document.
+        let traversal_stays = key.is_some_and(|k| {
+            let st = self.state.borrow();
+            st.entries.iter().any(|e| e.key == k && e.doc == st.doc_seq)
+        });
+        // `destination.sameDocument` of a push or replace: the history API, or a fragment
+        // navigation (a traversal's comes from its entry).
+        let same_document = match (&current, &target) {
+            (Some(c), Some(t)) => source.history_api || (t.fragment().is_some() && same_document_except_fragment(c, t)),
+            _ => source.history_api,
+        };
         let (hash_change, can_intercept) = match (&current, &target) {
             (Some(c), Some(t)) => (
-                t.fragment().is_some() && c.fragment() != t.fragment() && same_document_except_fragment(c, t),
-                // A traversal to another document cannot be intercepted.
-                can_rewrite_url(c, t) && (navigation_type != "traverse" || cancelable),
+                // A traversal is a hash change whenever only the fragment differs (a back to the
+                // URL without one included), a push or replace only when the target has one.
+                !source.history_api
+                    && c.fragment() != t.fragment()
+                    && same_document_except_fragment(c, t)
+                    && if navigation_type == "traverse" { traversal_stays } else { t.fragment().is_some() },
+                // A traversal to another document cannot be intercepted (a same-document one of a
+                // child frame can, though its event is not cancelable).
+                can_rewrite_url(c, t) && (navigation_type != "traverse" || traversal_stays),
             ),
             _ => (false, false),
         };
@@ -1359,9 +1641,11 @@ impl PageNav {
                 s.boolean(hash_change),
                 s.boolean(cancelable),
                 s.boolean(can_intercept),
-                s.string(&key.map(|k| k.to_string()).unwrap_or_default()),
+                s.string(&key.map(|k| uuid_of(self.salt, k)).unwrap_or_default()),
                 form_data,
                 element,
+                s.boolean(source.user_initiated),
+                s.boolean(same_document),
             ];
             match f.call(None, &args).and_then(|v| v.to_string()) {
                 Ok(answer) if answer == "cancel" => decision = NavigateDecision::Cancel,
@@ -1380,7 +1664,7 @@ impl PageNav {
     /// `currententrychange`, then the intercept handlers or
     /// `navigatesuccess`.
     pub(crate) fn navigation_committed(&self, navigation_type: &'static str) {
-        if self.navigation_hooks.borrow().is_empty() || self.navigation_api_call.get() {
+        if self.navigation_hooks.borrow().is_empty() || self.navigation_api_call.get() || self.navigation_disabled() {
             return;
         }
         for (realm, hook) in self.navigation_hooks() {
@@ -1563,7 +1847,9 @@ fn apply_traversal(
         // Only a same-document traversal can be canceled or intercepted.
         let same = entry.doc == current_doc;
         let source = NavigateSource::default();
-        match nav.navigate_event_to("traverse", &entry.url, same, Some(entry.key), &source) {
+        // HTML: a traversal's `navigate` event is cancelable only in a top-level traversable.
+        let cancelable = same && page.child.is_none();
+        match nav.navigate_event_to("traverse", &entry.url, cancelable, Some(entry.key), &source) {
             NavigateDecision::Cancel if same => return false,
             NavigateDecision::Intercept => intercepted = same,
             _ => {}
@@ -1711,7 +1997,26 @@ fn incumbent_page(s: &Scope<'_>) -> Option<Rc<pyro_webapi::PageDom>> {
             && document_url(&own).as_deref() == Some(url)
             && document_url(&entry).as_deref() != Some(url)
     });
-    Some(if is_own { own } else { entry })
+    if is_own {
+        return Some(own);
+    }
+    // A third document of the frame tree, whose function runs: neither the Location's nor the
+    // entry's, but the one whose URL the running script has (an inline script has its
+    // document's), as in WPT multiple-globals (the incumbent is a sibling of the relevant frame).
+    if let Some(url) = script.filter(|url| !url.starts_with("about:") && document_url(&entry).as_deref() != Some(url)) {
+        let tree = s.global_data::<crate::Window>().and_then(|w| Some((w.frame_host()?, w.frame_key()?)));
+        if let Some((host, key)) = tree {
+            for realm in host.sibling_realms(key, s.realm_id()) {
+                let Some(page) = realm.scope().ok().and_then(|scope| pyro_webapi::target::page_of(&scope).ok()) else {
+                    continue;
+                };
+                if !Rc::ptr_eq(&page, &own) && !page.is_disposed() && document_url(&page).as_deref() == Some(url) {
+                    return Some(page);
+                }
+            }
+        }
+    }
+    Some(entry)
 }
 
 fn assign(s: &Scope<'_>, nav: &PageNav, input: Value<'_>, replace: bool) -> JsResult<()> {
@@ -1728,9 +2033,10 @@ fn assign(s: &Scope<'_>, nav: &PageNav, input: Value<'_>, replace: bool) -> JsRe
         return Ok(());
     }
     if target.scheme() == "javascript" {
-        // Located at the calling script, for a blocked URL's violation.
-        let initiator =
-            pyro_webapi::target::page_of(s).ok().map(|page| pyro_webapi::csp::NavigationInitiator::of(&page).at(s));
+        // Located at the calling script, for a blocked URL's violation. The initiator is the
+        // incumbent document (a parent assigning its child's `location.href` is checked against
+        // the parent's policies, not the child's), as for the referrer below.
+        let initiator = incumbent_page(s).map(|page| pyro_webapi::csp::NavigationInitiator::of(&page).at(s));
         nav.run_javascript_url(target.as_str(), initiator);
         return Ok(());
     }
@@ -1745,7 +2051,7 @@ fn assign(s: &Scope<'_>, nav: &PageNav, input: Value<'_>, replace: bool) -> JsRe
         dom.document_data(page.document()).ok().map(|d| d.url.to_string())
     });
     if nav.rate_limit_allows() {
-        navigate_to_from(nav, target, replace || loading, source_referrer);
+        navigate_to_from(nav, target, replace || loading, source_referrer, true);
     }
     Ok(())
 }
@@ -1762,7 +2068,8 @@ pub(crate) fn navigate_cross_origin(nav: &PageNav, base: &str, input: Value<'_>,
         .parse(&href)
         .map_err(|_| JsError::dom("SyntaxError", format!("Failed to resolve URL '{href}'")))?;
     if target.scheme() != "javascript" && nav.rate_limit_allows() {
-        navigate_to(nav, target, replace);
+        // A text directive of a cross-origin navigation needs a user activation.
+        navigate_to_from(nav, target, replace, None, false);
     }
     Ok(())
 }
@@ -1771,14 +2078,26 @@ pub(crate) fn navigate_cross_origin(nav: &PageNav, base: &str, input: Value<'_>,
 /// fragment change is same-document, anything else loads. Returns whether
 /// it stayed in the document.
 fn navigate_to(nav: &PageNav, target: Url, replace: bool) -> bool {
-    navigate_to_from(nav, target, replace, None)
+    navigate_to_from(nav, target, replace, None, true)
+}
+
+/// Whether the script now running, the initiator of the navigation it asks for, has a user
+/// activation (URL Fragment Text Directives).
+fn initiator_activated() -> bool {
+    pyro_js::entry_realm()
+        .and_then(|realm| realm.scope().ok().and_then(|scope| pyro_webapi::target::page_of(&scope).ok()))
+        .is_some_and(|page| page.window_open_user_gesture())
 }
 
 /// `navigate_to` with the source document's URL as the referrer of a loading navigation.
-fn navigate_to_from(nav: &PageNav, mut target: Url, replace: bool, source_referrer: Option<String>) -> bool {
+/// `same_origin`: the initiator is same-origin with the document, which lets a same-document
+/// navigation invoke a text directive without a user activation.
+fn navigate_to_from(nav: &PageNav, mut target: Url, replace: bool, source_referrer: Option<String>, same_origin: bool) -> bool {
     let current = Url::parse(&nav.url()).ok();
+    let activated = initiator_activated();
+    let mut directives = None;
     if current.as_ref().is_some_and(|current| same_document_except_fragment(current, &target)) {
-        nav.take_fragment_directive(&mut target);
+        directives = nav.take_fragment_directive(&mut target).filter(|_| same_origin || activated);
     }
     let same_url = current.as_ref() == Some(&target);
     let navigation_type = if replace || same_url { "replace" } else { "push" };
@@ -1795,13 +2114,17 @@ fn navigate_to_from(nav: &PageNav, mut target: Url, replace: bool, source_referr
             // HTML "navigate": the document's own URL is a replace.
             let kind = if replace || same_url { SameDocumentKind::Replace } else { SameDocumentKind::Fragment };
             nav.same_document(target.as_str(), None, kind);
-            nav.scroll_to_fragment(&target);
+            nav.scroll_to_fragment_or_text(&target, directives.as_deref());
             nav.navigation_committed(navigation_type);
             nav.fire_fragment_popstate();
             nav.queue_hashchange(cur.as_str(), target.as_str());
             true
         }
         _ => {
+            // A client redirect while the document loads keeps the activation the navigation
+            // that made the document had (Chrome: a text directive per user gesture).
+            let loading = nav.page_dom.borrow().upgrade().is_some_and(|page| !page.is_completely_loaded());
+            nav.directive_gesture.set(Some(activated || (loading && nav.directive_gesture.get() == Some(true))));
             nav.navigate_from(
                 target.to_string(),
                 if replace { HistoryHandling::Replace } else { HistoryHandling::Push },
@@ -2164,10 +2487,14 @@ fn change_state<'s>(s: &Scope<'s>, n: &PageNav, a: pyro_js::Args<'s>, kind: Same
         return Ok(s.undefined());
     }
     let navigation_type = if kind == SameDocumentKind::Push { "push" } else { "replace" };
-    if n.navigate_event(navigation_type, &url, true) == NavigateDecision::Cancel {
+    let source = NavigateSource { history_api: true, ..Default::default() };
+    if n.navigate_event_to(navigation_type, &url, true, None, &source) == NavigateDecision::Cancel {
         return Ok(s.undefined());
     }
     n.same_document(&url, state, kind);
+    // The Navigation API state is separate from `history.state`: the entry a pushState or
+    // replaceState makes has none (`entry.getState()` is undefined), whatever the entry had.
+    n.set_navigation_state(None);
     n.navigation_committed(navigation_type);
     Ok(s.undefined())
 }
@@ -2224,15 +2551,42 @@ fn timeline_entries<'s>(
             }
         }
     }
-    if let Some(start) = p.nav.first_paint().filter(|_| entry_type.is_none_or(|t| t == "paint")) {
-        for entry_name in ["first-paint", "first-contentful-paint"] {
-            if name.is_none_or(|n| n == entry_name) {
-                let data = PerformanceEntryData::new(entry_name, "paint", start, 0.0);
-                entries.push((start, s.wrap::<PerformancePaintTiming>(data, None)?.value()));
+    if entry_type.is_none_or(|t| t == "paint") {
+        use pyro_webapi::perf::timeline::{wrap_paint, PaintRecord};
+        // With the paint module the entries were reported from frames; without it
+        // both come from the first rendering opportunity (no presentation time).
+        let records: Vec<PaintRecord> = if pyro_webapi::perf::paint::ENABLED {
+            p.target.page.timeline().paint_records()
+        } else {
+            p.nav
+                .first_paint()
+                .into_iter()
+                .flat_map(|start| {
+                    ["first-paint", "first-contentful-paint"].map(|name| PaintRecord {
+                        name,
+                        start,
+                        paint_time: start,
+                        presentation_time: None,
+                    })
+                })
+                .collect()
+        };
+        for (slot, record) in records.iter().enumerate() {
+            if name.is_none_or(|n| n == record.name) {
+                entries.push((record.start, wrap_paint(s, slot as u64, record)?));
             }
         }
     }
     p.user.collect(s, name, entry_type, &mut entries);
+    // Event Timing's `first-input` entry and the long animation frames are on the timeline (the
+    // other types of `perf/` are for observers only).
+    if pyro_webapi::perf::event::ENABLED && entry_type.is_none_or(|t| t == "first-input") {
+        entries.extend(pyro_webapi::perf::event::first_input_entries(s, &p.target.page, name)?);
+    }
+    // Long Animation Frames: the frames are on the timeline too.
+    if pyro_webapi::perf::loaf::ENABLED && entry_type.is_none_or(|t| t == "long-animation-frame") {
+        entries.extend(pyro_webapi::perf::loaf::timeline_entries(s, &p.target.page, name)?);
+    }
     if entry_type.is_none_or(|t| t == "resource") {
         perf::collect_resources(s, &p.target.page, name, &mut entries)?;
     }
@@ -2249,6 +2603,8 @@ fn navigation_values(page: &pyro_webapi::PageDom, nav: &PageNav) -> NavigationVa
         load_start: t.load_start.unwrap_or(0.0),
         load_end: t.load_end.unwrap_or(0.0),
         nav_type: nav.nav_type.get(),
+        unload_start: nav.unload_times.get().0,
+        unload_end: nav.unload_times.get().1,
         fetch: nav.fetch_timing.borrow().clone(),
     }
 }
@@ -2257,7 +2613,8 @@ fn navigation_values(page: &pyro_webapi::PageDom, nav: &PageNav) -> NavigationVa
 /// document starts loading and fills it in as it goes; an `about:` document
 /// (the initial one, `setContent`) has none.
 fn navigation_entry(p: &PerformanceData) -> Option<PerformanceEntryData> {
-    let url = p.nav.url();
+    let created = p.nav.creation_url.borrow().clone();
+    let url = if created.is_empty() { p.nav.url() } else { created };
     if !(url.starts_with("http:") || url.starts_with("https:") || url.starts_with("file:")) {
         return None;
     }
@@ -2327,6 +2684,8 @@ fn legacy_timing(origin: f64, n: &NavigationValues, name: &str) -> f64 {
         "secureConnectionStart" => n.fetch.as_ref().map_or(0.0, |f| at(f.secure_connection_start)),
         "redirectStart" => n.fetch.as_ref().filter(|f| f.redirect_count > 0).map_or(0.0, |_| origin.round()),
         "redirectEnd" => n.fetch.as_ref().map_or(0.0, |f| at(f.redirect_end)),
+        "unloadEventStart" => at(n.unload_start),
+        "unloadEventEnd" => at(n.unload_end),
         "domInteractive" => at(n.dom_interactive),
         "domContentLoadedEventStart" => at(n.dom_content_loaded_start),
         "domContentLoadedEventEnd" => at(n.dom_content_loaded_end),
@@ -2372,15 +2731,26 @@ impl JsClass for PerformanceNavigation {
     type Parent = NoParent;
 
     fn define(def: &mut ClassDef<Self>) {
+        // NavigationTimingType constants, on the interface object and the prototype.
+        def.constant("TYPE_NAVIGATE", 0.0);
+        def.constant("TYPE_RELOAD", 1.0);
+        def.constant("TYPE_BACK_FORWARD", 2.0);
+        def.constant("TYPE_RESERVED", 255.0);
         def.getter("type", |s, n| Ok(s.number(legacy_navigation_type(n))));
-        def.getter("redirectCount", |s, _n| Ok(s.number(0.0)));
+        def.getter("redirectCount", |s, n| Ok(s.number(legacy_redirect_count(n))));
         def.method("toJSON", 0, |s, n, _a| {
             let o = s.object();
             o.set("type", s.number(legacy_navigation_type(n)))?;
-            o.set("redirectCount", s.number(0.0))?;
+            o.set("redirectCount", s.number(legacy_redirect_count(n)))?;
             Ok(o.value())
         });
     }
+}
+
+/// `performance.navigation.redirectCount`: the same-origin redirects the document's
+/// fetch followed (the fetch timing already hides redirects through other origins).
+fn legacy_redirect_count(n: &PageNav) -> f64 {
+    n.fetch_timing.borrow().as_ref().map_or(0.0, |f| f64::from(f.redirect_count))
 }
 
 fn legacy_navigation_type(n: &PageNav) -> f64 {
@@ -2440,6 +2810,11 @@ impl JsClass for Performance {
         );
         def.getter("timing", timing_object);
         def.getter("navigation", navigation_object);
+        // Event Timing's counters exist once the module is real.
+        if pyro_webapi::perf::event::ENABLED {
+            def.getter("eventCounts", |s, p| pyro_webapi::perf::event::event_counts(s, &p.target.page));
+            def.getter("interactionCount", |s, p| Ok(s.number(f64::from(pyro_webapi::perf::event::interaction_count(&p.target.page)))));
+        }
         def.method("toJSON", 0, |s, p, _a| {
             let o = s.object();
             o.set("timeOrigin", s.number(p.origin_wall_ms))?;
@@ -2470,9 +2845,6 @@ fn navigation_object<'s>(s: &Scope<'s>, p: &PerformanceData) -> JsResult<Value<'
 const KEY_TIMING: u64 = 0x5065_7254_696d_6e00;
 const KEY_NAVIGATION: u64 = 0x5065_724e_6176_6900;
 
-/// Entry types a Window's observers take.
-const WINDOW_ENTRY_TYPES: &[&str] = &["mark", "measure", "navigation", "paint", "resource"];
-
 /// This realm's performance_observer.js module (`PerformanceObserver`,
 /// `PerformanceObserverEntryList`), made on first use and kept on the
 /// realm's `performance` object.
@@ -2491,7 +2863,8 @@ pub(crate) fn observer_module<'s>(
             nav.watch_timeline(s, queue);
         }
     };
-    perf::observer_module(s, performance, &page, watch, WINDOW_ENTRY_TYPES)
+    // `perf/`: the base types and those of the modules that are really implemented.
+    perf::observer_module(s, performance, &page, watch, &pyro_webapi::perf::supported_entry_types())
 }
 
 /// The realm's Navigation API module (navigation.js): `navigation` and
@@ -2527,15 +2900,41 @@ pub(crate) fn navigation_module<'s>(s: &Scope<'s>, nav: &Rc<PageNav>) -> JsResul
         }
         Ok(s.undefined())
     });
+    // disabled() -> HTML "has entries and events disabled" (initial about:blank, opaque origin);
+    // opaque() -> the origin is opaque; initialBlank() -> the initial about:blank document;
+    // inUnload() -> the document's unload counter is above 0 (beforeunload, pagehide, unload).
+    native!("disabled", |s, nav, _a| Ok(s.boolean(nav.navigation_disabled())));
+    native!("opaque", |s, nav, _a| Ok(s.boolean(nav.has_opaque_origin())));
+    native!("initialBlank", |s, nav, _a| Ok(s.boolean(nav.is_initial_blank())));
+    native!("inUnload", |s, nav, _a| {
+        let unloading = nav.page_dom.borrow().upgrade().is_some_and(|page| page.in_unload());
+        Ok(s.boolean(unloading))
+    });
     // entries() -> [index, [key, id, url, sameDocument, stateJSON]...]: the
-    // same-origin entries around the current one.
+    // same-origin entries around the current one (none for an opaque origin).
     native!("entries", |s, nav, _a| {
+        if nav.has_opaque_origin() {
+            return Ok(s.array(&[s.number(-1.0)])?.value());
+        }
+        // The live document's origin (an `about:blank` or `srcdoc` document has its creator's).
+        let live = nav.page_dom.borrow().upgrade().map(|p| p.origin_key());
         let st = nav.state.borrow();
-        let origin = |url: &str| Url::parse(url).ok().map(|u| u.origin());
         let Some(current) = st.entries.get(st.index) else { return Ok(s.array(&[s.number(-1.0)])?.value()) };
-        let here = origin(&current.url);
-        let same =
-            |e: &Entry| (here.as_ref().is_some_and(|o| o.is_tuple()) && origin(&e.url) == here) || e.doc == current.doc;
+        let here = live.clone().or_else(|| Url::parse(&current.url).ok().map(|u| u.origin().ascii_serialization()));
+        let here = here.filter(|o| !o.starts_with("opaque") && o != "null");
+        // An entry's document origin: what was recorded when it was left (an `about:blank`,
+        // `srcdoc` or `blob:` document has its creator's, which its URL does not show); for the
+        // entries of the live document its own; else the URL's.
+        let origin_of = |e: &Entry| -> Option<String> {
+            if e.doc == current.doc {
+                return here.clone();
+            }
+            if let Some(o) = &e.facts.origin {
+                return Some(o.clone());
+            }
+            Url::parse(&e.url).ok().map(|u| u.origin()).filter(|o| o.is_tuple()).map(|o| o.ascii_serialization())
+        };
+        let same = |e: &Entry| e.doc == current.doc || (here.is_some() && origin_of(e) == here);
         let mut start = st.index;
         while start > 0 && same(&st.entries[start - 1]) {
             start -= 1;
@@ -2547,16 +2946,34 @@ pub(crate) fn navigation_module<'s>(s: &Scope<'s>, nav: &Rc<PageNav>) -> JsResul
         let mut values = vec![s.number((st.index - start) as f64)];
         for e in &st.entries[start..end] {
             let state = e.nav_state.as_deref().map_or(s.undefined(), |j| s.string(j));
-            let row = [
-                s.string(&e.key.to_string()),
-                s.string(&e.id.to_string()),
-                s.string(&e.url),
-                s.boolean(e.doc == current.doc),
-                state,
-            ];
+            // The URL of a no-referrer document's entry is hidden once that document was left.
+            let url = if e.facts.no_referrer && e.doc != current.doc { s.null() } else { s.string(&e.url) };
+            let row = [s.string(&uuid_of(nav.salt, e.key)), s.string(&uuid_of(nav.salt, e.id)), url, s.boolean(e.doc == current.doc), state];
             values.push(s.array(&row)?.value());
         }
         Ok(s.array(&values)?.value())
+    });
+    // activation() -> null | [type, entryKey, entryId, entryUrl, from], from being null or
+    // [key, id, url, stateJSON]: HTML `navigation.activation` of the document.
+    native!("activation", |s, nav, _a| {
+        let st = nav.state.borrow();
+        let Some(act) = st.activation.as_ref() else { return Ok(s.null()) };
+        let from = match &act.from {
+            None => s.null(),
+            Some((key, id, url, state)) => {
+                let state = state.as_deref().map_or(s.undefined(), |j| s.string(j));
+                let url = url.as_deref().map_or(s.null(), |u| s.string(u));
+                s.array(&[s.string(&uuid_of(nav.salt, *key)), s.string(&uuid_of(nav.salt, *id)), url, state])?.value()
+            }
+        };
+        let row = [
+            s.string(act.ty),
+            s.string(&uuid_of(nav.salt, act.entry.0)),
+            s.string(&uuid_of(nav.salt, act.entry.1)),
+            s.string(&act.entry.2),
+            from,
+        ];
+        Ok(s.array(&row)?.value())
     });
     // active() -> whether the document is fully active (its frame not
     // removed, not navigated away): the methods reject InvalidStateError
@@ -2564,14 +2981,27 @@ pub(crate) fn navigation_module<'s>(s: &Scope<'s>, nav: &Rc<PageNav>) -> JsResul
     {
         let with_nav = with_nav.clone();
         let f = s.function("active", move |s, _this, _a| {
-            let active =
-                with_nav().ok().is_some_and(|nav| nav.page_dom.borrow().upgrade().is_some_and(|p| p.is_fully_active()));
+            // The frame's current document must be this realm's own: the session history belongs to
+            // the frame, so a document navigated away from would otherwise read the next one's.
+            let own = pyro_webapi::target::page_of(s).ok();
+            let active = with_nav().ok().is_some_and(|nav| {
+                nav.page_dom
+                    .borrow()
+                    .upgrade()
+                    .is_some_and(|p| p.is_fully_active() && own.as_ref().is_none_or(|own| Rc::ptr_eq(own, &p)))
+            });
             Ok(s.boolean(active))
         })?;
         natives.set_atom("active", f.value())?;
     }
     // resolve(url) -> the absolute URL, or SyntaxError.
     native!("resolve", |s, nav, a| Ok(s.string(parse_str(&nav, &a.get(0).to_string()?)?.as_str())));
+    // canRewrite(url) -> HTML's "can have its URL rewritten" for the document's URL and `url`
+    // (an absolute URL): what `redirect()` may target.
+    native!("canRewrite", |s, nav, a| {
+        let target = parse_str(&nav, &a.get(0).to_string()?)?;
+        Ok(s.boolean(Url::parse(&nav.url()).is_ok_and(|current| can_rewrite_url(&current, &target))))
+    });
     // navigate(url, replace, stateJSON?) -> whether it stayed in the
     // document. Its `navigate` event was fired by the caller.
     native!("navigate", |s, nav, a| {
@@ -2614,7 +3044,7 @@ pub(crate) fn navigation_module<'s>(s: &Scope<'s>, nav: &Rc<PageNav>) -> JsResul
         let key = a.get(0).to_string()?;
         let delta = {
             let st = nav.state.borrow();
-            st.entries.iter().position(|e| e.key.to_string() == key).map(|i| i as i64 - st.index as i64)
+            st.entries.iter().position(|e| uuid_of(nav.salt, e.key) == key).map(|i| i as i64 - st.index as i64)
         };
         Ok(s.string(match delta {
             None => "missing",
@@ -2638,15 +3068,38 @@ pub(crate) fn navigation_module<'s>(s: &Scope<'s>, nav: &Rc<PageNav>) -> JsResul
         }
         Ok(s.undefined())
     });
+    // scrollToFragment(url): the scroll an intercepted push, replace or reload does after its
+    // handlers (or on `scroll()`): to the URL's fragment, else the top of the document.
+    native!("scrollToFragment", |s, nav, a| {
+        if let Ok(url) = Url::parse(&a.get(0).to_string()?) {
+            nav.scroll_to_fragment_or_top(&url);
+        }
+        Ok(s.undefined())
+    });
     // The viewport's scroll position as "x,y" (has the page scrolled since?).
     native!("viewportScroll", |s, nav, _a| {
         let page = nav.page_dom.borrow().upgrade();
         let (x, y) = page.map(|p| pyro_webapi::layout_api::viewport_scroll(&p)).unwrap_or_default();
         Ok(s.string(&format!("{x},{y}")))
     });
+    // dispatchTrusted(target, event): the user agent's own event, `isTrusted` true.
+    native!("dispatchTrusted", |s, _nav, a| {
+        pyro_webapi::dispatch_trusted_event(s, a.get(0), a.get(1))?;
+        Ok(s.undefined())
+    });
+    // updateState(stateJSON, entryId?): the state of the current entry, or of the entry with that
+    // id (the one `updateCurrentEntry()` began with, which its state's getters may have left).
     native!("updateState", |s, nav, a| {
         let state = a.opt(0).filter(|v| !v.is_undefined()).map(|v| v.to_string()).transpose()?;
-        nav.set_navigation_state(state);
+        match a.opt(1).filter(|v| !v.is_undefined()).map(|v| v.to_string()).transpose()? {
+            Some(id) => {
+                let mut st = nav.state.borrow_mut();
+                if let Some(entry) = st.entries.iter_mut().find(|e| uuid_of(nav.salt, e.id) == id) {
+                    entry.nav_state = state;
+                }
+            }
+            None => nav.set_navigation_state(state),
+        }
         Ok(s.undefined())
     });
     let report = s.function("reportException", |s, _this, a| {

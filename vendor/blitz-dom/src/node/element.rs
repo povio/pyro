@@ -52,6 +52,57 @@ pub type SampledBlocks = (
     Option<ServoArc<Locked<PropertyDeclarationBlock>>>,
 );
 
+/// pyro: what a MathML radical (`msqrt`, `mroot`) paints beside its content, as its last layout
+/// placed it (`layout::math::radical`; drawn by blitz-paint). Lengths are CSS px; the horizontal
+/// ones from the content box's start edge (its end edge when `rtl`), the vertical ones from the
+/// border box's top.
+#[derive(Clone)]
+pub struct MathRadical {
+    pub rtl: bool,
+    /// The overbar over the radicand: where it starts, its width, top and thickness.
+    pub bar_start: f32,
+    pub bar_width: f32,
+    pub bar_top: f32,
+    pub bar_thickness: f32,
+    /// The radical sign, when the box's font has the glyph.
+    pub sign: Option<MathRadicalSign>,
+}
+
+/// pyro: the glyphs of a stretched or large MathML operator: a size variant of its character or the
+/// parts of a glyph assembly, painted in place of its text (`layout::math::operator`, drawn by
+/// blitz-paint). Lengths are CSS px.
+#[derive(Clone)]
+pub struct MathStretch {
+    pub font: linebender_resource_handle::FontData,
+    /// The font size.
+    pub size: f32,
+    /// Each glyph, its id, the offset of its origin from the content box's start edge, and the
+    /// offset of its baseline from the border box's top.
+    pub glyphs: Vec<MathStretchGlyph>,
+}
+
+/// A glyph of a [`MathStretch`].
+#[derive(Clone, Copy)]
+pub struct MathStretchGlyph {
+    pub glyph: u16,
+    pub x: f32,
+    pub baseline: f32,
+}
+
+/// The glyph of a [`MathRadical`]'s sign.
+#[derive(Clone)]
+pub struct MathRadicalSign {
+    pub font: linebender_resource_handle::FontData,
+    pub glyph: u16,
+    /// The font size.
+    pub size: f32,
+    /// Where the glyph's origin is: its start edge's offset, and the baseline's.
+    pub start: f32,
+    /// The glyph's advance width.
+    pub width: f32,
+    pub baseline: f32,
+}
+
 pub struct ElementData {
     /// The elements tag name, namespace and prefix
     pub name: QualName,
@@ -115,6 +166,16 @@ pub struct ElementData {
     /// pyro: an ordinary MathML fraction's bar, as its last layout placed it: its top (from the
     /// border box's top) and thickness, CSS px (`layout::math`). `None` without one.
     pub math_fraction_bar: Option<[f32; 2]>,
+    /// pyro: a MathML radical's bar and sign, as its last layout placed them (`layout::math::radical`).
+    pub math_radical: Option<Box<MathRadical>>,
+    /// pyro: the glyphs a stretched or large MathML operator paints in place of its text, as its
+    /// last layout placed them (`layout::math::operator`). `None` for a text operator.
+    pub math_stretch: Option<MathStretch>,
+    /// pyro: the class of a MathML box built with a layout of its own (`layout::math`, set with
+    /// `NodeFlags::IS_MATH_BOX` by its construction); `None` for any other element.
+    pub(crate) math_kind: Option<crate::layout::math::MathKind>,
+    /// pyro: a MathML box's italic correction as its last layout set it, CSS px (`layout::math`).
+    pub(crate) math_italic_correction: f32,
 
     /// Parley text layout (elements with inline inner display mode only)
     pub inline_layout_data: Option<Box<TextLayout>>,
@@ -468,6 +529,10 @@ impl Clone for ElementData {
             image_failed: self.image_failed,
             content_gradient: self.content_gradient,
             math_fraction_bar: None,
+            math_radical: None,
+            math_stretch: None,
+            math_kind: None,
+            math_italic_correction: 0.0,
             reference_images: self.reference_images.clone(),
             inline_layout_data: self.inline_layout_data.clone(),
             list_item_data: self.list_item_data.clone(),
@@ -610,6 +675,10 @@ impl ElementData {
             image_failed: false,
             content_gradient: false,
             math_fraction_bar: None,
+            math_radical: None,
+            math_stretch: None,
+            math_kind: None,
+            math_italic_correction: 0.0,
             reference_images: ThinVec::new(),
 
             stylo_element_data: Default::default(),
@@ -1133,6 +1202,11 @@ pub struct RasterImageData {
     /// pyro: the EXIF orientation (1 to 8; 1 is none) the pixels were turned by when decoded
     /// (`image-orientation: from-image`). `image-orientation: none` shows them turned back.
     pub orientation: u8,
+    /// pyro: a decoded `<video>` frame whose pixels a page must not read back (cross-origin media
+    /// without CORS): HTML-in-Canvas privacy paints it but taints the canvas (blitz-paint
+    /// `Privacy::admit`). False for every image from a response (those are classified by
+    /// `net::is_opaque_image`).
+    pub tainting: bool,
 }
 impl RasterImageData {
     pub fn new(width: u32, height: u32, data: Arc<Vec<u8>>) -> Self {
@@ -1141,6 +1215,7 @@ impl RasterImageData {
             height,
             data: Blob::new(data),
             orientation: 1,
+            tainting: false,
         }
     }
 

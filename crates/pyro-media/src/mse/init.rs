@@ -1,6 +1,9 @@
 use super::*;
+use crate::cenc::{Scheme, SeigEntry};
 
-pub(super) fn parse(data: &[u8]) -> Result<(BTreeMap<u32, TrackInfo>, Option<f64>)> {
+type Parsed = (BTreeMap<u32, TrackInfo>, Option<f64>, Vec<Encrypted>);
+
+pub(super) fn parse(data: &[u8]) -> Result<Parsed> {
     let (movie_scale, movie_duration) = timing(child(data, b"mvhd")?)?;
     let mvex = child(data, b"mvex")?;
     let mut duration = movie_duration;
@@ -18,6 +21,16 @@ pub(super) fn parse(data: &[u8]) -> Result<(BTreeMap<u32, TrackInfo>, Option<f64
             }
             b"mehd" => duration = duration_field(b, 4)?,
             _ => {}
+        }
+    }
+    // Every `pssh` box of the movie, whole, in file order.
+    let mut pssh = Vec::new();
+    for item in Boxes(data) {
+        let (kind, b) = item?;
+        if kind == b"pssh" {
+            pssh.extend_from_slice(&((b.len() + 8) as u32).to_be_bytes());
+            pssh.extend_from_slice(b"pssh");
+            pssh.extend_from_slice(b);
         }
     }
     let mut tracks = BTreeMap::new();
@@ -56,8 +69,25 @@ pub(super) fn parse(data: &[u8]) -> Result<(BTreeMap<u32, TrackInfo>, Option<f64
             height: 0,
             sample_rate: 0,
             channels: 0,
+            protection: None,
         };
-        match (handler, entry) {
+        // A protected sample entry (`encv`/`enca`) wraps the original format in
+        // `sinf`: `frma` names it, `schm` the scheme, `schi`/`tenc` the defaults.
+        let mut format = entry;
+        if entry == b"encv" || entry == b"enca" {
+            let sinf = child(e.get(if entry == b"encv" { 78 } else { 28 }..).ok_or(Error::Invalid)?, b"sinf")?;
+            format = child(sinf, b"frma")?.get(..4).ok_or(Error::Invalid)?;
+            let scheme = Scheme::from_fourcc(child(sinf, b"schm")?.get(4..8).ok_or(Error::Invalid)?)
+                .ok_or(Error::Unsupported)?;
+            let tenc = child(child(sinf, b"schi")?, b"tenc")?;
+            let (default, _) = seig_entry(tenc.get(4..).ok_or(Error::Invalid)?)?;
+            let mut groups = Vec::new();
+            if let Ok(stbl_groups) = stbl_seig(stbl) {
+                groups = stbl_groups;
+            }
+            t.protection = Some(crate::cenc::Protection { scheme, default, groups });
+        }
+        match (handler, format) {
             (b"vide", b"avc1" | b"avc3") => {
                 if !crate::video::H264 {
                     return Err(Error::Unsupported);
@@ -68,7 +98,7 @@ pub(super) fn parse(data: &[u8]) -> Result<(BTreeMap<u32, TrackInfo>, Option<f64
                     return Err(Error::Invalid);
                 }
                 t.codec =
-                    format!("{}.{:02x}{:02x}{:02x}", std::str::from_utf8(entry).unwrap(), desc[1], desc[2], desc[3]);
+                    format!("{}.{:02x}{:02x}{:02x}", std::str::from_utf8(format).map_err(|_| Error::Invalid)?, desc[1], desc[2], desc[3]);
                 t.width = u32::from(u16at(e, 24)?);
                 t.height = u32::from(u16at(e, 26)?);
                 if t.width == 0 || t.height == 0 {
@@ -112,7 +142,106 @@ pub(super) fn parse(data: &[u8]) -> Result<(BTreeMap<u32, TrackInfo>, Option<f64
         return Err(Error::Unsupported);
     }
     let duration = duration.map(|ticks| ticks as f64 / f64::from(movie_scale));
-    Ok((tracks, duration))
+    let mut kids: Vec<[u8; 16]> = Vec::new();
+    for info in tracks.values() {
+        if let Some(p) = &info.track.protection {
+            for entry in std::iter::once(&p.default).chain(p.groups.iter()) {
+                if entry.protected && !kids.contains(&entry.kid) {
+                    kids.push(entry.kid);
+                }
+            }
+        }
+    }
+    let mut encrypted = Vec::new();
+    if !kids.is_empty() || !pssh.is_empty() {
+        // The `pssh` boxes of the file, then a Common SystemID one (W3C cenc-format) naming the
+        // `tenc` key IDs, which is what a key system without its own box (Clear Key) reads.
+        if !kids.is_empty() {
+            pssh.extend_from_slice(&(32 + 16 * kids.len() as u32).to_be_bytes());
+            pssh.extend_from_slice(b"pssh");
+            pssh.extend_from_slice(&[1, 0, 0, 0]);
+            pssh.extend_from_slice(&[
+                0x10, 0x77, 0xef, 0xec, 0xc0, 0xb2, 0x4d, 0x02, 0xac, 0xe3, 0x3c, 0x1e, 0x52, 0xe2, 0xfb, 0x4b,
+            ]);
+            pssh.extend_from_slice(&(kids.len() as u32).to_be_bytes());
+            for kid in &kids {
+                pssh.extend_from_slice(kid);
+            }
+            pssh.extend_from_slice(&[0, 0, 0, 0]);
+        }
+        encrypted.push(Encrypted { init_data_type: "cenc", init_data: pssh });
+    }
+    Ok((tracks, duration, encrypted))
+}
+
+/// A protection entry of `tenc` (from its reserved byte on) or of a `seig`
+/// sample group: the entry and the bytes it spans.
+pub(super) fn seig_entry(b: &[u8]) -> Result<(SeigEntry, usize)> {
+    let crypt_skip = *b.get(1).ok_or(Error::Invalid)?;
+    let protected = *b.get(2).ok_or(Error::Invalid)? != 0;
+    let iv_size = *b.get(3).ok_or(Error::Invalid)?;
+    if !matches!(iv_size, 0 | 8 | 16) {
+        return Err(Error::Invalid);
+    }
+    let kid: [u8; 16] = b.get(4..20).ok_or(Error::Invalid)?.try_into().unwrap();
+    let mut used = 20;
+    let mut constant_iv = None;
+    if protected && iv_size == 0 {
+        let n = usize::from(*b.get(20).ok_or(Error::Invalid)?);
+        if n != 8 && n != 16 {
+            return Err(Error::Invalid);
+        }
+        constant_iv = Some(b.get(21..21 + n).ok_or(Error::Invalid)?.to_vec());
+        used = 21 + n;
+    }
+    Ok((SeigEntry { protected, iv_size, kid, constant_iv, crypt_blocks: crypt_skip >> 4, skip_blocks: crypt_skip & 15 }, used))
+}
+
+/// The entries of a `seig` `sgpd` box, `None` for another grouping type.
+pub(super) fn seig_groups(b: &[u8]) -> Result<Option<Vec<SeigEntry>>> {
+    let version = *b.first().ok_or(Error::Invalid)?;
+    if b.get(4..8) != Some(&b"seig"[..]) {
+        return Ok(None);
+    }
+    let mut p = 8;
+    let mut default_length = 0;
+    if version >= 1 {
+        default_length = u32at(b, p)? as usize;
+        p += 4;
+    }
+    if version >= 2 {
+        p += 4;
+    }
+    let count = u32at(b, p)? as usize;
+    p += 4;
+    if count > 4096 {
+        return Err(Error::Quota);
+    }
+    let mut out = Vec::with_capacity(count);
+    for _ in 0..count {
+        let mut length = (version >= 1).then_some(default_length);
+        if version >= 1 && default_length == 0 {
+            length = Some(u32at(b, p)? as usize);
+            p += 4;
+        }
+        let (entry, used) = seig_entry(b.get(p..).ok_or(Error::Invalid)?)?;
+        p += length.unwrap_or(used);
+        out.push(entry);
+    }
+    Ok(Some(out))
+}
+
+/// The `seig` entries in a track's sample table (`stbl`).
+fn stbl_seig(stbl: &[u8]) -> Result<Vec<SeigEntry>> {
+    for item in Boxes(stbl) {
+        let (kind, b) = item?;
+        if kind == b"sgpd" {
+            if let Some(groups) = seig_groups(b)? {
+                return Ok(groups);
+            }
+        }
+    }
+    Ok(Vec::new())
 }
 
 fn edit_offset(elst: &[u8], movie: u32, track: u32) -> Result<f64> {

@@ -376,6 +376,12 @@ fn upgrade_with<'s>(
     if page.dom.borrow().custom_definition_owner(el).js()?.is_some() {
         return Ok(());
     }
+    // HTML "upgrade an element": a definition that disables shadow cannot take an element that has a
+    // shadow root; the element is failed and the exception reported.
+    if d.disable_shadow && page.dom.borrow().shadow_root(el).js()?.is_some() {
+        let _ = page.dom.borrow_mut().set_custom_failed(el);
+        return Err(JsError::dom("NotSupportedError", "Custom element definition disables shadow, but the element has a shadow root."));
+    }
     let (ctor, observed, face) = (d.ctor.get(s), &d.observed, d.form_associated);
     // The reactions the upgrade enqueues before it constructs.
     let (attributes, connected) = {
@@ -389,6 +395,10 @@ fn upgrade_with<'s>(
             .collect();
         let connected = dom.is_connected(el).js()?;
         dom.prepare_custom_element(el, !observed.is_empty(), face).js()?;
+        if face {
+            // `setFormValue()` and the like work in the constructor.
+            dom.begin_form_associated(el).js()?;
+        }
         record_definition(&mut dom, el, &owner, key)?;
         (attributes, connected)
     };
@@ -451,24 +461,73 @@ pub(crate) fn run_reactions(page: &Rc<PageDom>) {
     if page.is_disposed() {
         return;
     }
-    let pending = page.dom.try_borrow().is_ok_and(|dom| dom.has_custom_reactions_for(page.document()));
-    if !pending || RUNNING.with(|r| r.borrow().contains(&page.id())) {
+    run_document_reactions(page);
+    // Reactions are queued per creation document, and a call on another window's document (an
+    // element of this window inserted into an iframe's document) runs here: the other documents
+    // of the shared DOM run theirs through their own windows, in this same point.
+    for _ in 0..16 {
+        let others: Vec<NodeId> = match page.dom.try_borrow() {
+            Ok(dom) if dom.has_custom_reactions() => dom.custom_reaction_documents(),
+            _ => return,
+        };
+        let mut ran = false;
+        for doc in others {
+            if doc == page.document() {
+                continue;
+            }
+            if let Some(owner) = document_page(page, doc) {
+                ran = true;
+                run_document_reactions(&owner);
+            }
+        }
+        if !ran && !page.dom.try_borrow().is_ok_and(|dom| dom.has_custom_reactions_for(page.document())) {
+            return;
+        }
+        run_document_reactions(page);
+    }
+}
+
+/// The batch a running reaction loop still has to run, innermost last: a callback's own DOM calls
+/// run their reactions nested in it ([CEReactions]), and an element they touch must first run what
+/// the outer batches still hold for it (the element's own reaction queue is in order).
+struct Frame {
+    page: Rc<PageDom>,
+    items: std::collections::VecDeque<(NodeId, CustomReaction)>,
+}
+
+thread_local! {
+    static FRAMES: RefCell<Vec<Frame>> = const { RefCell::new(Vec::new()) };
+    /// The address of a local of the outermost running reaction loop ([`run_reactions`] at depth 0):
+    /// how much native stack the nested ones have used is measured from it.
+    static REACTION_STACK_BASE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn run_document_reactions(page: &Rc<PageDom>) {
+    if page.is_disposed() {
         return;
     }
-    RUNNING.with(|r| r.borrow_mut().push(page.id()));
+    let pending = page.dom.try_borrow().is_ok_and(|dom| dom.has_custom_reactions_for(page.document()));
+    if !pending {
+        return;
+    }
+    // A call a callback makes comes back here with the page already running: its reactions run
+    // now, nested in the callback, as HTML's reactions stack does (`RUNNING` then holds the page
+    // once per level).
     struct Done(u64);
     impl Drop for Done {
         fn drop(&mut self) {
-            RUNNING.with(|r| r.borrow_mut().retain(|&id| id != self.0));
+            RUNNING.with(|r| {
+                let mut r = r.borrow_mut();
+                if let Some(i) = r.iter().rposition(|&id| id == self.0) {
+                    r.remove(i);
+                }
+            });
         }
     }
+    RUNNING.with(|r| r.borrow_mut().push(page.id()));
     let _done = Done(page.id());
-    // HTML runs the reactions a callback's DOM calls queue nested in that
-    // callback ([CEReactions]); here they run after it, in the next batch, so
-    // the batch count is how deep they would nest. A callback that inserts an
-    // element whose callback inserts another nests without end; as in a
-    // browser it ends with a stack overflow, here at a fixed depth.
-    let mut depth = 0;
+    // A callback that inserts an element whose callback inserts another nests without end; as in
+    // a browser it ends with a stack overflow, here at a fixed depth.
     loop {
         let batch = {
             let Ok(mut dom) = page.dom.try_borrow_mut() else { return };
@@ -477,20 +536,90 @@ pub(crate) fn run_reactions(page: &Rc<PageDom>) {
         if batch.is_empty() {
             return;
         }
-        let overflow = depth >= MAX_REACTION_NESTING;
-        depth += 1;
-        for (el, reaction) in batch {
+        let below = FRAMES.with(|f| f.borrow().len());
+        let marker = 0u8;
+        let here = std::ptr::addr_of!(marker) as usize;
+        if below == 0 {
+            REACTION_STACK_BASE.with(|b| b.set(here));
+        }
+        // Each level is a native recursion (the callback, the DOM call it makes, this loop):
+        // past the depth cap, or the stack those levels took, the next callback throws.
+        let overflow = below >= MAX_REACTION_NESTING || REACTION_STACK_BASE.with(|b| b.get().abs_diff(here)) > MAX_REACTION_STACK_BYTES;
+        FRAMES.with(|f| f.borrow_mut().push(Frame { page: page.clone(), items: batch.into() }));
+        struct Pop(usize);
+        impl Drop for Pop {
+            fn drop(&mut self) {
+                FRAMES.with(|f| f.borrow_mut().truncate(self.0));
+            }
+        }
+        let _pop = Pop(below);
+        loop {
+            let next = FRAMES.with(|f| f.borrow_mut().get_mut(below).and_then(|frame| frame.items.pop_front()));
+            let Some((el, reaction)) = next else { break };
             if page.is_disposed() {
                 return;
+            }
+            // The outer batches' reactions of this element are older than this one: they run
+            // first, but only when this reaction calls something (a missing callback queues
+            // nothing, HTML "enqueue a custom element callback reaction").
+            if below > 0 && reaction_has_callback(page, el, &reaction) {
+                let older: Vec<(Rc<PageDom>, CustomReaction)> = FRAMES.with(|f| {
+                    let mut f = f.borrow_mut();
+                    let mut older = Vec::new();
+                    for frame in f[..below].iter_mut() {
+                        let mut rest = std::collections::VecDeque::new();
+                        for (e, r) in frame.items.drain(..) {
+                            if e == el { older.push((frame.page.clone(), r)) } else { rest.push_back((e, r)) }
+                        }
+                        frame.items = rest;
+                    }
+                    older
+                });
+                for (owner, r) in older {
+                    run_reaction(&owner, el, r, false);
+                }
             }
             run_reaction(page, el, reaction, overflow);
         }
     }
 }
 
+/// Whether running `reaction` on `el` would call a callback (the definition has it, and for an
+/// attribute change observes the attribute).
+fn reaction_has_callback(page: &Rc<PageDom>, el: NodeId, reaction: &CustomReaction) -> bool {
+    let Some((local, is)) = element_names(page, el) else { return false };
+    let Some((owner, key)) = element_definition(page, el) else { return false };
+    let Some(name) = with_registry(&owner, |r| r.def_key(key, &local, is.as_ref())) else { return false };
+    with_registry(&owner, |r| {
+        let Some(d) = r.defs.get(&(key, name.clone())) else { return false };
+        let c = &d.callbacks;
+        match reaction {
+            CustomReaction::Connected => c.connected.is_some(),
+            CustomReaction::Disconnected => c.disconnected.is_some(),
+            CustomReaction::Moved => c.connected_move.is_some() || c.disconnected.is_some() || c.connected.is_some(),
+            CustomReaction::Adopted { .. } => c.adopted.is_some(),
+            CustomReaction::AttributeChanged(change) => d.observed.contains(&change.local) && c.attribute_changed.is_some(),
+            CustomReaction::FormAssociated(_) => c.form_associated.is_some(),
+            CustomReaction::FormReset => c.form_reset.is_some(),
+            CustomReaction::FormDisabled(_) => c.form_disabled.is_some(),
+        }
+    })
+}
+
 /// How deep reactions nest (see [`run_reactions`]) before a callback throws
 /// a `RangeError` instead of running, as on a browser's stack overflow.
-const MAX_REACTION_NESTING: usize = 256;
+///
+/// Each level is native frames too (JavaScriptCore's call, the binding, the DOM mutation, the
+/// reaction loop: a few KB in a release build, several times that in a debug one), and the smallest
+/// stack a page's thread can have is a 2 MB spawned one (the browser, render and worker threads
+/// have 8 MB; the test harness's are 2 MB): 64 levels is a fraction of it at those frame sizes,
+/// and [`MAX_REACTION_STACK_BYTES`] ends the nesting by the stack it actually took, whatever the
+/// frames cost, before it could reach the end of that stack.
+const MAX_REACTION_NESTING: usize = 64;
+
+/// The native stack the nested reaction loops may take, measured from the outermost one (what
+/// is below it on the stack is JavaScriptCore's own guard's concern), under half of the smallest stack.
+const MAX_REACTION_STACK_BYTES: usize = 768 * 1024;
 
 /// Calls the callback of one reaction on `el`. A move without
 /// `connectedMoveCallback` calls `disconnectedCallback` and then
@@ -548,7 +677,8 @@ fn run_reaction(page: &Rc<PageDom>, el: NodeId, reaction: CustomReaction, overfl
             s.report_exception(&JsError::Range("Maximum call stack size exceeded.".into()));
             continue;
         }
-        if let Err(e) = f.call(Some(obj), &args) {
+        // The callback's own DOM calls run their reactions before they return to it.
+        if let Err(e) = realm.reenter_native_callback_hook(|| f.call(Some(obj), &args)) {
             s.report_exception(&e);
         }
     }
@@ -1173,6 +1303,11 @@ pub(crate) fn thread_leftover() -> Option<&'static str> {
     }
     if CONSTRUCTIONS.with(|c| !c.borrow().is_empty()) {
         return Some("custom::CONSTRUCTIONS");
+    }
+    // The reaction loop's guard truncates its frame on the way out, so none is left between calls;
+    // `REACTION_STACK_BASE` is rewritten by every outermost loop before it is read.
+    if FRAMES.with(|f| !f.borrow().is_empty()) {
+        return Some("custom::FRAMES");
     }
     association::thread_leftover()
 }

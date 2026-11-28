@@ -90,6 +90,7 @@ These are sent without a `sessionId`, or on a browser session from `Target.attac
 | `Browser.grantPermissions` | implemented | Per context (the default context without `browserContextId`). Drives `navigator.permissions.query`, live `PermissionStatus` change events and the context clipboard. Chrome's messages for unknown types. |
 | `Browser.resetPermissions` | implemented | Back to Chrome's defaults (`clipboard-write` granted, the rest `prompt`). |
 | `Browser.setPermission` | implemented | One permission for one origin, or for every origin. |
+| `Browser.setStorageAccess` | implemented (non-standard) | Pyro's own method, not in Chrome's protocol (a standard CDP client never sends it). `{origin, embeddingOrigin, blocked}` sets the browser context's rule for the unpartitioned cookies of `origin` embedded under `embeddingOrigin` (`*` or an http(s) origin); the latest matching rule decides. |
 | `Storage.getCookies` / `setCookies` / `clearCookies` | implemented | The context's real cookie jar (HTTP cookies included). Negative `expires` means a session cookie. Invalid batches are rejected before anything changes. Partitioned and SameParty cookies, non-default priority and source overrides are refused. |
 | `Security.enable` / `disable` | accepted | No security state events. |
 | `Security.setIgnoreCertificateErrors` | implemented | On the browser session (Puppeteer `acceptInsecureCerts`), it covers every context, later ones included. On a page session, it covers that page's context. Handshake signatures are still verified. Otherwise an untrusted certificate fails with `net::ERR_CERT_AUTHORITY_INVALID`. |
@@ -179,6 +180,7 @@ These are sent with the `sessionId` of an attached page.
 | `Emulation.setLocaleOverride` | partial | `navigator.language(s)` and `Accept-Language` only. `Intl` and `Date` keep the process locale. |
 | `Emulation.setTimezoneOverride` | partial | Per connection (`Date`, `Intl`, `Temporal`). Two pages on one connection cannot hold different zones ("Cannot set timezone"). |
 | `Emulation.setGeolocationOverride` / `clearGeolocationOverride` | implemented | Per browser context. Needs the geolocation permission. |
+| `Emulation.setPressureSourceOverrideEnabled` / `setPressureStateOverride` / `setPressureDataOverride` | implemented | Virtual Compute Pressure source `cpu` (replaces the host's CPU load for `PressureObserver`). Per browser context. |
 | `Emulation.setTouchEmulationEnabled` | implemented | `navigator.maxTouchPoints` (1–16), `(pointer: coarse)`, `(hover: none)`. |
 | `Emulation.setDefaultBackgroundColorOverride` | implemented | Screenshot background. `a: 0` gives transparent PNGs. |
 | `Emulation.setVirtualTimePolicy` | partial | Freezes `Date` and `performance.now()` and holds timers. `advance` and `pauseIfNetworkFetchesPending` with `budget` (emits `Emulation.virtualTimeBudgetExpired`). Thread-wide and owned by one page. Cannot be turned off. |

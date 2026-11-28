@@ -26,13 +26,16 @@ mod network;
 mod network_delivery;
 mod page;
 mod permissions;
+mod pressure;
 mod remote;
 mod runtime;
+mod sensors;
 #[cfg(feature = "render")]
 mod screencast;
 #[cfg(feature = "render")]
 mod screenshot;
 mod virtual_time;
+mod webauthn;
 mod worker;
 #[cfg(not(feature = "render"))]
 mod screenshot {
@@ -353,6 +356,9 @@ pub(crate) struct Session {
     /// Page.setInterceptFileChooserDialog: file inputs report
     /// Page.fileChooserOpened to this session.
     pub(crate) intercept_file_chooser: bool,
+    /// `WebAuthn.enable` of this session: its commands reach the virtual authenticators and it
+    /// receives their `credential*` events.
+    pub(crate) webauthn_enabled: bool,
     /// Runtime.addBinding names: their calls are reported to this session.
     pub(crate) bindings: Vec<String>,
     fetch: fetch::FetchSession,
@@ -365,6 +371,8 @@ struct PopupOpen {
     features: pyro_webapi::window_features::WindowFeatures,
     referrer: Option<String>,
     referrer_policy: Option<pyro_net::ReferrerPolicy>,
+    /// The `window.open` ran with a user activation (URL text directives of its first load).
+    user_gesture: bool,
 }
 
 pub(crate) struct PageState {
@@ -409,11 +417,17 @@ pub(crate) struct PageState {
     /// Input.setInterceptDrags: native drags started by mouse input are
     /// reported through Input.dragIntercepted.
     pub(crate) intercept_drags: bool,
+    /// A drag the engine drives itself (a left-button move started it with no interception, as
+    /// in Chrome): the source's document and the data. Moves feed it dragenter/dragover and the
+    /// release drops it; no mouse or pointer events reach the page meanwhile.
+    pub(crate) native_drag: Option<(Rc<pyro_webapi::PageDom>, pyro_webapi::input::DragData)>,
     /// Input.dispatchTouchEvent: the touches down, and the frame document
     /// the sequence's first touch landed in with its transforms to the page's
     /// viewport (all touches of a sequence go to that document).
     pub(crate) touches: pyro_webapi::input::TouchSequence,
     touch_document: Option<(Rc<pyro_webapi::PageDom>, Vec<dom::FrameTransform>)>,
+    /// The documents the mouse pointer is over, outermost first (the page's, then each frame down to the innermost).
+    hover_documents: Vec<Rc<pyro_webapi::PageDom>>,
     network: network::NetworkPage,
     dom_nodes: dom::BackendNodes,
     /// Downloads the page started, newest last (`Pyro.run` `download` steps).
@@ -697,8 +711,10 @@ impl EngineHost {
                 uncommitted_popup_of: None,
                 suppress_next_char: false,
                 intercept_drags: false,
+                native_drag: None,
                 touches: Default::default(),
                 touch_document: None,
+                hover_documents: Vec::new(),
                 network: network::NetworkPage::new(self.body_budget.clone()),
                 dom_nodes: dom::BackendNodes::default(),
                 downloads: Vec::new(),
@@ -961,6 +977,7 @@ impl EngineHost {
         self.drain_collector();
         self.flush_network();
         self.flush_fetch();
+        self.flush_webauthn();
         self.poll_coverage();
         // `Pyro.run` request steps wait on the log these observations fill.
         if self.waiters.log_changed {
@@ -1037,6 +1054,7 @@ impl EngineHost {
             "Fetch" => self.fetch_domain(action, cmd),
             "Input" => self.input_domain(action, cmd),
             "Security" => self.security_domain(action, cmd),
+            "WebAuthn" => self.webauthn_domain(action, cmd),
             "Accessibility" => self.accessibility_domain(action, cmd),
             "Profiler" => self.profiler_domain(action, cmd),
             "Debugger" => self.debugger_domain(action, cmd),
@@ -1186,6 +1204,18 @@ impl EngineHost {
                 if p.window_id != cmd.page {
                     return Err(CdpError::server("Browser window not found"));
                 }
+                // Chrome: a minimized, maximized or full screen window takes no rectangle with it.
+                let window_state = p.bounds.get("windowState").and_then(|v| v.as_str()).map(str::to_owned);
+                if let Some(window_state) = window_state.as_deref() {
+                    if !matches!(window_state, "normal" | "minimized" | "maximized" | "fullscreen") {
+                        return Err(CdpError::invalid_params("Invalid window state"));
+                    }
+                    if window_state != "normal" && ["left", "top", "width", "height"].iter().any(|k| p.bounds.contains_key(*k)) {
+                        return Err(CdpError::invalid_params(
+                            "The 'minimized', 'maximized' and 'fullscreen' states cannot be combined with 'left', 'top', 'width' or 'height'",
+                        ));
+                    }
+                }
                 // Merge like Chrome: unspecified fields keep their values.
                 let mut bounds = state.window_bounds.clone().unwrap_or_else(|| {
                     serde_json::json!({ "left": left, "top": top, "width": width, "height": height, "windowState": "normal" })
@@ -1195,7 +1225,13 @@ impl EngineHost {
                         bounds[k] = v;
                     }
                 }
+                let id = state.id;
                 state.window_bounds = Some(bounds);
+                // A minimized window shows none of its documents: they become hidden (and `visibilitychange`
+                // fires), and visible again when the window is restored, maximized or made full screen.
+                if let Some(window_state) = window_state {
+                    self.thread.browser.set_window_hidden(id, window_state == "minimized");
+                }
                 Ok(Some(serde_json::json!({})))
             }
             _ => Err(CdpError::unsupported(&cmd.command.method)),
@@ -1207,6 +1243,8 @@ impl EngineHost {
             // Headless pages always behave as focused; there is no window focus to emulate.
             "setFocusEmulationEnabled" => Ok(Some(serde_json::json!({}))),
             "setGeolocationOverride" | "clearGeolocationOverride" => self.geolocation_override(action, cmd),
+            "setPressureSourceOverrideEnabled" | "setPressureStateOverride" | "setPressureDataOverride" => self.pressure_override(action, cmd),
+            "setSensorOverrideEnabled" | "setSensorOverrideReadings" | "getOverriddenSensorInformation" => self.sensor_override(action, cmd),
             "setVirtualTimePolicy" => self.set_virtual_time_policy(cmd),
             // Touch input (Input.dispatchTouchEvent) is always accepted, as in
             // Chrome; this sets `navigator.maxTouchPoints` (default 1) and,
@@ -1562,6 +1600,7 @@ impl Host for EngineHost {
         {
             if let Some(creation) = &creation {
                 self.thread.browser.configure_popup(id, opener_id, &creation.window_name, creation.features);
+                self.thread.browser.set_popup_user_gesture(id, creation.user_gesture);
             }
             self.thread.browser.adopt_popup(id, opener_id, ticket.clone());
         }
@@ -1655,10 +1694,18 @@ impl Host for EngineHost {
         if state.timezone_override.is_some() && !self.pages.values().any(|s| s.timezone_override.is_some()) {
             let _ = self.apply_timezone(None);
         }
+        let mut webauthn = false;
         for session in &state.sessions {
             self.pending.cancel_session(session);
             if let Some(session) = self.sessions.remove(session) {
+                webauthn |= session.webauthn_enabled;
                 session.handles.borrow_mut().clear();
+            }
+        }
+        if webauthn {
+            let services = self.thread.browser.page(state.id).and_then(|p| self.thread.browser.context_services(p.context));
+            if let Some(services) = services {
+                self.webauthn_release(state.context, &services);
             }
         }
         self.renders.forget(state.id);
@@ -1699,6 +1746,7 @@ impl Host for EngineHost {
                 cache_disabled: false,
                 bypass_service_worker: false,
                 intercept_file_chooser: false,
+                webauthn_enabled: false,
                 bindings: Vec::new(),
                 fetch: fetch::FetchSession::default(),
                 handles: Rc::new(RefCell::new(HandleTable::new(self.handle_budget.clone()))),
@@ -1771,8 +1819,13 @@ impl Host for EngineHost {
         self.disable_fetch(session_id);
         self.screencasts.forget_session(session_id);
         self.coverage_session_detached(page, session_id);
+        let webauthn = self.sessions.get(session_id).is_some_and(|s| s.webauthn_enabled);
         if let Some(session) = self.sessions.remove(session_id) {
             session.handles.borrow_mut().clear();
+        }
+        // A session that goes disables the environment it enabled, as Chrome's handler does.
+        if webauthn {
+            self.webauthn_session_gone(page);
         }
         self.update_runtime_wanted();
         self.update_network_subscriptions();
@@ -1815,13 +1868,13 @@ impl Host for EngineHost {
                 }
                 Err(e) => out.send(msg::error_frame(Some(command.id), &e, command.session_id())),
             },
-            "Storage.getCookies" | "Storage.setCookies" | "Storage.clearCookies" => {
+            "Storage.getCookies" | "Storage.setCookies" | "Storage.clearCookies" | "Storage.runBounceTrackingMitigations" => {
                 match self.storage_command(command, context) {
                     Ok(result) => out.send(msg::result_frame(command.id, &result, command.session_id())),
                     Err(error) => out.send(msg::error_frame(Some(command.id), &error, command.session_id())),
                 }
             }
-            "Browser.grantPermissions" | "Browser.resetPermissions" | "Browser.setPermission" => {
+            "Browser.grantPermissions" | "Browser.resetPermissions" | "Browser.setPermission" | "Browser.setStorageAccess" => {
                 let result = self.permissions_command(command, context);
                 match result {
                     Ok(()) => out.send(msg::result_frame(command.id, &Empty {}, command.session_id())),

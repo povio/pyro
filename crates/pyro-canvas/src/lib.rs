@@ -156,6 +156,9 @@ pub struct Gradient {
     /// In the order `addColorStop` added them (a stable sort by offset is
     /// applied when painting).
     pub stops: Vec<(f32, Color)>,
+    /// Interpolate in Oklab instead of sRGB: Chrome does so when a stop's color is not a legacy
+    /// sRGB syntax (`color-mix()`, relative colors, `color()`, `lab()`, ...), WPT 2d.gradient.colormix.
+    pub oklab: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -466,7 +469,7 @@ impl Surface {
 
     /// Fills `path` (device coordinates).
     pub fn fill(&mut self, path: &BezPath, evenodd: bool, paint: &Paint, state: &DrawState<'_>) {
-        let path = guard_path(path, self.width, self.height);
+        let path = fine_flatten(guard_path(path, self.width, self.height), self.width, self.height);
         let rule = if evenodd { Fill::EvenOdd } else { Fill::NonZero };
         self.draw(paint, state, Affine::IDENTITY, &mut |ctx, _| {
             ctx.set_fill_rule(rule);
@@ -521,9 +524,15 @@ impl Surface {
                 stroke.dash_pattern.clear();
             }
         }
+        let union = if stroke.dash_pattern.is_empty() { overlapping_polyline_stroke(&user, &stroke) } else { None };
         self.draw(paint, state, t, &mut |ctx, _| {
-            ctx.set_stroke(stroke.clone());
-            ctx.stroke_path(&user);
+            if let Some(union) = &union {
+                ctx.set_fill_rule(Fill::NonZero);
+                ctx.fill_path(union);
+            } else {
+                ctx.set_stroke(stroke.clone());
+                ctx.stroke_path(&user);
+            }
         });
     }
 
@@ -906,6 +915,195 @@ fn stretch(t: Affine) -> f64 {
     (a.abs() + c.abs()).max(b.abs() + d.abs())
 }
 
+/// The area a pen of `stroke.width` covers along a polyline `path` (lines only) whose joins have
+/// an inner side the pen overreaches: a segment shorter than `radius * tan(turn / 2)` before a
+/// join. kurbo's stroker offsets each side as one outline and, with a bevel or miter join, closes
+/// the inner side by a chord between the two offset points, which sweeps a wedge the pen never
+/// covered (WPT 2d.line.cross: a 200 px wide bevel-joined stroke filled a corner of the canvas).
+/// Skia joins the inner side through the vertex. Here the stroke is the union of one rectangle per
+/// segment and the outer wedge of each join (bevel triangle, miter quadrilateral within the
+/// limit, a circular wedge for round), all oriented alike so that a nonzero fill unites them. `None` for a
+/// path with curves, a subpath without length, or when no join overreaches (kurbo's outline is
+/// exact then and stays the one used).
+fn overlapping_polyline_stroke(path: &BezPath, stroke: &Stroke) -> Option<BezPath> {
+    use kurbo::{Join, Cap};
+    let radius = stroke.width / 2.0;
+    if !(radius.is_finite() && radius > 0.0) {
+        return None;
+    }
+    // Subpaths as point lists without repeated points, and whether each was closed.
+    let mut subpaths: Vec<(Vec<Point>, bool)> = Vec::new();
+    for el in path.elements() {
+        match *el {
+            PathEl::MoveTo(p) => subpaths.push((vec![p], false)),
+            PathEl::LineTo(p) => {
+                let (points, _) = subpaths.last_mut()?;
+                if points.last() != Some(&p) {
+                    points.push(p);
+                }
+            }
+            PathEl::ClosePath => {
+                let (points, closed) = subpaths.last_mut()?;
+                *closed = true;
+                if points.len() > 1 && points.first() == points.last() {
+                    points.pop();
+                }
+            }
+            _ => return None,
+        }
+    }
+    // The work is linear in the points (a rectangle and a wedge each): past this many the kurbo outline
+    // is used, whose join artifacts only show where a pen overreaches.
+    if subpaths.iter().map(|(points, _)| points.len()).sum::<usize>() > MAX_UNION_POINTS {
+        return None;
+    }
+    let direction = |a: Point, b: Point| (b - a) / (b - a).hypot();
+    // A closed subpath's segments, in order, wrapping around.
+    let segments = |points: &[Point], closed: bool| -> usize { if closed { points.len() } else { points.len() - 1 } };
+    let mut overreaches = false;
+    for (points, closed) in &subpaths {
+        if points.len() < 2 || (*closed && points.len() < 3) {
+            return None;
+        }
+        let n = points.len();
+        let count = segments(points, *closed);
+        for i in 0..count {
+            let (a, b) = (points[i], points[(i + 1) % n]);
+            let next = if *closed || i + 1 < count { Some((b, points[(i + 2) % n])) } else { None };
+            let Some((b, c)) = next else { continue };
+            let (d1, d2) = (direction(a, b), direction(b, c));
+            let phi = d1.dot(d2).clamp(-1.0, 1.0).acos();
+            let reach = radius * (phi / 2.0).tan();
+            if !(reach <= (b - a).hypot().min((c - b).hypot())) {
+                overreaches = true;
+            }
+        }
+    }
+    if !overreaches {
+        return None;
+    }
+    let mut out = BezPath::new();
+    let mut add = |mut shape: BezPath| {
+        if shape.area() < 0.0 {
+            shape = shape.reverse_subpaths();
+        }
+        out.extend(shape);
+    };
+    let polygon = |points: &[Point]| {
+        let mut bez = BezPath::new();
+        bez.move_to(points[0]);
+        for p in &points[1..] {
+            bez.line_to(*p);
+        }
+        bez.close_path();
+        bez
+    };
+    // The wedge of the pen's circle at `center` from `start` (a vector of length `radius`) through the
+    // signed `sweep` (radians): only the part the rectangles do not cover, its straight sides on theirs,
+    // so that no two pieces cover the same antialiased pixels of the boundary (a whole disc would lie
+    // across the rectangles' edges and, summed, darken them).
+    let fan = |center: Point, start: Vec2, sweep: f64| {
+        let step = if radius > ARC_TOLERANCE { 2.0 * (1.0 - ARC_TOLERANCE / radius).acos() } else { std::f64::consts::PI };
+        let n = ((sweep.abs() / step).ceil() as usize).clamp(1, MAX_ARC_SEGMENTS);
+        let a0 = start.atan2();
+        let mut bez = BezPath::new();
+        bez.move_to(center);
+        for k in 0..=n {
+            let a = a0 + sweep * k as f64 / n as f64;
+            bez.line_to(center + Vec2::new(a.cos(), a.sin()) * radius);
+        }
+        bez.close_path();
+        bez
+    };
+    let normal = |d: Vec2| Vec2::new(-d.y, d.x) * radius;
+    for (points, closed) in &subpaths {
+        let n = points.len();
+        let count = segments(points, *closed);
+        for i in 0..count {
+            let (a, b) = (points[i], points[(i + 1) % n]);
+            let d = direction(a, b);
+            let nm = normal(d);
+            // Open ends take their cap: a square one extends the rectangle, a round one is a disc.
+            let (mut from, mut to) = (a, b);
+            if !*closed {
+                if i == 0 {
+                    match stroke.start_cap {
+                        Cap::Square => from = a - d * radius,
+                        Cap::Round => add(fan(a, nm, std::f64::consts::PI)),
+                        Cap::Butt => {}
+                    }
+                }
+                if i + 1 == count {
+                    match stroke.end_cap {
+                        Cap::Square => to = b + d * radius,
+                        Cap::Round => add(fan(b, nm, -std::f64::consts::PI)),
+                        Cap::Butt => {}
+                    }
+                }
+            }
+            add(polygon(&[from + nm, to + nm, to - nm, from - nm]));
+            let next = if *closed || i + 1 < count { Some(points[(i + 2) % n]) } else { None };
+            let Some(c) = next else { continue };
+            let d2 = direction(b, c);
+            let (cross, dot) = (d.cross(d2), d.dot(d2));
+            if cross.abs() < 1e-12 && dot > 0.0 {
+                continue;
+            }
+            match stroke.join {
+                Join::Round => {
+                    // The outer side's wedge from one segment's normal to the next's: the pen turns by
+                    // the angle between the directions (a U-turn takes the half circle ahead).
+                    let sweep = cross.abs().atan2(dot);
+                    if cross > 0.0 {
+                        add(fan(b, -normal(d), sweep));
+                    } else {
+                        add(fan(b, normal(d), -sweep));
+                    }
+                }
+                Join::Bevel | Join::Miter => {
+                    // The outer side is the right of a left turn, the left of a right turn.
+                    let side = if cross > 0.0 { -1.0 } else { 1.0 };
+                    let (na, nb) = (normal(d) * side, normal(d2) * side);
+                    let miter_ok = stroke.join == Join::Miter && (1.0 + dot) / 2.0 >= 1.0 / (stroke.miter_limit * stroke.miter_limit);
+                    if miter_ok && dot > -1.0 {
+                        let tip = b + (na + nb) / (1.0 + dot);
+                        add(polygon(&[b, b + na, tip, b + nb]));
+                    } else {
+                        add(polygon(&[b, b + na, b + nb]));
+                    }
+                }
+            }
+        }
+    }
+    Some(out)
+}
+
+/// Chord error (px) of the arcs the polyline stroke adds (round joins and caps), and the most segments
+/// one arc takes.
+const ARC_TOLERANCE: f64 = 0.02;
+const MAX_ARC_SEGMENTS: usize = 256;
+/// Points of a polyline past which [`overlapping_polyline_stroke`] leaves the stroke to kurbo.
+const MAX_UNION_POINTS: usize = 50_000;
+
+/// `path` with its curves flattened to a hundredth of a pixel. vello_cpu flattens at a quarter of
+/// a pixel, which cuts a corner of a curved edge by up to that much: a pixel that lies fully inside
+/// a large ellipse came out a twentieth uncovered at the edge (WPT 2d.path.arc.scale.1, exact
+/// pixels). A path far larger than the canvas keeps its curves (the segment count grows with the
+/// square root of the size).
+fn fine_flatten(path: BezPath, width: u32, height: u32) -> BezPath {
+    if !path.elements().iter().any(|el| matches!(el, PathEl::QuadTo(..) | PathEl::CurveTo(..))) {
+        return path;
+    }
+    let bounds = path.bounding_box();
+    let limit = 16.0 * f64::from(width.max(height)).max(256.0);
+    if !(bounds.width() <= limit && bounds.height() <= limit) {
+        return path;
+    }
+    let mut out = BezPath::new();
+    kurbo::flatten(path.elements().iter().copied(), 0.01, |el| out.push(el));
+    out
+}
+
 /// Dash periods along one stroke past which dashes are dropped.
 const MAX_DASHES: f64 = 100_000.0;
 
@@ -1067,6 +1265,9 @@ fn gradient_paint(g: &Gradient, alpha: f32) -> Option<peniko::Gradient> {
     };
     let mut gradient = gradient.with_stops(&stops[..]);
     gradient.interpolation_alpha_space = peniko::InterpolationAlphaSpace::Unpremultiplied;
+    if g.oklab {
+        gradient.interpolation_cs = peniko::color::ColorSpaceTag::Oklab;
+    }
     Some(gradient)
 }
 

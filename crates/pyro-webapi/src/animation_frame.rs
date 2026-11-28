@@ -925,7 +925,11 @@ impl pyro_dom::animation::AnimationSource for Source {
     fn stamp(&self) -> u64 {
         let Some(page) = self.page.upgrade().filter(|page| !page.is_disposed()) else { return 0 };
         let Some(seq) = pyro_runtime::task_seq() else { return stamp(&page, crate::event::page_now_ms(&page)) };
-        let key = |page: &PageDom| (seq, page.animation_events.generation.get(), crate::smil::version(page));
+        // (The scroll offsets last told to the engine: a push later in the task moves scroll-driven animations.)
+        let key = |page: &PageDom| {
+            let pushed = page.layout.try_borrow().map_or(0, |layout| layout.timeline_scroll_generation());
+            (seq, page.animation_events.generation.get(), crate::smil::version(page) ^ pushed.wrapping_mul(0x9E37_79B9_7F4A_7C15))
+        };
         if let Some((at, value)) = self.stamp.get() {
             if at == key(&page) {
                 return value;
@@ -1098,6 +1102,10 @@ impl PageDom {
             if layout.push_scroll() {
                 layout.set_scroll_pushed_at(crate::event::page_now_ms(self));
             }
+            // (`scroll-state(stuck)`: the boxes sticky offsets hold at an edge now.)
+            if let Ok(dom) = self.dom.try_borrow() {
+                layout.push_stuck(&dom);
+            }
         }
         crate::animation_events::before_render(self);
     }
@@ -1110,6 +1118,10 @@ impl PageDom {
         if let Some(layout) = self.try_layout() {
             if layout.push_scroll() {
                 layout.set_scroll_pushed_at(crate::event::page_now_ms(self));
+            }
+            // (`scroll-state(stuck)`: the boxes sticky offsets hold at an edge now.)
+            if let Ok(dom) = self.dom.try_borrow() {
+                layout.push_stuck(&dom);
             }
         }
         crate::animation_events::before_render(self);

@@ -174,6 +174,10 @@ where
     /// The state of the pseudo-element itself, not its originating element.
     pub pseudo_element_state: Option<Impl::NonTSPseudoClass>,
 
+    /// pyro: whether the pseudo-element is its parent pseudo-element's only child (`:only-child` after a
+    /// pseudo-element of a pseudo-element tree, e.g. `::view-transition-group(x):only-child`).
+    pub pseudo_element_only_child: bool,
+
     /// Extra implementation-dependent matching data.
     pub extra_data: Impl::ExtraMatchingData<'a>,
 
@@ -291,6 +295,7 @@ where
             in_negation: false,
             pseudo_element_matching_fn: None,
             pseudo_element_state: None,
+            pseudo_element_only_child: false,
             extra_data: Default::default(),
             current_relative_selector_anchor: None,
             selector_caches,

@@ -74,6 +74,7 @@
   const isView = ArrayBuffer.isView;
   // Remote-object previews and internal properties (CDP Runtime).
   const jsonStringify = JSON.stringify;
+  const jsonParse = JSON.parse;
   const objectIs = O.is;
   const symbolToString = Symbol.prototype.toString;
   const mapEntries = MapC.prototype.entries, setValues = SetC.prototype.values;
@@ -207,6 +208,10 @@
       if (!apply(wmHas, quotaLimits, [this])) throw new TypeError('Illegal invocation');
       return apply(wmGet, quotaLimits, [this])[1];
     }
+  }
+  // WebIDL attributes are enumerable accessors.
+  for (const member of ['requested', 'quota']) {
+    defineProperty(QuotaExceededError.prototype, member, { enumerable: true });
   }
   defineProperty(QuotaExceededError.prototype, toStringTag, { value: 'QuotaExceededError', configurable: true });
   defineProperty(globalThis, 'QuotaExceededError', { value: QuotaExceededError, writable: true, configurable: true });
@@ -451,6 +456,10 @@
       return P;
     },
     accessor: defineAccessor,
+    // `accessor` for lists: one call defines every pair (a window's ~100 `on*` handlers at realm creation).
+    accessors(proto, names, gets, sets) {
+      for (let i = 0; i < names.length; i++) defineAccessor(proto, names[i], gets[i], sets[i]);
+    },
     // The global class's members, on the global since its creation, onto
     // its interface prototype object when a script first reaches it: the
     // same functions and attributes (realm.rs `copy_global_members`).
@@ -677,10 +686,11 @@
     // run with the Window, not the proxy, as `this` (a WindowProxy is the
     // Window to the bindings). Neither `standIn` nor the target is ever
     // handed to page code, and no list is made through page-observable
-    // hooks (species, spreading, iteration).
-    windowProxy(standIn, target, child, deny) {
+    // hooks (species, spreading, iteration). `coop` is the engine's shared flag array
+    // (`[true]` while a document names a COOP reporting endpoint).
+    windowProxy(standIn, target, child, deny, coop) {
       const ALWAYS = { __proto__: null, closed: 1, close: 1, focus: 1, blur: 1 };
-      const SELF = { __proto__: null, window: 1, self: 1, frames: 1, top: 1, parent: 1 };
+      const SELF = { __proto__: null, window: 1, self: 1, frames: 1, globalThis: 1, top: 1, parent: 1 };
       const CROSS_GETTERS = { __proto__: null, window: 1, self: 1, frames: 1, top: 1, parent: 1, location: 1, opener: 1, closed: 1, length: 1 };
       const CROSS_METHODS = { __proto__: null, close: 1, focus: 1, blur: 1, postMessage: 1 };
       const CROSS_NAMES = ['window', 'self', 'location', 'close', 'closed', 'focus', 'blur', 'frames', 'length', 'top', 'opener', 'parent', 'postMessage', 'then'];
@@ -693,7 +703,16 @@
       const append = (list, value) => { reflectDefine(list, list.length, data(value, true)); };
       const expandos = objectCreate(null);
       let proxy;
-      // Same origin (and before the page): functions of the Window or the
+      // COOP access reporting: telling the stand-in which of the window's CrossOriginProperties a
+      // script reached (the stand-in's native hook reports it when a COOP reporting endpoint is
+      // involved and costs a thread-local read otherwise). A same-origin Window reports its own
+      // natives; this covers what the proxy answers by itself.
+      const NOTED = { __proto__: null, window: 1, self: 1, frames: 1, top: 1, parent: 1, location: 1, opener: 1, closed: 1, length: 1, close: 1, focus: 1, blur: 1, postMessage: 1 };
+      // `coop[0]` is the engine's flag (true while some document names a COOP reporting endpoint): without one a
+      // cross-window access costs this read, not a string concatenation and a native hop.
+      const note = (k) => { if (coop[0] === true && typeof k === 'string') reflectGet(standIn, '\0coop:' + k, standIn); };
+      // Same origin (and before the page): functions of the Window or the stand-in, each as one function that calls it with `self()` for the
+      // proxy as `this` (kept per function).
       // stand-in, each as one function that calls it with `self()` for the
       // proxy as `this` (kept per function).
       const wrapped = new WeakMapC();
@@ -761,7 +780,9 @@
       const crossDescriptor = (origin, k) => {
         if (isIndex(k)) {
           const w = child(k);
-          return w !== undefined ? data(w, false) : deny(k);
+          if (w === undefined) return deny(k);
+          note('indexed');
+          return data(w, false);
         }
         if (CROSS_METHODS[k]) return data(crossMethod(origin, k), false);
         if (CROSS_GETTERS[k]) {
@@ -778,7 +799,10 @@
         }
         if (typeof k === 'string') {
           const w = child(k);
-          if (w !== undefined) return data(w, false);
+          if (w !== undefined) {
+            note('named');
+            return data(w, false);
+          }
         }
         if (undefinedNames(k)) return data(undefined, false);
         return deny(k);
@@ -802,8 +826,11 @@
         __proto__: null,
         get(t, k) {
           const w = target();
+          if (coop[0] === true && NOTED[k] === 1) note(k);
           if (isCross(w)) return crossGet(w, k);
           if (ALWAYS[k]) return fromStandIn(k);
+          // A discarded popup has no parent or top (the stand-in answers null).
+          if (k === 'top' || k === 'parent') return reflectGet(standIn, k, standIn);
           if (SELF[k]) return proxy;
           if (w === null) return k in expandos ? expandos[k] : fromStandIn(k);
           if (k === 'opener') return fromStandIn(k);
@@ -811,6 +838,7 @@
         },
         set(t, k, v) {
           const w = target();
+          if (k === 'location') note(k);
           if (isCross(w)) {
             if (k === 'location') {
               const l = reflectGet(standIn, 'location', standIn);
@@ -891,7 +919,7 @@
     // with only `href` (set) and `replace()`; `then` and the well-known symbols are undefined and
     // anything else throws a SecurityError. [[GetPrototypeOf]] is null, [[SetPrototypeOf]] fails
     // for anything but null and [[PreventExtensions]] fails. `standIn` is never handed out.
-    crossOriginWindow(standIn) {
+    crossOriginWindow(standIn, coop) {
       const GETTERS = { __proto__: null, window: 1, self: 1, location: 1, closed: 1, frames: 1, length: 1, top: 1, opener: 1, parent: 1 };
       const METHODS = { __proto__: null, close: 0, focus: 0, blur: 0, postMessage: 1 };
       const NAMES = ['window', 'self', 'location', 'close', 'closed', 'focus', 'blur', 'frames', 'length', 'top', 'opener', 'parent', 'postMessage', 'then'];
@@ -964,16 +992,24 @@
         if (undefinedNames(k)) return data(undefined, false);
         return deny(k);
       };
+      // COOP access reporting: which CrossOriginProperty a script reached (see `windowProxy`).
+      const note = (k) => {
+        if (coop[0] !== true || typeof k !== 'string') return;
+        if (isIndex(k)) reflectGet(standIn, '\0coop:indexed', standIn);
+        else if (METHODS[k] !== undefined || GETTERS[k]) reflectGet(standIn, '\0coop:' + k, standIn);
+      };
       proxy = new ProxyC(objectCreate(null), {
         __proto__: null,
         get(t, k, receiver) {
           const d = describe(k);
+          note(k);
           if ('value' in d) return d.value;
           return d.get === undefined ? deny(k) : apply(d.get, receiver, []);
         },
         set(t, k, v, receiver) {
           const d = describe(k);
           if ('value' in d || d.set === undefined) return deny(k);
+          if (k === 'location') note(k);
           apply(d.set, receiver, [v]);
           return true;
         },
@@ -997,6 +1033,19 @@
         preventExtensions() { return false; },
       });
       return proxy;
+    },
+    // The SyntaxError `JSON.parse(text)` throws for a JSON module's text, located at the module
+    // (`sourceURL`: where HTML "report an exception" takes the filename from), or undefined.
+    jsonModuleError(text, url) {
+      try {
+        jsonParse(text);
+      } catch (e) {
+        if (e !== null && typeof e === 'object') {
+          try { defineProperty(e, 'sourceURL', { value: url, configurable: true, writable: true }); } catch (_) {}
+        }
+        return e;
+      }
+      return undefined;
     },
     noteModuleEvaluationError(value) {
       if (value === null || (typeof value !== 'object' && typeof value !== 'function')) return;

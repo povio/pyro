@@ -47,7 +47,7 @@ fn fire_input_event(
     cancelable: bool,
 ) -> bool {
     let Some(key) = key_of(page, node) else { return true };
-    if crate::target::unheard(page, ty) {
+    if crate::target::unheard_input(page, ty, key, cancelable, None) {
         return true;
     }
     let ev = EventCore::trusted(page, EventInterface::InputEvent, ty, true, cancelable);
@@ -133,13 +133,51 @@ fn request_focus(page: &Rc<PageDom>, target: FocusTarget, prevent_scroll: bool) 
 /// Recheck effective inertness after focus listeners have had a chance to change styles.
 fn can_focus(page: &PageDom, el: NodeId) -> bool {
     let dom = page.dom.borrow();
-    (dom.is_focusable(el).unwrap_or(false) || page.popover.forced_focus(el))
-        && !page.layout().style().is_inert(&dom, el)
+    let layout = page.layout();
+    (node_focusable(&layout, &dom, el) || page.popover.forced_focus(el) || is_keyboard_focusable_scroller(&layout, &dom, el))
+        && !layout.style().is_inert(&dom, el)
+}
+
+/// Chrome's keyboard-focusable scroller (`Element::IsScrollableContainerFocusable`, shipped with
+/// KeyboardFocusableScrollers): a scroll container that has something to scroll and no focusable
+/// descendant is focusable (`scroller.focus()` works, so the arrow keys, Space and PageUp/PageDown
+/// scroll it) even with no `tabindex`. Pyro takes it for `focus()` only: a press on it does not focus
+/// it, as in Chrome, and Tab navigation does not stop at it. Not the viewport's root or body.
+fn is_keyboard_focusable_scroller(layout: &pyro_dom::layout::Layout, dom: &Dom, el: NodeId) -> bool {
+    if !dom.element(el).is_ok() || !dom.is_connected(el).unwrap_or(false) || layout.is_root_container(dom, el) {
+        return false;
+    }
+    let axes = layout.style().overflow_axes(dom, el);
+    let overflows = (axes.y && layout.scroll_height(dom, el) > layout.client_height(dom, el))
+        || (axes.x && layout.scroll_width(dom, el) > layout.client_width(dom, el));
+    if !overflows || !layout.is_visible(dom, el) {
+        return false;
+    }
+    let Ok(descendants) = dom.descendants(el) else { return false };
+    !descendants.skip(1).any(|d| dom.is_focusable(d).unwrap_or(false) || dom.is_delegates_focus_host(d))
 }
 
 thread_local! {
     /// The `focusVisible` member of the `focus(options)` being run, if given.
     static FOCUS_VISIBLE_OPTION: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+    /// The last mouse press: its page (the `Rc` address) and the flat-tree chain from the pressed
+    /// element up. Keyboard scrolling with nothing focused starts at the first node of the chain
+    /// still in the document (Chrome's `last_clicked_node_` falls back to a removed node's parent).
+    static LAST_PRESS: std::cell::RefCell<Option<(usize, Vec<NodeId>)>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Remembers `target`'s flat-tree chain as the last mouse press (see [`LAST_PRESS`]).
+fn remember_press(page: &Rc<PageDom>, target: NodeId) {
+    let mut chain = Vec::new();
+    {
+        let dom = page.dom.borrow();
+        let mut cur = Some(target);
+        while let Some(e) = cur {
+            chain.push(e);
+            cur = flat_parent_element(&dom, e);
+        }
+    }
+    LAST_PRESS.with(|c| *c.borrow_mut() = Some((Rc::as_ptr(page) as usize, chain)));
 }
 
 /// `element.focus(options)`: [`focus_element_with_options`] with the `focusVisible` member, which
@@ -181,7 +219,7 @@ pub fn focus_element_with_options(page: &Rc<PageDom>, el: NodeId, prevent_scroll
                 Some(d) => d,
                 None => return,
             }
-        } else if is_focusable_area(&layout, &dom, el) || page.popover.forced_focus(el) {
+        } else if is_focusable_area(&layout, &dom, el) || page.popover.forced_focus(el) || is_keyboard_focusable_scroller(&layout, &dom, el) {
             el
         } else {
             return;
@@ -276,11 +314,15 @@ fn set_active(page: &PageDom, doc: NodeId, el: Option<NodeId>) {
 
 fn run_blur(page: &Rc<PageDom>, doc: NodeId, el: NodeId, related: Option<NodeId>, token: &FocusTransition) {
     let _ = page.dom.borrow_mut().set_focused(doc, None);
-    if page.space_target.take().is_some() {
-        // A Space-activated control stops being `:active` when it blurs.
-        if page.dom.borrow().activated(doc) == Some(el) {
-            set_active(page, doc, None);
-        }
+    // A button or checkable input that blurs stops being `:active`, pressed by Space or a pointer
+    // (WPT checkable-active-onblur-with-click).
+    // The element focus leaves for nothing is the sequential focus navigation starting point.
+    if related.is_none() {
+        page.sequential_start.set(Some(el));
+    }
+    let held = page.space_target.take().is_some();
+    if page.dom.borrow().activated(doc) == Some(el) && (held || space_clickable(&page.dom.borrow(), el)) {
+        set_active(page, doc, None);
     }
     if !live_element(page, doc, el) {
         return;
@@ -365,11 +407,44 @@ fn takes_typed_text(dom: &Dom, el: NodeId) -> bool {
     is_text_control(dom, el) || crate::editing::editing_host(dom, el).is_some()
 }
 
+/// Whether `select` is a listbox (display size above 1) of base appearance (`appearance:
+/// base-select`, a customizable select): its options take the focus, the select itself does not.
+fn is_base_listbox(layout: &pyro_dom::layout::Layout, dom: &Dom, select: NodeId) -> bool {
+    if !dom.element(select).is_ok_and(|e| e.is_html() && &*e.name.local == "select") {
+        return false;
+    }
+    let multiple = dom.has_attribute(select, "multiple").unwrap_or(false);
+    let size = dom.get_attribute(select, "size").ok().flatten().and_then(|s| s.trim().parse::<u32>().ok()).filter(|&s| s > 0);
+    size.unwrap_or(if multiple { 4 } else { 1 }) > 1 && layout.computed_style_value(dom, select, "appearance") == "base-select"
+}
+
+/// The base-appearance listbox select that holds `option` (see [`is_base_listbox`]).
+fn option_base_listbox(layout: &pyro_dom::layout::Layout, dom: &Dom, option: NodeId) -> Option<NodeId> {
+    if !dom.element(option).is_ok_and(|e| e.is_html() && &*e.name.local == "option") {
+        return None;
+    }
+    let select = dom.option_nearest_select(option).ok().flatten()?;
+    is_base_listbox(layout, dom, select).then_some(select)
+}
+
+/// [`Dom::is_focusable`] with what depends on style: the options of a base-appearance listbox are
+/// focusable areas (an enabled one in an enabled select) and the select itself is not (Chromium's
+/// customizable listbox: focus lives on the options).
+fn node_focusable(layout: &pyro_dom::layout::Layout, dom: &Dom, el: NodeId) -> bool {
+    if dom.is_focusable(el).unwrap_or(false) {
+        let select = dom.element(el).is_ok_and(|e| e.is_html() && &*e.name.local == "select");
+        return !(select && !dom.has_attribute(el, "tabindex").unwrap_or(false) && is_base_listbox(layout, dom, el));
+    }
+    dom.is_connected(el).unwrap_or(false)
+        && !dom.is_disabled(el).unwrap_or(true)
+        && option_base_listbox(layout, dom, el).is_some_and(|s| !dom.is_disabled(s).unwrap_or(true))
+}
+
 /// HTML "focusable area": focusable, not inert, and being rendered (not in
 /// a `display: none` subtree nor `visibility: hidden`, as Chrome's
 /// focusable-style check). An `<area>` is rendered through its image map.
 pub(crate) fn is_focusable_area(layout: &pyro_dom::layout::Layout, dom: &Dom, el: NodeId) -> bool {
-    if !dom.is_focusable(el).unwrap_or(false) || layout.style().is_inert(dom, el) {
+    if !node_focusable(layout, dom, el) || layout.style().is_inert(dom, el) {
         return false;
     }
     if dom.element(el).is_ok_and(|e| e.is_html() && &*e.name.local == "area") {
@@ -389,7 +464,9 @@ pub fn run_focus_fixup(page: &Rc<PageDom>) {
         let layout = page.layout();
         let dom = page.dom.borrow();
         let Some(f) = dom.focused(page.document()).ok().flatten() else { return };
-        let focusable = dom.is_focusable(f).unwrap_or(false) && !layout.style().is_inert(&dom, f) && layout.is_visible(&dom, f);
+        let focusable = (node_focusable(&layout, &dom, f) || is_keyboard_focusable_scroller(&layout, &dom, f))
+            && !layout.style().is_inert(&dom, f)
+            && layout.is_visible(&dom, f);
         (!focusable).then_some(f)
     };
     if let Some(f) = lost {
@@ -400,8 +477,8 @@ pub fn run_focus_fixup(page: &Rc<PageDom>) {
 /// HTML "update the rendering": when the focused element is no longer being rendered (it or an
 /// ancestor became `display: none`), it loses focus, as in Chrome, which blurs it after the style
 /// update and fires `blur`/`focusout` (WPT css/selectors `focus-display-none-001`,
-/// `focus-within-display-none-001`). Narrower than [`run_focus_fixup`]: focusability is not
-/// rechecked here, so a dialog the dialog focusing steps focused keeps focus, and an `<area>`
+/// `focus-within-display-none-001`), or has become inert (WPT inert `dynamic-inert-on-focused-element`).
+/// Narrower than [`run_focus_fixup`]: focusability is not rechecked here, so a dialog the dialog focusing steps focused keeps focus, and an `<area>`
 /// (rendered through its image map, with no box of its own) is left alone.
 pub fn run_rendering_focus_fixup(page: &Rc<PageDom>) {
     if page.is_disposed() {
@@ -415,7 +492,8 @@ pub fn run_rendering_focus_fixup(page: &Rc<PageDom>) {
         let dom = page.dom.borrow();
         let Some(f) = dom.focused(page.document()).ok().flatten() else { return };
         let area = dom.element(f).is_ok_and(|e| e.is_html() && &*e.name.local == "area");
-        (!area && !page.popover.forced_focus(f) && !layout.is_visible(&dom, f)).then_some(f)
+        // Not rendered, or inert (`inert` on it or an ancestor, a modal dialog elsewhere): no longer a focusable area.
+        (!area && !page.popover.forced_focus(f) && (!layout.is_visible(&dom, f) || layout.style().is_inert(&dom, f))).then_some(f)
     };
     if let Some(f) = lost {
         blur_element(page, f);
@@ -466,6 +544,21 @@ fn as_script(page: &Rc<PageDom>, name: &str, f: impl Fn(&Rc<PageDom>) + 'static)
     if !ran.get() {
         f(page);
     }
+}
+
+/// A speculation rule set that could not be used (HTML "update speculation rules"): `error`
+/// at its `<script>` and, for text that is no rule set (`message`), a `TypeError` reported at the
+/// window, after the element's listeners. Both run as one script-like call, so a promise the
+/// element's listener resolves continues only once the window has been told too (as in Chrome,
+/// where both happen inside the script that inserted the element).
+pub fn speculation_rules_error(page: &Rc<PageDom>, el: NodeId, message: Option<String>) {
+    as_script(page, "speculationrules", move |page| {
+        fire_simple(page, el, "error", false, false);
+        let Some(message) = &message else { return };
+        let Some(realm) = page.main_world_realm() else { return };
+        let Ok(scope) = realm.scope() else { return };
+        scope.report_exception(&pyro_js::JsError::Type(message.clone().into()));
+    });
 }
 
 /// [`focus_element`] as a script's `el.focus()` runs it (see [`as_script`]):
@@ -724,7 +817,9 @@ fn dispatch_click(page: &Rc<PageDom>, target: NodeId, ev: &EventData, handled: b
         && matches!(ev.iface, EventInterface::MouseEvent | EventInterface::PointerEvent);
     let Some(key) = key_of(page, target) else { return true };
     if !is_click {
-        return fire(page, key, ev);
+        // (An auxclick at a child of a disabled control stops below it as a click does.)
+        let stop = if ev.state.borrow().is_trusted { disabled_control_of(page, target).and_then(|control| key_of(page, control)) } else { None };
+        return crate::target::fire_with(page, key, stop, ev, &mut |_| {});
     }
     let (bubbles, trusted) = {
         let state = ev.state.borrow();
@@ -736,7 +831,9 @@ fn dispatch_click(page: &Rc<PageDom>, target: NodeId, ev: &EventData, handled: b
     // only counts when the event bubbles. Its legacy-pre-activation behavior
     // runs before the first listener.
     let mut activation: Option<ActivationTarget> = None;
-    let not_canceled = crate::target::fire_with(page, key, ev, &mut |path| {
+    // A trusted click on a child of a disabled form control stops below the control.
+    let stop = if trusted { disabled_control_of(page, target).and_then(|control| key_of(page, control)) } else { None };
+    let not_canceled = crate::target::fire_with(page, key, stop, ev, &mut |path| {
         if handled {
             return;
         }
@@ -761,8 +858,23 @@ fn dispatch_click(page: &Rc<PageDom>, target: NodeId, ev: &EventData, handled: b
         legacy_canceled_activation(page, el, legacy);
         return false;
     }
+    // The navigation the activation behavior starts is user-initiated (`NavigateEvent.userInitiated`)
+    // when the click is the user's (trusted), not script's (`a.click()`).
+    let outer = TRUSTED_ACTIVATION.with(|flag| flag.replace(trusted));
     run_activation_behavior(page, el, legacy, target, ev, &rest);
+    TRUSTED_ACTIVATION.with(|flag| flag.set(outer));
     true
+}
+
+thread_local! {
+    /// Whether the activation behavior now running is that of a trusted click.
+    static TRUSTED_ACTIVATION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether a navigation requested now comes from a trusted click's activation behavior (a
+/// followed link, a submitted form): HTML "user involvement" is "activation".
+pub(crate) fn user_initiated_navigation() -> bool {
+    TRUSTED_ACTIVATION.with(std::cell::Cell::get)
 }
 
 /// HTML activation behavior of `el`, the activation target of the click
@@ -814,7 +926,7 @@ fn run_activation_behavior(
                 InputType::Reset => {
                     let form = page.dom.borrow().form_owner(el).ok().flatten();
                     if let Some(f) = form {
-                        reset_form(page, f);
+                        reset_form_by_activation(page, f);
                     }
                 }
                 InputType::File => {
@@ -846,7 +958,7 @@ fn run_activation_behavior(
             // `type=button` goes on to its command.
             if let Some(f) = form {
                 match ty.as_deref() {
-                    Some("reset") => return reset_form(page, f),
+                    Some("reset") => return reset_form_by_activation(page, f),
                     Some("button") => {}
                     _ if crate::popover::button_is_submit(&page.dom.borrow(), el) => {
                         return submit_form(page, f, Some(el), true);
@@ -1128,6 +1240,7 @@ fn follow_hyperlink(page: &Rc<PageDom>, el: NodeId) {
         source: Some(el),
         form_entries: None,
         replace: false,
+        user_initiated: user_initiated_navigation(),
     });
 }
 
@@ -1222,6 +1335,17 @@ pub fn submit_form(page: &Rc<PageDom>, form: NodeId, submitter: Option<NodeId>, 
 
 /// `form.reset()`: fires `reset`, then restores default values.
 pub fn reset_form(page: &Rc<PageDom>, form: NodeId) {
+    reset_form_with(page, form, false);
+}
+
+/// The activation behavior of a reset button: as `form.reset()`, but the click is not a
+/// [CEReactions] call, so the `formResetCallback`s run from the backup element queue, in a
+/// microtask.
+pub fn reset_form_by_activation(page: &Rc<PageDom>, form: NodeId) {
+    reset_form_with(page, form, true);
+}
+
+fn reset_form_with(page: &Rc<PageDom>, form: NodeId, backup_queue: bool) {
     if !fire_simple(page, form, "reset", true, true) {
         return;
     }
@@ -1261,7 +1385,33 @@ pub fn reset_form(page: &Rc<PageDom>, form: NodeId) {
         }
     }
     // Form-associated custom elements reset themselves (formResetCallback).
-    let _ = dom.enqueue_form_reset(form);
+    if !backup_queue {
+        let _ = dom.enqueue_form_reset(form);
+        return;
+    }
+    let targets = dom.form_reset_targets(form).unwrap_or_default();
+    drop(dom);
+    if targets.is_empty() {
+        return;
+    }
+    let Some(realm) = page.main_world_realm() else { return };
+    let Ok(s) = realm.scope() else { return };
+    let weak = Rc::downgrade(page);
+    let queued = s.then(
+        s.undefined(),
+        move |_, _| {
+            if let Some(page) = weak.upgrade() {
+                if let Ok(mut dom) = page.dom.try_borrow_mut() {
+                    dom.enqueue_form_reset_for(&targets);
+                }
+                crate::custom::run_reactions(&page);
+            }
+        },
+        |_, _| {},
+    );
+    if let Err(error) = queued {
+        s.report_exception(&error);
+    }
 }
 
 // ----- keyboard ---------------------------------------------------------------------
@@ -1340,6 +1490,8 @@ pub fn dispatch_key(page: &Rc<PageDom>, kind: KeyKind, k: &KeyInput) {
     if !accepts_keyboard(page) {
         return;
     }
+    // Escape is an ordinary key here: leaving a pointer lock on Escape is the browser UI's handling, which
+    // `Input.dispatchKeyEvent` bypasses (headless Chrome delivers the key to the page and stays locked).
     let doc = page.document();
     let Some(target) = key_target(page) else { return };
     let Some(tkey) = key_of(page, target) else { return };
@@ -1354,19 +1506,23 @@ pub fn dispatch_key(page: &Rc<PageDom>, kind: KeyKind, k: &KeyInput) {
                 page.pointer_modality.set(false);
                 let _ = page.dom.borrow_mut().set_focus_visible(doc, true);
             }
-            let ok = crate::target::unheard(page, "keydown") || fire(page, tkey, &key_event(page, "keydown", k, 0));
+            let ok = crate::target::unheard_input(page, "keydown", tkey, true, Some(k.code.as_str())) || fire(page, tkey, &key_event(page, "keydown", k, 0));
             if !ok || page.document() != doc || !accepts_keyboard(page) {
                 return;
             }
             let Some(target) = key_target(page) else { return };
-            if !(k.modifiers.ctrl || k.modifiers.meta || k.modifiers.alt) && select_picker_key(page, target, &k.key) {
+            if !(k.modifiers.ctrl || k.modifiers.meta || k.modifiers.alt)
+                && (select_picker_key(page, target, &k.key) || base_listbox_key(page, target, &k.key))
+            {
                 return;
             }
             if k.key == " " && space_clickable(&page.dom.borrow(), target) {
                 // Browsers mark the control active on Space keydown and click
                 // it on the matching keyup (Blink KeyboardClickableInputTypeView).
                 page.space_target.set(Some(target));
-                set_active(page, doc, Some(target));
+                // Only the control itself is `:active`, not its ancestors (a press makes the chain).
+                let restyle = page.layout.try_borrow().map_or(true, |l| l.style().active_styled());
+                let _ = page.dom.borrow_mut().set_activated_alone(doc, Some(target), restyle);
             }
             // A focusgroup's arrow, Home and End keys move focus before the editing commands the
             // key carries (`moveRight`, ...) are run: those only act in editable content, which
@@ -1379,6 +1535,15 @@ pub fn dispatch_key(page: &Rc<PageDom>, kind: KeyKind, k: &KeyInput) {
             // So do the value-changing keys of form controls (radio buttons, range and number
             // inputs, selects): those commands would move a caret instead.
             if !(k.modifiers.alt || k.modifiers.ctrl || k.modifiers.meta) && control_key_action(page, target, &k.key) {
+                return;
+            }
+            // Outside editable content a caret command (`moveDown`, `pageDown`, ... which Playwright
+            // sends with the key on macOS) moves nothing: the key scrolls instead, as it does on the
+            // platforms that send no commands. (Shift+arrow, which extends the selection, is no scroll key.)
+            // (A command that extends the selection acts outside editable content too: Chrome runs
+            // it, so the key does not scroll; `moveRight` and the like are not enabled there.)
+            let extends = k.commands.iter().any(|c| c.to_ascii_lowercase().ends_with("andmodifyselection"));
+            if k.text.is_empty() && !k.commands.is_empty() && !extends && space_scrolls(page, target) && keyboard_scroll(page, k) {
                 return;
             }
             if k.text.is_empty()
@@ -1395,7 +1560,7 @@ pub fn dispatch_key(page: &Rc<PageDom>, kind: KeyKind, k: &KeyInput) {
         }
         KeyKind::Char => press_char(page, target, k),
         KeyKind::KeyUp => {
-            let ok = crate::target::unheard(page, "keyup") || fire(page, tkey, &key_event(page, "keyup", k, 0));
+            let ok = crate::target::unheard_input(page, "keyup", tkey, true, Some(k.code.as_str())) || fire(page, tkey, &key_event(page, "keyup", k, 0));
             if k.key == " " && page.space_target.get().is_some() {
                 set_active(page, doc, None);
             }
@@ -1445,7 +1610,9 @@ fn press_char(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
     }
     if k.text == "\r" || k.text == "\n" {
         enter_key(page, target);
-    } else if !select_typeahead(page, target, &k.text) {
+    } else if !select_typeahead(page, target, &k.text) && !(k.key == " " && space_scrolls(page, target) && keyboard_scroll(page, k)) {
+        // (Space that activates nothing and is no text scrolls by a page: Chrome's
+        // `DefaultSpaceEventHandler`, a keypress default action.)
         insert_text_at(page, target, &k.text);
     }
 }
@@ -1536,6 +1703,11 @@ fn default_key_action(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
     {
         return;
     }
+    if !(k.modifiers.alt || k.modifiers.ctrl || k.modifiers.meta || k.modifiers.shift)
+        && scroll_marker_key_action(page, target, &k.key)
+    {
+        return;
+    }
     let editable = is_text_control(&page.dom.borrow(), target);
     match k.key.as_str() {
         "Backspace" if editable => delete(page, target, "deleteContentBackward", true),
@@ -1554,12 +1726,9 @@ fn default_key_action(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
         "ArrowLeft" | "ArrowRight" | "Home" | "End" if editable => move_caret(page, target, &k.key, k.modifiers.shift),
         // Outside editable content Home/End scroll the document (Chrome's
         // scrollToBeginningOfDocument / scrollToEndOfDocument).
+        // The focused element's nearest scroller that can move, else the viewport.
         "Home" | "End" if !(k.modifiers.alt || k.modifiers.ctrl || k.modifiers.meta || k.modifiers.shift) => {
-            let top = if k.key == "Home" { 0 } else { i32::MAX };
-            let moved = page.layout.borrow_mut().window_scroll_to(&page.dom.borrow(), None, Some(top));
-            if moved {
-                crate::layout_api::fire_scroll(page, None);
-            }
+            keyboard_scroll(page, k);
         }
         "ArrowUp" | "ArrowDown"
             if !(k.modifiers.alt || k.modifiers.ctrl || k.modifiers.meta)
@@ -1567,7 +1736,232 @@ fn default_key_action(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
         {
             move_caret_vertically(page, target, k.key == "ArrowUp", k.modifiers.shift)
         }
+        "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight" | "PageUp" | "PageDown" | " " => {
+            keyboard_scroll(page, k);
+        }
         _ => {}
+    }
+}
+
+/// pyro: an arrow key while a `::scroll-marker` has the focus (tabs mode; the focused element is
+/// the marker group's scroll container) moves to the next or previous marker and activates it
+/// (CSS Overflow 5 § 3.2: the arrow keys cycle through the markers). Whether the key was taken.
+fn scroll_marker_key_action(page: &Rc<PageDom>, target: NodeId, key: &str) -> bool {
+    let arrow = match key {
+        "ArrowUp" => (0, -1),
+        "ArrowDown" => (0, 1),
+        "ArrowLeft" => (-1, 0),
+        "ArrowRight" => (1, 0),
+        _ => return false,
+    };
+    if page.dom.borrow().marker_focus(page.document()).map(|(owner, _)| owner) != Some(target) {
+        return false;
+    }
+    let moved = page.layout.borrow_mut().step_scroll_marker(&page.dom.borrow(), target, arrow);
+    for scrolled in moved.unwrap_or_default() {
+        let node = match scrolled {
+            pyro_dom::layout::ScrollTarget::Viewport => None,
+            pyro_dom::layout::ScrollTarget::Container(node) => Some(node),
+        };
+        crate::layout_api::fire_scroll(page, node);
+    }
+    true
+}
+
+/// pyro: a primary press on a scroll pseudo-element's box: a `::scroll-marker` of a tabs-mode group
+/// takes the focus (the group's scroll container is the focused element, `document.activeElement`,
+/// and the active marker has `:focus`), a `::scroll-button()` focuses its scroll container (CSS
+/// Overflow 5 § 2.2, § 3.2; WPT css-overflow `scroll-marker-activation-retains-focus`,
+/// `scroll-button-focus-active-element`). Whether the press took the focus, which it then does
+/// not take elsewhere.
+fn scroll_pseudo_press_focus(page: &Rc<PageDom>, m: &MouseInput, target: NodeId) -> bool {
+    let doc = page.document();
+    let marker = {
+        let dom = page.dom.borrow();
+        page.layout().scroll_marker_group_at(&dom, (m.x, m.y))
+    };
+    if let Some((owner, true)) = marker {
+        page.pointer_modality.set(true);
+        page.sequential_start.set(None);
+        focus_element_with_options(page, owner, true);
+        let focused = page.dom.borrow().focused(doc).ok().flatten() == Some(owner);
+        if focused {
+            let _ = page.dom.borrow_mut().set_marker_focus(doc, Some(false));
+        }
+        return focused;
+    }
+    let button = {
+        let dom = page.dom.borrow();
+        let key = pyro_dom::snapshot::render_key(target);
+        page.layout().synced_geometry_source(&dom).and_then(|g| g.scroll_button_hit(key, m.x, m.y))
+    };
+    if matches!(button, Some((_, true))) {
+        page.pointer_modality.set(true);
+        page.sequential_start.set(None);
+        focus_element_with_options(page, target, true);
+        return page.dom.borrow().focused(doc).ok().flatten() == Some(target);
+    }
+    false
+}
+
+/// Whether a scroll key on key target `target` may scroll: not when the target takes the key itself
+/// (a text control, editable content, `designMode`: Space as text, the arrows as caret movement).
+/// (The DOM borrow ends before the scroll runs.)
+fn space_scrolls(page: &PageDom, target: NodeId) -> bool {
+    !is_directional_input_handler(&page.dom.borrow(), target)
+}
+
+/// How far a keyboard scroll goes (Chrome's scroll granularities).
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum KeyScrollStep {
+    /// An arrow key: `kPixelsPerLineStep` (40 CSS px).
+    Line,
+    /// PageUp, PageDown and Space: most of the scrollport.
+    Page,
+    /// Home and End: to the start or the end.
+    Edge,
+}
+
+/// The default action of the keys that scroll (Chrome's `KeyboardEventManager` default handlers
+/// and `ScrollManager::BubblingScroll`): an arrow key scrolls by a line (40px), PageUp, PageDown
+/// and Space (Shift reverses) by a page along the block axis, Home and End to the start or end
+/// of it. The scroll starts at the focused element, else at the last mouse press (or the
+/// nearest ancestor of it still in the document), else at the viewport, and goes to the nearest
+/// scroll container on the way up that can move in that direction (the viewport last); one that
+/// is at its limit passes the scroll on unless its `overscroll-behavior` contains it. A scroller
+/// with `scroll-behavior: smooth` animates, as for script. Returns whether the key is a scroll
+/// key this applies to (a control that keeps the key, or one Space activates, is not).
+fn keyboard_scroll(page: &Rc<PageDom>, k: &KeyInput) -> bool {
+    if k.modifiers.ctrl || k.modifiers.alt || k.modifiers.meta {
+        return false;
+    }
+    let shift = k.modifiers.shift;
+    // (granularity, physical direction of an arrow, direction along the block axis).
+    let (step, physical, block): (KeyScrollStep, (i32, i32), i32) = match (k.key.as_str(), shift) {
+        ("ArrowUp", false) => (KeyScrollStep::Line, (0, -1), 0),
+        ("ArrowDown", false) => (KeyScrollStep::Line, (0, 1), 0),
+        ("ArrowLeft", false) => (KeyScrollStep::Line, (-1, 0), 0),
+        ("ArrowRight", false) => (KeyScrollStep::Line, (1, 0), 0),
+        ("PageUp", false) => (KeyScrollStep::Page, (0, 0), -1),
+        ("PageDown", false) => (KeyScrollStep::Page, (0, 0), 1),
+        (" ", shift) => (KeyScrollStep::Page, (0, 0), if shift { -1 } else { 1 }),
+        ("Home", false) => (KeyScrollStep::Edge, (0, 0), -1),
+        ("End", false) => (KeyScrollStep::Edge, (0, 0), 1),
+        _ => return false,
+    };
+    let (start, root) = {
+        let dom = page.dom.borrow();
+        let doc = page.document();
+        let root = dom.document_element(doc).ok().flatten();
+        let start = match dom.focused(doc).ok().flatten() {
+            Some(f) => {
+                // The control keeps its keys (caret, value, picker), a button, checkbox or summary
+                // takes Space.
+                if is_directional_input_handler(&dom, f) || (k.key == " " && space_clickable(&dom, f)) {
+                    return false;
+                }
+                Some(f)
+            }
+            None => LAST_PRESS.with(|c| {
+                let c = c.borrow();
+                let (owner, chain) = (*c).as_ref()?;
+                if *owner != Rc::as_ptr(page) as usize {
+                    return None;
+                }
+                let found = chain.iter().copied().find(|&n| dom.is_connected(n).unwrap_or(false));
+                found
+            }),
+        };
+        (start, root)
+    };
+    // (No borrow is held here: a smooth scroll starts its animation and queues the events.)
+    let _ = crate::layout_api::perform_scroll(page, crate::layout_api::ScrollBehavior::Auto, &[], |dom, layout| {
+        keyboard_scroll_write(dom, layout, start, root, step, physical, block)
+    });
+    true
+}
+
+/// The write of [`keyboard_scroll`]: walks up from `start` (`None`: straight to the viewport) and
+/// scrolls the first scroll container that moves, else the viewport, returning the box it moved
+/// (`None`: the viewport).
+fn keyboard_scroll_write(
+    dom: &Dom,
+    layout: &mut pyro_dom::layout::Layout,
+    start: Option<NodeId>,
+    root: Option<NodeId>,
+    step: KeyScrollStep,
+    physical: (i32, i32),
+    block: i32,
+) -> Vec<Option<NodeId>> {
+    // The direction (dx, dy) of the scroll, each -1, 0 or 1, for a box of writing mode `wm`: a
+    // block-axis key follows the box's block axis (horizontal in a vertical writing mode, toward
+    // the left in `vertical-rl`).
+    let direction = |wm: &str| -> (i32, i32) {
+        if block == 0 {
+            return physical;
+        }
+        if wm.starts_with("vertical") || wm.starts_with("sideways") {
+            (if matches!(wm, "vertical-rl" | "sideways-rl") { -block } else { block }, 0)
+        } else {
+            (0, block)
+        }
+    };
+    // Scrolls a box by `dir`, `size` being its scrollport on each axis: whether it moved.
+    let scroll = |layout: &mut pyro_dom::layout::Layout, el: Option<NodeId>, dir: (i32, i32), size: (f64, f64)| -> bool {
+        let amount = |d: i32, extent: f64| -> Option<i32> {
+            if d == 0 {
+                return None;
+            }
+            Some(match step {
+                // To the start: 0; to the end: as far as the box goes in the direction.
+                KeyScrollStep::Edge => {
+                    if block < 0 {
+                        0
+                    } else {
+                        d.saturating_mul(i32::MAX)
+                    }
+                }
+                KeyScrollStep::Line => 40 * d,
+                // Chromium pages by 87.5% of the scrollport along the axis (at least 1px).
+                KeyScrollStep::Page => d * (extent * 0.875).round().max(1.0).min(i32::MAX as f64) as i32,
+            })
+        };
+        let (l, t) = (amount(dir.0, size.0), amount(dir.1, size.1));
+        let edge = step == KeyScrollStep::Edge;
+        match el {
+            Some(el) if edge => layout.element_scroll_to(dom, el, l, t),
+            Some(el) => layout.element_scroll_by(dom, el, l, t),
+            None if edge => layout.window_scroll_to(dom, l, t),
+            None => layout.window_scroll_by(dom, l, t),
+        }
+    };
+    let mut cur = start;
+    while let Some(e) = cur {
+        if layout.is_root_container(dom, e) {
+            break;
+        }
+        let wm = layout.style().computed_value(dom, e, "writing-mode").unwrap_or_default();
+        let dir = direction(wm.as_str());
+        let axes = pyro_dom::style::ScrollAxes { x: dir.0 != 0, y: dir.1 != 0 };
+        let scrolls = layout.style().overflow_axes(dom, e);
+        if (axes.x && scrolls.x) || (axes.y && scrolls.y) {
+            let size = (layout.client_width(dom, e), layout.client_height(dom, e));
+            if scroll(&mut *layout, Some(e), dir, size) {
+                return vec![Some(e)];
+            }
+            if layout.contains_overscroll(dom, e, axes) {
+                return Vec::new();
+            }
+        }
+        cur = flat_parent_element(dom, e);
+    }
+    let wm = root.and_then(|r| layout.style().computed_value(dom, r, "writing-mode")).unwrap_or_default();
+    let dir = direction(wm.as_str());
+    let (w, h) = layout.window_size();
+    if scroll(&mut *layout, None, dir, (w as f64, h as f64)) {
+        vec![None]
+    } else {
+        Vec::new()
     }
 }
 
@@ -1684,7 +2078,15 @@ fn control_key_action(page: &Rc<PageDom>, el: NodeId, key: &str) -> bool {
                 "ArrowDown" => false,
                 _ => return false,
             };
-            mutable && step_by_key(page, el, |dom| dom.step_value(el, 1.0, up))
+            // Canceled (or the document went away in the listener): nothing steps, no `input`/`change`.
+            if !mutable {
+                false
+            } else {
+                match number_step(page, el, up) {
+                    Some(changed) => changed,
+                    None => return true,
+                }
+            }
         }
         ("input", Some(InputType::Range)) => {
             if !matches!(
@@ -1886,48 +2288,177 @@ fn select_picker_key(page: &Rc<PageDom>, target: NodeId, key: &str) -> bool {
             true
         }
         "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight" | "Home" | "End" | "PageUp" | "PageDown" => {
-            let mode = {
-                let dom = page.dom.borrow();
-                page.layout().computed_style_value(&dom, select, "writing-mode")
-            };
-            // +1: the next option, -1: the previous one, 2/-2: the last/first one.
-            let step: i32 = match (key, mode.as_str()) {
-                ("ArrowDown", _) => 1,
-                ("ArrowUp", _) => -1,
-                ("ArrowRight", "vertical-lr" | "sideways-lr") | ("ArrowLeft", "vertical-rl" | "sideways-rl") => 1,
-                ("ArrowLeft", "vertical-lr" | "sideways-lr") | ("ArrowRight", "vertical-rl" | "sideways-rl") => -1,
-                ("ArrowLeft" | "ArrowRight", _) => return true,
-                ("End" | "PageDown", _) => 2,
-                _ => -2,
-            };
-            let candidates: Vec<NodeId> = {
-                let dom = page.dom.borrow();
-                let layout = page.layout();
-                dom.select_options(select)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter(|&o| {
-                        o == option
-                            || (!dom.is_disabled(o).unwrap_or(true)
-                                && layout.computed_style_value(&dom, o, "display") != "none")
-                    })
-                    .collect()
-            };
-            let at = candidates.iter().position(|&o| o == option);
-            let next = match (step, at) {
-                (1, Some(i)) => candidates.get(i + 1).copied(),
-                (-1, Some(i)) => i.checked_sub(1).map(|i| candidates[i]),
-                (2, _) => candidates.last().copied(),
-                (-2, _) => candidates.first().copied(),
-                _ => None,
-            };
-            if let Some(next) = next.filter(|&n| n != option) {
-                crate::popover::focus_picker_option(page, next);
-            }
+            move_option_focus(page, select, option, key);
             true
         }
         _ => false,
     }
+}
+
+/// The arrow, Home, End, PageUp and PageDown keys on the focused `option` of `select` (an open
+/// picker or a base-appearance listbox): focus moves to the next or previous option that is enabled
+/// and displayed, without wrapping, along the select's block axis (Down/Up, and in a vertical writing
+/// mode Right/Left or Left/Right as its lines go; the other arrow keys do nothing); Home and End go to
+/// the first or last, PageDown to the last option in view (the next page when it is the focused
+/// one), PageUp to the first (the previous page). The selection does not change.
+fn move_option_focus(page: &Rc<PageDom>, select: NodeId, option: NodeId, key: &str) {
+    let mode = {
+        let dom = page.dom.borrow();
+        page.layout().computed_style_value(&dom, select, "writing-mode")
+    };
+    // +1: the next option, -1: the previous one, 2/-2: the last/first one, 3/-3: a page down/up.
+    let step: i32 = match (key, mode.as_str()) {
+        ("ArrowDown", _) => 1,
+        ("ArrowUp", _) => -1,
+        ("ArrowRight", "vertical-lr" | "sideways-lr") | ("ArrowLeft", "vertical-rl" | "sideways-rl") => 1,
+        ("ArrowLeft", "vertical-lr" | "sideways-lr") | ("ArrowRight", "vertical-rl" | "sideways-rl") => -1,
+        ("ArrowLeft" | "ArrowRight", _) => return,
+        ("End", _) => 2,
+        ("Home", _) => -2,
+        ("PageDown", _) => 3,
+        _ => -3,
+    };
+    let (candidates, visible): (Vec<NodeId>, Vec<usize>) = {
+        let dom = page.dom.borrow();
+        let layout = page.layout();
+        let candidates: Vec<NodeId> = dom
+            .select_options(select)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|&o| {
+                o == option
+                    || (!dom.is_disabled(o).unwrap_or(true) && layout.computed_style_value(&dom, o, "display") != "none")
+            })
+            .collect();
+        // The options in view of a listbox: those whose middle is inside the select's box.
+        let visible = if step.abs() == 3 {
+            let sel = layout.bounding_client_rect(&dom, select);
+            candidates
+                .iter()
+                .enumerate()
+                .filter(|&(_, &o)| {
+                    let r = layout.bounding_client_rect(&dom, o);
+                    let mid = r.y + r.height / 2.0;
+                    r.height > 0.0 && mid >= sel.y && mid <= sel.y + sel.height
+                })
+                .map(|(i, _)| i)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        (candidates, visible)
+    };
+    let Some(at) = candidates.iter().position(|&o| o == option) else { return };
+    let last = candidates.len() - 1;
+    let (first_visible, last_visible) = match (visible.first(), visible.last()) {
+        (Some(&f), Some(&l)) => (f, l),
+        _ => (0, last),
+    };
+    let page_len = (last_visible - first_visible).max(1);
+    let next = match step {
+        1 => (at < last).then(|| at + 1),
+        -1 => at.checked_sub(1),
+        2 => Some(last),
+        -2 => Some(0),
+        3 => Some(if at < last_visible { last_visible } else { (at + page_len).min(last) }),
+        _ => Some(if at > first_visible { first_visible } else { at.saturating_sub(page_len) }),
+    };
+    if let Some(next) = next.filter(|&n| n != at) {
+        crate::popover::focus_picker_option(page, candidates[next]);
+    }
+}
+
+/// The keys of the focused option of a base-appearance listbox (`<select multiple>` or `size` above 1
+/// with `appearance: base-select`; Chromium's customizable listbox): the arrow, Home, End, PageUp and
+/// PageDown keys move the focus ([`move_option_focus`]); Space and Enter toggle the focused option's
+/// selectedness (`input` and `change` follow), another option of a single-selection listbox losing it.
+/// Returns whether the key was handled.
+fn base_listbox_key(page: &Rc<PageDom>, option: NodeId, key: &str) -> bool {
+    if local(&page.dom.borrow(), option).as_deref() != Some("option") {
+        return false;
+    }
+    let select = {
+        let layout = page.layout();
+        let dom = page.dom.borrow();
+        match option_base_listbox(&layout, &dom, option) {
+            Some(select) => select,
+            None => return false,
+        }
+    };
+    match key {
+        "Enter" | " " => {
+            if page.dom.borrow().is_disabled(option).unwrap_or(true) || page.dom.borrow().is_disabled(select).unwrap_or(true) {
+                return true;
+            }
+            let selected = page.dom.borrow().option_selected(option).unwrap_or(false);
+            let _ = page.dom.borrow_mut().set_option_selected(option, !selected);
+            fire_control_change(page, select);
+            true
+        }
+        "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight" | "Home" | "End" | "PageUp" | "PageDown" => {
+            move_option_focus(page, select, option, key);
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Typeahead on the focused `option` of an open picker or a base-appearance listbox: typed keys
+/// (kept for a second) move the focus, without selecting, to the next enabled, displayed option whose
+/// label starts with them (the focused one first when more than one key was typed). Returns whether
+/// `option` is such an option.
+fn option_typeahead(page: &Rc<PageDom>, option: NodeId, text: &str) -> bool {
+    let select = {
+        let layout = page.layout();
+        let dom = page.dom.borrow();
+        if !dom.element(option).is_ok_and(|e| e.is_html() && &*e.name.local == "option") {
+            return false;
+        }
+        match dom.option_nearest_select(option).ok().flatten() {
+            Some(s) if dom.is_select_picker_open(s) || is_base_listbox(&layout, &dom, s) => s,
+            _ => return false,
+        }
+    };
+    let typed = text.to_lowercase();
+    if typed.trim().is_empty() {
+        return true;
+    }
+    let now = crate::event::page_now_ms(page);
+    let search = {
+        let mut state = page.option_typeahead.borrow_mut();
+        if now - state.1 > 1000.0 {
+            state.0.clear();
+        }
+        state.0.push_str(&typed);
+        state.1 = now;
+        state.0.clone()
+    };
+    // The same key typed again cycles through the options starting with it.
+    let first = search.chars().next().unwrap_or(' ');
+    let repeated = search.chars().all(|c| c == first);
+    let needle = if repeated { first.to_string() } else { search };
+    let found = {
+        let dom = page.dom.borrow();
+        let layout = page.layout();
+        let options: Vec<NodeId> = dom
+            .select_options(select)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|&o| {
+                o == option
+                    || (!dom.is_disabled(o).unwrap_or(true) && layout.computed_style_value(&dom, o, "display") != "none")
+            })
+            .collect();
+        let at = options.iter().position(|&o| o == option).unwrap_or(0);
+        let start = if needle.chars().count() == 1 { at + 1 } else { at };
+        (0..options.len())
+            .map(|k| options[(start + k) % options.len()])
+            .find(|&o| dom.option_text(o).unwrap_or_default().to_lowercase().starts_with(&needle))
+    };
+    if let Some(found) = found.filter(|&f| f != option) {
+        crate::popover::focus_picker_option(page, found);
+    }
+    true
 }
 
 /// `input` and `change` for a value the user committed at once (a key
@@ -1937,6 +2468,43 @@ fn fire_control_change(page: &Rc<PageDom>, el: NodeId) {
     fire_user_change(page, el);
     if page.focus_values.borrow().contains_key(&el) {
         page.remember_focus_value(el);
+    }
+}
+
+/// A user step of a number input (arrow key, spin button): Chromium fires a cancelable
+/// `beforeinput` (empty `inputType`) before it changes the value. `None` when a listener canceled
+/// it or removed the document or element; else whether the value changed.
+fn number_step(page: &Rc<PageDom>, el: NodeId, up: bool) -> Option<bool> {
+    let doc = page.document();
+    if !fire_input_event(page, el, "beforeinput", "", None, true) || page.document() != doc || !live_element(page, doc, el) {
+        return None;
+    }
+    Some(step_by_key(page, el, |dom| dom.step_value(el, 1.0, up)))
+}
+
+/// The width of a number input's spin button, from its right edge.
+const SPIN_BUTTON_WIDTH: f64 = 15.0;
+
+/// A left press (mousedown not canceled) on the spin button of an enabled, writable
+/// `<input type=number>`: the upper half steps up, the lower half down, as the arrow keys do
+/// (`beforeinput`, then `input` and `change`).
+fn number_spin_press(page: &Rc<PageDom>, target: NodeId, m: &MouseInput) {
+    let rect = {
+        let dom = page.dom.borrow();
+        let is_number = local(&dom, target).as_deref() == Some("input")
+            && dom.input_type(target).ok() == Some(InputType::Number)
+            && !dom.is_disabled(target).unwrap_or(true)
+            && !dom.has_attribute(target, "readonly").unwrap_or(false);
+        if !is_number {
+            return;
+        }
+        page.layout().bounding_client_rect(&dom, target)
+    };
+    if m.x < rect.x + rect.width - SPIN_BUTTON_WIDTH || m.x >= rect.x + rect.width || m.y < rect.y || m.y >= rect.y + rect.height {
+        return;
+    }
+    if number_step(page, target, m.y < rect.y + rect.height / 2.0) == Some(true) {
+        fire_control_change(page, target);
     }
 }
 
@@ -2101,6 +2669,9 @@ fn select_by_key(
 /// option (after the selected one, wrapping) whose label starts with the
 /// typed character. Returns whether `el` is such a select.
 fn select_typeahead(page: &Rc<PageDom>, el: NodeId, text: &str) -> bool {
+    if option_typeahead(page, el, text) {
+        return true;
+    }
     {
         let dom = page.dom.borrow();
         if local(&dom, el).as_deref() != Some("select") || dom.has_attribute(el, "multiple").unwrap_or(true) {
@@ -2402,13 +2973,48 @@ pub fn insert_text(page: &Rc<PageDom>, text: &str) {
 /// other items of the segment it leaves, and entering a segment lands on
 /// its entry (`Dom::focusgroup_entry`) from either side.
 fn focus_next(page: &Rc<PageDom>, _from: NodeId, backward: bool) {
+    // Tab or Shift+Tab inside an open customizable select's picker closes it.
+    let open_picker = {
+        let dom = page.dom.borrow();
+        let focused = dom.focused(page.document()).ok().flatten();
+        focused.and_then(|f| match local(&dom, f).as_deref() {
+            Some("select") => Some(f),
+            Some("option") => dom.option_nearest_select(f).ok().flatten(),
+            _ => None,
+        })
+    };
+    if let Some(select) = open_picker.filter(|&s| page.dom.borrow().is_select_picker_open(s)) {
+        crate::popover::hide_select_picker(page, select, false);
+    }
+    // Moving focus with Tab ends the `:active` state of a button or checkable input, or of the
+    // label pressed for one, whose pointer is still down.
+    {
+        let doc = page.document();
+        let dom = page.dom.borrow();
+        let mut cur = dom.activated(doc);
+        let mut clears = false;
+        while let Some(n) = cur {
+            if space_clickable(&dom, n) || (local(&dom, n).as_deref() == Some("label") && dom.labeled_control(n).ok().flatten().is_some_and(|c| space_clickable(&dom, c))) {
+                clears = true;
+                break;
+            }
+            cur = dom.parent(n).ok().flatten();
+        }
+        drop(dom);
+        if clears {
+            set_active(page, doc, None);
+        }
+    }
     let next = {
         let layout = page.layout();
         let dom = page.dom.borrow();
         let doc = page.document();
         let area = |n: NodeId| is_focusable_area(&layout, &dom, n);
         let step = |cur: Option<NodeId>| dom.sequential_focus_target_with_layout(doc, cur, backward, &area, &layout);
-        let current = dom.focused(doc).ok().flatten();
+        // HTML "sequential focus navigation starting point": with nothing focused, the node a
+        // text directive scrolled to (still in the document) is where the Tab starts from.
+        let start = page.sequential_start.take().filter(|&n| dom.is_connected(n).unwrap_or(false));
+        let current = dom.focused(doc).ok().flatten().or(start);
         let owner_of = |n: NodeId| dom.focusgroup_owner_of(n).map(|(o, _)| o);
         let leaving = current.and_then(owner_of);
         let mut next = step(current);
@@ -2475,6 +3081,31 @@ fn focus_next(page: &Rc<PageDom>, _from: NodeId, backward: bool) {
     }
 }
 
+/// The `<a>` or `<area>` with an `href` that is `el` or its nearest flat-tree ancestor.
+fn closest_link(page: &PageDom, el: NodeId) -> Option<NodeId> {
+    let dom = page.dom.borrow();
+    let mut cur = Some(el);
+    while let Some(n) = cur {
+        let is_link = dom.element(n).is_ok_and(|e| e.is_html() && matches!(&*e.name.local, "a" | "area"));
+        if is_link && dom.get_attribute(n, "href").ok().flatten().is_some() {
+            return Some(n);
+        }
+        cur = flat_parent_element(&dom, n);
+    }
+    None
+}
+
+/// Tells the embedder a press went down on a link (speculation rules' `conservative` eagerness).
+fn note_link_pointer_down(page: &PageDom, target: NodeId) {
+    let Some(hooks) = page.hooks() else { return };
+    if !hooks.wants_link_hover() {
+        return;
+    }
+    if let Some(link) = closest_link(page, target) {
+        hooks.link_pointer_down(link);
+    }
+}
+
 /// The parent element in the flat tree: a slottable's slot, a shadow
 /// root's host, else the parent element.
 pub(crate) fn flat_parent_element(dom: &Dom, el: NodeId) -> Option<NodeId> {
@@ -2510,6 +3141,18 @@ pub enum MouseButton {
 }
 
 impl MouseButton {
+    /// The `MouseEvent.buttons` bit of this button.
+    fn mask(self) -> u16 {
+        match self {
+            MouseButton::None => 0,
+            MouseButton::Left => 1,
+            MouseButton::Right => 2,
+            MouseButton::Middle => 4,
+            MouseButton::Back => 8,
+            MouseButton::Forward => 16,
+        }
+    }
+
     fn dom_button(self) -> i16 {
         match self {
             MouseButton::Left | MouseButton::None => 0,
@@ -2531,7 +3174,31 @@ pub struct MouseInput {
     pub modifiers: Modifiers,
     pub delta_x: f64,
     pub delta_y: f64,
+    /// `movementX/Y` of a `pointermove`/`mousemove`: the move since the previous mouse input of
+    /// the document. Set by the dispatcher, not by callers.
+    pub movement: (f64, f64),
+    /// A pen drives the pointer (`Input.dispatchMouseEvent` with `pointerType: "pen"`): its
+    /// events are `pointerType` "pen" with its own `pointerId`. `None`: the mouse.
+    pub pen: Option<PenState>,
 }
+
+/// A pen's state at one `Input.dispatchMouseEvent`.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PenState {
+    /// Degrees, -90 to 90.
+    pub tilt_x: f64,
+    pub tilt_y: f64,
+    /// Degrees clockwise, 0 to 359.
+    pub twist: f64,
+    /// Normalized pressure while a button is down, 0 to 1.
+    pub pressure: f64,
+    /// -1 to 1.
+    pub tangential_pressure: f64,
+}
+
+/// The `pointerId` of the pen (the mouse is 1; touches count up from 2 and skip this one, so no
+/// touch pointer can share the pen's id: `setPointerCapture` and friends route by id).
+pub const PEN_POINTER_ID: i32 = 1 << 30;
 
 pub(crate) fn mouse_event(
     page: &Rc<PageDom>,
@@ -2556,11 +3223,14 @@ pub(crate) fn mouse_event(
         // A physical mouse move or a boundary crossing changes no button.
         // MouseEvent uses 0 here; PointerEvent reserves -1 for this case.
         f.button = match ty {
-            "pointermove" | "pointerover" | "pointerout" | "pointerenter" | "pointerleave" => -1,
+            "pointermove" | "pointerrawupdate" | "pointerover" | "pointerout" | "pointerenter" | "pointerleave" => -1,
             "mousemove" | "mouseover" | "mouseout" | "mouseenter" | "mouseleave" | "dragover" => 0,
             _ => m.button.dom_button(),
         };
         f.buttons = m.buttons;
+        if matches!(ty, "pointermove" | "pointerrawupdate" | "mousemove") {
+            (f.movement_x, f.movement_y) = m.movement;
+        }
         f.detail = m.click_count as f64;
         f.ctrl_key = m.modifiers.ctrl;
         f.shift_key = m.modifiers.shift;
@@ -2573,6 +3243,17 @@ pub(crate) fn mouse_event(
             f.width = 1.0;
             f.height = 1.0;
             f.pressure = if m.buttons != 0 { 0.5 } else { 0.0 };
+            if let Some(pen) = m.pen {
+                f.pointer_id = PEN_POINTER_ID;
+                f.pointer_type = "pen".into();
+                f.pressure = if m.buttons != 0 { pen.pressure } else { 0.0 };
+                f.tangential_pressure = pen.tangential_pressure;
+                f.tilt_x = pen.tilt_x;
+                f.tilt_y = pen.tilt_y;
+                f.twist = pen.twist;
+                let (altitude, azimuth) = crate::event::tilt_to_spherical(pen.tilt_x, pen.tilt_y);
+                (f.altitude_angle, f.azimuth_angle) = (Some(altitude), azimuth);
+            }
         }
         if iface == EventInterface::WheelEvent {
             f.delta_x = m.delta_x;
@@ -2595,17 +3276,60 @@ fn fire_mouse(
     cancelable: bool,
     hit: Option<pyro_dom::geometry::GeneratedHit>,
 ) -> bool {
-    if crate::target::unheard(page, ty) { return true; }
+    if crate::target::unheard_input(page, ty, target, cancelable, None) { return true; }
+    // A trusted mousedown, mouseup or dblclick is not dispatched at a disabled form control; at a
+    // child of one it stops below the control.
+    let mut stop = None;
+    if iface == EventInterface::MouseEvent && matches!(ty, "mousedown" | "mouseup" | "dblclick") {
+        let node = page.dom.borrow().key_node(target);
+        if let Some(node) = node {
+            if let Some(control) = disabled_control_of(page, node) {
+                if control == node {
+                    return true;
+                }
+                stop = key_of(page, control);
+            }
+        }
+    }
     let ev = mouse_event(page, iface, ty, m, cancelable);
     ev.fields.borrow_mut().pseudo_hit = hit.map(|hit| (target, hit));
-    fire(page, target, &ev)
+    crate::target::fire_with(page, target, stop, &ev, &mut |_| {})
 }
 
-/// Whether `node` is a disabled form control or inside one (a button, input, select or
-/// textarea, or a form-associated custom element; not a fieldset, option or optgroup): Chromium
-/// dispatches no trusted `mousedown`, `mouseup`, `click`, `auxclick` or `dblclick` there, while the
-/// pointer events and `mousemove` still fire (WPT html/semantics/disabled-elements).
-fn in_disabled_control(page: &PageDom, node: NodeId) -> bool {
+/// The trusted `pointermove` of a mouse. `button` is `None` for a plain move (`button` -1) and
+/// the changed button for a chorded press or release (Pointer Events: another button going down
+/// or up while one stays down is a `pointermove` carrying that button, not a down or up).
+fn fire_pointer_move(
+    page: &Rc<PageDom>,
+    target: TargetKey,
+    m: &MouseInput,
+    button: Option<i16>,
+    hit: Option<pyro_dom::geometry::GeneratedHit>,
+) {
+    // `pointerrawupdate` (secure contexts only) comes first, unfiltered and not cancelable, and
+    // is not held back by what the pointermove's listeners do.
+    for (ty, cancelable) in [("pointerrawupdate", false), ("pointermove", true)] {
+        if crate::target::unheard(page, ty) || (ty == "pointerrawupdate" && !crate::secure_context::secure_page(page)) {
+            continue;
+        }
+        let ev = mouse_event(page, EventInterface::PointerEvent, ty, m, cancelable);
+        {
+            let mut f = ev.fields.borrow_mut();
+            if let Some(b) = button {
+                f.button = b;
+            }
+            f.pseudo_hit = hit.map(|hit| (target, hit));
+        }
+        fire(page, target, &ev);
+    }
+}
+
+/// The disabled form control `node` is, or is inside (a button, input, select or textarea, or a
+/// form-associated custom element; not a fieldset, option or optgroup), the nearest one: Chromium
+/// dispatches no trusted `mousedown`, `mouseup`, `click`, `auxclick` or `dblclick` at the control,
+/// and for a child of it the event stops below the control (whatwg/html#5886), while the pointer
+/// events and `mousemove` still fire (WPT html/semantics/disabled-elements).
+fn disabled_control_of(page: &PageDom, node: NodeId) -> Option<NodeId> {
     let dom = page.dom.borrow();
     let mut cur = Some(node);
     while let Some(n) = cur {
@@ -2613,11 +3337,11 @@ fn in_disabled_control(page: &PageDom, node: NodeId) -> bool {
             .element(n)
             .is_ok_and(|e| !(e.is_html() && matches!(&*e.name.local, "fieldset" | "option" | "optgroup")));
         if control && dom.is_disabled(n).unwrap_or(false) {
-            return true;
+            return Some(n);
         }
         cur = flat_parent_element(&dom, n);
     }
-    false
+    None
 }
 
 /// The hit-test target at a viewport point. With `root_fallback`, empty
@@ -2625,6 +3349,12 @@ fn in_disabled_control(page: &PageDom, node: NodeId) -> bool {
 /// synthetic layout leaves such gaps (e.g. at Playwright's initial mouse
 /// position, 0,0).
 fn pointer_target(page: &PageDom, x: f64, y: f64, root_fallback: bool) -> Option<NodeId> {
+    // While a view transition suppresses the document's rendering (its update callback is pending),
+    // input targets the document element: what is on screen is not what the DOM lays out now.
+    if page.view_transition_suppressed() {
+        let doc = page.document();
+        return page.dom.borrow().document_element(doc).ok().flatten();
+    }
     let hit = crate::layout_api::hit_test(page, x, y);
     if hit.is_some() || !root_fallback {
         return hit;
@@ -2657,13 +3387,20 @@ fn note_buttons(page: &PageDom, m: &MouseInput) {
 
 /// Inclusive ancestors of `node` up to and including its document, innermost
 /// first; empty when it is no longer in the page's document.
+///
+/// Along the flat tree (a shadow tree's elements go up through their host, a slotted one through
+/// its slot), as Chrome's boundary events do: a shadow root receives none.
 fn hover_chain(page: &PageDom, node: NodeId) -> Vec<NodeId> {
     let dom = page.dom.borrow();
-    let mut chain = Vec::new();
-    let mut cur = Some(node);
-    while let Some(c) = cur {
-        chain.push(c);
-        cur = dom.parent(c).ok().flatten();
+    let mut chain = vec![node];
+    let mut cur = node;
+    while let Some(p) = flat_parent_element(&dom, cur) {
+        chain.push(p);
+        cur = p;
+    }
+    // The root element's parent is the document.
+    if let Some(doc) = dom.parent(cur).ok().flatten() {
+        chain.push(doc);
     }
     if chain.last() != Some(&page.document()) {
         chain.clear();
@@ -2671,12 +3408,72 @@ fn hover_chain(page: &PageDom, node: NodeId) -> Vec<NodeId> {
     chain
 }
 
+/// What the page knows of the hovered node's ancestry, for boundary events after the node left
+/// the document (Chrome's BoundaryEventDispatcher keeps the last known ancestor chain).
+#[derive(Default)]
+pub(crate) struct HoverTrail {
+    /// The hovered node's ancestors (inclusive, innermost first, ending at the document) as they
+    /// were when it became hovered; after a removal, only those that survived it.
+    chain: Vec<NodeId>,
+    /// `Dom::removal_count` when the trail was last brought up to date.
+    mark: u64,
+    /// The hovered node was removed from the document since it became hovered (also when it was
+    /// inserted again, e.g. moved): its pointer is no longer over it until a boundary update.
+    removed: bool,
+}
+
+/// Brings the hover trail up to date with the removals since it was last looked at. Whether the
+/// hovered node was removed since it became hovered.
+fn refresh_hover_trail(page: &PageDom) -> bool {
+    let Some(prev) = page.hovered_raw() else { return false };
+    let dom = page.dom.borrow();
+    let mut trail = page.hover_trail.borrow_mut();
+    let now = dom.removal_count();
+    if now == trail.mark {
+        return trail.removed;
+    }
+    let since = std::mem::replace(&mut trail.mark, now);
+    let connected = |n: NodeId| dom.is_connected(n).unwrap_or(false);
+    if trail.removed {
+        trail.chain.retain(|&n| connected(n));
+        return true;
+    }
+    let removed = dom.nodes_removed_since(since);
+    let gone = !connected(prev) || removed.as_ref().is_some_and(|r| r.contains(&prev));
+    if gone {
+        trail.removed = true;
+        match removed {
+            Some(r) => trail.chain.retain(|n| connected(*n) && !r.contains(n)),
+            None => trail.chain.retain(|&n| connected(n) && n != prev),
+        }
+    }
+    gone
+}
+
+/// The target of a compatibility mouse event (or the next pointer event) whose preceding target
+/// `target` left the document in a listener: the nearest ancestor still connected, as Chrome
+/// retargets it. Only for a target that is the hovered one (its trail is known).
+fn live_target(page: &Rc<PageDom>, target: NodeId, tkey: TargetKey) -> (NodeId, TargetKey) {
+    if page.dom.borrow().is_connected(target).unwrap_or(false) || page.hovered_raw() != Some(target) {
+        return (target, tkey);
+    }
+    refresh_hover_trail(page);
+    let dom = page.dom.borrow();
+    let trail = page.hover_trail.borrow();
+    for &n in trail.chain.iter() {
+        if dom.is_connected(n).unwrap_or(false) && dom.element(n).is_ok() {
+            if let Some(k) = dom.node_key(n) {
+                return (n, k);
+            }
+        }
+    }
+    (target, tkey)
+}
+
 /// Nodes that receive leave (innermost first) and enter (innermost first)
-/// when the hovered node changes from `prev` to `next`: each chain up to,
-/// excluding, their common ancestor.
-fn boundary_chains(page: &PageDom, prev: Option<NodeId>, next: NodeId) -> (Vec<NodeId>, Vec<NodeId>) {
-    let mut left = prev.map(|p| hover_chain(page, p)).unwrap_or_default();
-    let mut entered = hover_chain(page, next);
+/// when the hovered node changes from the one whose ancestor chain is `left` to the one whose
+/// chain is `entered`: each chain up to, excluding, their common ancestor.
+fn boundary_chains(mut left: Vec<NodeId>, mut entered: Vec<NodeId>) -> (Vec<NodeId>, Vec<NodeId>) {
     while let (Some(a), Some(b)) = (left.last(), entered.last()) {
         if a != b {
             break;
@@ -2702,17 +3499,36 @@ fn dispatch_boundary_events(
     m: &MouseInput,
     touch: Option<i32>,
 ) {
-    let prev_connected = prev.is_some_and(|p| page.dom.borrow().is_connected(p).unwrap_or(false));
-    let (left, entered) = boundary_chains(page, prev, target);
+    // A `prev` removed from the document since it was hovered (also one inserted again) gets no
+    // out or leave, and the ancestors that survived the removal count as already entered.
+    let prev_removed = refresh_hover_trail(page);
+    let prev_connected = !prev_removed && prev.is_some_and(|p| page.dom.borrow().is_connected(p).unwrap_or(false));
+    let prev_chain = match prev {
+        Some(_) if prev_removed => page.hover_trail.borrow().chain.clone(),
+        Some(p) => hover_chain(page, p),
+        None => Vec::new(),
+    };
+    let target_chain = hover_chain(page, target);
+    *page.hover_trail.borrow_mut() = HoverTrail {
+        chain: target_chain.clone(),
+        mark: page.dom.borrow().removal_count(),
+        removed: false,
+    };
+    let (left, entered) = boundary_chains(prev_chain, target_chain);
+    let connected = |n: NodeId| page.dom.borrow().is_connected(n).unwrap_or(false);
     let prev_key = prev.and_then(|p| key_of(page, p));
     // The new `:hover` state comes first: the boundary events observe it, as in Chrome (WPT
     // css/selectors `hover-boundary-events`: `#a` no longer matches during its `mouseout`).
     let doc = page.document();
     let _ = page.dom.borrow_mut().set_hovered(doc, Some(target));
     page.set_hovered(Some(target));
+    // pyro: speculation rules' hover eagerness (a hook that only posts a task).
+    if let Some(hooks) = page.hooks().filter(|hooks| hooks.wants_link_hover()) {
+        hooks.link_hover(closest_link(page, target));
+    }
     // An event nobody listens for is not made (see `fire_mouse`).
     let boundary = |iface: EventInterface, ty: &str, at: TargetKey, cancelable: bool, related: Option<TargetKey>| {
-        if crate::target::unheard(page, ty) {
+        if crate::target::unheard_input(page, ty, at, cancelable, None) {
             return;
         }
         let ev = mouse_event(page, iface, ty, m, cancelable);
@@ -2729,18 +3545,90 @@ fn dispatch_boundary_events(
         if let Some(p) = prev_key.filter(|_| prev_connected) {
             boundary(iface, out, p, true, Some(tkey));
         }
-        for &n in &left {
+        for &n in left.iter().filter(|&&n| connected(n)) {
             if let Some(k) = key_of(page, n) {
                 boundary(iface, leave, k, false, Some(tkey));
             }
         }
         boundary(iface, over, tkey, true, prev_key);
-        for &n in entered.iter().rev() {
+        // A node a listener removed in the meantime hears no enter.
+        for &n in entered.iter().rev().filter(|&&n| connected(n)) {
             if let Some(k) = key_of(page, n) {
                 boundary(iface, enter, k, false, prev_key);
             }
         }
     }
+}
+
+/// The pointer left this document for another frame's content (CDP routes a mouse event to the innermost frame
+/// under it, so the document it came from is told here): `pointerout` at what was hovered and `pointerleave` along
+/// its chain up to the document, then the mouse twins, as when the pointer leaves the page. The document is then
+/// hovered by nothing and has no pointer (its next `movementX/Y` start from zero). `relatedTarget` is null: the
+/// element across the boundary is in another document. A pointer captured in this document stays with it.
+pub fn pointer_left_document(page: &Rc<PageDom>, fallback: &MouseInput) {
+    let c = page.mouse_capture.get();
+    if page.is_disposed() || c.current.is_some() || c.pending.is_some() {
+        return;
+    }
+    let last = page.pointer.borrow_mut().take();
+    let Some(prev) = page.hovered_raw() else { return };
+    let m = MouseInput { x: last.as_ref().map_or(fallback.x, |p| p.x), y: last.as_ref().map_or(fallback.y, |p| p.y), movement: (0.0, 0.0), ..fallback.clone() };
+    let prev_removed = refresh_hover_trail(page);
+    let prev_connected = !prev_removed && page.dom.borrow().is_connected(prev).unwrap_or(false);
+    let chain = if prev_removed { page.hover_trail.borrow().chain.clone() } else { hover_chain(page, prev) };
+    let doc = page.document();
+    let _ = page.dom.borrow_mut().set_hovered(doc, None);
+    page.set_hovered(None);
+    *page.hover_trail.borrow_mut() = HoverTrail::default();
+    page.layout().set_pointer(None);
+    let connected = |n: NodeId| page.dom.borrow().is_connected(n).unwrap_or(false);
+    let boundary = |iface: EventInterface, ty: &str, at: TargetKey, cancelable: bool| {
+        if crate::target::unheard_input(page, ty, at, cancelable, None) {
+            return;
+        }
+        fire(page, at, &mouse_event(page, iface, ty, &m, cancelable));
+    };
+    for (iface, [out, leave]) in [
+        (EventInterface::PointerEvent, ["pointerout", "pointerleave"]),
+        (EventInterface::MouseEvent, ["mouseout", "mouseleave"]),
+    ] {
+        if let Some(k) = key_of(page, prev).filter(|_| prev_connected) {
+            boundary(iface, out, k, true);
+        }
+        for &n in chain.iter().filter(|&&n| connected(n)) {
+            if let Some(k) = key_of(page, n) {
+                boundary(iface, leave, k, false);
+            }
+        }
+    }
+}
+
+/// The pointer is over a child frame's content: in this (the parent) document it is over the frame's owner element
+/// `owner`, which gets the boundary events from what was hovered before (no-op when it already is hovered).
+pub fn pointer_over_frame_owner(page: &Rc<PageDom>, owner: NodeId, m: &MouseInput) {
+    let c = page.mouse_capture.get();
+    if page.is_disposed() || c.current.is_some() || c.pending.is_some() {
+        return;
+    }
+    hover_capture_target(page, owner, m);
+}
+
+/// The pointer is now over `target`, the node that captured it: boundary events from what was
+/// hovered (pointer capture §4.1.1; no-op when it already is).
+pub(crate) fn hover_capture_target(page: &Rc<PageDom>, target: NodeId, m: &MouseInput) {
+    let prev = page.hovered();
+    if prev == Some(target) && !refresh_hover_trail(page) {
+        return;
+    }
+    if let Some(tkey) = key_of(page, target) {
+        dispatch_boundary_events(page, prev, target, tkey, m, None);
+    }
+}
+
+/// The pointer lost its capture: it is over whatever is under it again.
+pub(crate) fn hover_under_pointer(page: &Rc<PageDom>, m: &MouseInput) {
+    let Some(hit) = pointer_target(page, m.x, m.y, true) else { return };
+    hover_capture_target(page, hit, m);
 }
 
 /// Delay of the hover update after the hovered element is removed: Chromium
@@ -2776,13 +3664,13 @@ pub(crate) fn update_hover_after_task(page: &Rc<PageDom>) {
 fn update_hover_now(page: &Rc<PageDom>) {
     // Pointer capture owns the target until release, even if layout changes.
     let capture = page.mouse_capture.get();
-    if capture.current.is_some() || capture.pending.is_some() {
+    if capture.current.is_some() || capture.pending.is_some() || crate::pointer_lock::target(page).is_some() {
         return;
     }
     let Some(prev) = page.hovered_raw() else { return };
     let Some(m) = page.pointer.borrow().clone() else { return };
     let Some(target) = pointer_target(page, m.x, m.y, true) else { return };
-    if target == prev {
+    if target == prev && !refresh_hover_trail(page) {
         return;
     }
     let Some(tkey) = key_of(page, target) else { return };
@@ -2964,21 +3852,40 @@ fn dispatch_mouse_inner(
     intercept_drags: bool,
     touch: Option<i32>,
 ) -> Result<Option<DragData>, String> {
+    // Pointer Lock: while an element holds the lock, it is the target of every mouse event, the position they report
+    // is the frozen one, and no hover or capture applies (`crate::pointer_lock`).
+    let locked = if touch.is_none() { crate::pointer_lock::target(page) } else { None };
     // Empty viewport space targets the root element, as Chromium hit-tests it.
-    let hit = pointer_target(page, m.x, m.y, true).ok_or_else(|| "no element at point".to_owned())?;
+    let hit = match locked {
+        Some((el, _, _)) => el,
+        None => pointer_target(page, m.x, m.y, true).ok_or_else(|| "no element at point".to_owned())?,
+    };
+    // The pointer id `setPointerCapture` accepts for this mouse-like pointer: the mouse's or the pen's.
+    if touch.is_none() {
+        let id = if m.pen.is_some() { PEN_POINTER_ID } else { 1 };
+        let mut c = page.mouse_capture.get();
+        if c.pointer_id != id {
+            c.pointer_id = id;
+            page.mouse_capture.set(c);
+        }
+    }
     // Mouse pointer events (and their compatibility mouse events) go to the
     // capture target while there is one.
     let captured = match (touch, kind) {
+        _ if locked.is_some() => None,
         (None, MouseKind::Pressed | MouseKind::Moved | MouseKind::Released) => {
             crate::pointer_capture::capture_target(page, m)
         }
         _ => None,
     };
     let target = captured.unwrap_or(hit);
+    // pyro: a press on a classic scrollbar part, and the moves and release of the thumb drag it
+    // starts, scroll (`scrollbar_drag.rs`); the press takes no focus, selection or click.
+    let on_scrollbar = touch.is_none() && crate::scrollbar_drag::input(page, kind, m, target);
     // pyro: and, for a left release, the `::scroll-button()` of the target under the pointer (from
     // the same synced geometry: the click's default action needs no other).
     let release = matches!(kind, MouseKind::Released) && m.button == MouseButton::Left && touch.is_none();
-    let (pseudo, scroll_button) = if captured.is_none() {
+    let (pseudo, scroll_button) = if captured.is_none() && locked.is_none() {
         let dom = page.dom.borrow();
         let key = pyro_dom::snapshot::render_key(target);
         match page.layout().synced_geometry_source(&dom) {
@@ -2993,36 +3900,85 @@ fn dispatch_mouse_inner(
     // A press handler may open an overlay beneath a stationary pointer.
     // Reconcile boundaries before the next pointer event, including release:
     // otherwise the old trigger stays hovered and can open a stale tooltip.
+    // `movementX/Y`: the screen delta from the previous mouse input of this document (0 for the
+    // first one); only a move reports it, other events read 0.
+    let moved_input;
+    let m = if kind == MouseKind::Moved {
+        let prev = page.pointer.borrow().as_ref().map(|p| (p.x, p.y));
+        moved_input = MouseInput { movement: prev.map_or((0.0, 0.0), |(px, py)| (m.x - px, m.y - py)), ..m.clone() };
+        &moved_input
+    } else {
+        m
+    };
+    // The hovered node was removed since it was hovered: Chrome's fake mouse move after the layout
+    // update has re-targeted the pointer before the next real input arrives, so the boundary
+    // events of the content now under the old position come first (the delayed task of
+    // `update_hover_after_task` would run later than a prompt next input).
+    if touch.is_none()
+        && matches!(kind, MouseKind::Moved | MouseKind::Pressed | MouseKind::Released)
+        && page.hovered_raw().is_some()
+        && page.pointer.borrow().is_some()
+        && refresh_hover_trail(page)
+    {
+        update_hover_now(page);
+    }
     if matches!(kind, MouseKind::Moved | MouseKind::Pressed | MouseKind::Released) {
+        // (The input as it came, also while locked: the next move's `movementX/Y` are measured from it.)
         *page.pointer.borrow_mut() = Some(m.clone());
-        let prev = page.hovered();
-        if prev != Some(target) {
-            dispatch_boundary_events(page, prev, target, tkey, m, touch);
+        if locked.is_none() {
+            page.layout().set_pointer(Some((m.x, m.y)));
+            let prev = page.hovered();
+            // (A hovered node that was removed, even if inserted again, is entered anew.)
+            if prev != Some(target) || refresh_hover_trail(page) {
+                dispatch_boundary_events(page, prev, target, tkey, m, touch);
+            }
         }
     }
+    // The events of a locked pointer report the position it was locked at.
+    let frozen;
+    let m = match locked {
+        Some((_, x, y)) => {
+            frozen = MouseInput { x, y, ..m.clone() };
+            &frozen
+        }
+        None => m,
+    };
+    // A boundary listener may have removed the target (WPT mousemove_after_mouseover_target_removed).
+    let target_removed = !page.dom.borrow().is_connected(target).unwrap_or(false);
+    let (target, tkey) = live_target(page, target, tkey);
     match kind {
         MouseKind::Moved => {
-            if touch.is_none() {
-                fire_mouse(page, tkey, EventInterface::PointerEvent, "pointermove", m, true, pseudo);
+            // The `pointermove` of a move whose boundary events took its target out of the document is
+            // not fired (Chrome 134; WPT pointerevents/pointermove_after_pointerover_target_removed);
+            // its compatibility `mousemove` goes to the nearest connected ancestor.
+            if touch.is_none() && !target_removed {
+                fire_pointer_move(page, tkey, m, None, pseudo);
             }
+            // A listener may have removed the target: the compatibility event goes to its
+            // nearest ancestor still in the document, as in Chrome.
+            let (target, tkey) = live_target(page, target, tkey);
             if !(page.compat_mouse_suppressed.get() && m.buttons != 0) {
                 fire_mouse(page, tkey, EventInterface::MouseEvent, "mousemove", m, true, pseudo);
             }
-            if m.buttons & 1 != 0 {
+            if m.buttons & 1 != 0 && locked.is_none() {
                 text_select_move(page, target, m);
                 range_drag_move(page, m);
             }
-            if intercept_drags {
+            if intercept_drags && locked.is_none() {
                 return Ok(start_drag(page, target, m));
             }
         }
         MouseKind::Pressed => {
             // A right press (the context menu) light-dismisses nothing, as in Chromium: a
             // popover its `contextmenu` handler shows stays open.
-            if m.button != MouseButton::Right {
+            if m.button != MouseButton::Right && locked.is_none() {
                 crate::popover::light_dismiss(page, target, m.x, m.y, true);
             }
-            if touch.is_none() {
+            // Another button pressed while one is already down (a chord) is a `pointermove`
+            // carrying that button, not a `pointerdown`; the compatibility `mousedown` still fires
+            // (Pointer Events "chorded button interactions").
+            let chorded = touch.is_none() && m.buttons & !m.button.mask() != 0;
+            if touch.is_none() && !chorded {
                 let mut c = page.mouse_capture.get();
                 c.buttons_down = true;
                 page.mouse_capture.set(c);
@@ -3030,29 +3986,78 @@ fn dispatch_mouse_inner(
             // Any button's press activates `:active`, as in Chrome (WPT css/selectors
             // `active-observable`: right and middle presses too).
             set_active(page, page.document(), Some(target));
-            let pd = touch.is_some() || fire_mouse(page, tkey, EventInterface::PointerEvent, "pointerdown", m, true, pseudo);
+            note_link_pointer_down(page, target);
+            let pd = if chorded {
+                fire_pointer_move(page, tkey, m, Some(m.button.dom_button()), pseudo);
+                // A pointermove cannot suppress the compatibility mouse events; a canceled
+                // pointerdown of the first button keeps suppressing them for the whole chord.
+                !page.compat_mouse_suppressed.get()
+            } else {
+                touch.is_some() || fire_mouse(page, tkey, EventInterface::PointerEvent, "pointerdown", m, true, pseudo)
+            };
+            let (target, tkey) = live_target(page, target, tkey);
             let md = !pd
-                || in_disabled_control(page, target)
                 || fire_mouse(page, tkey, EventInterface::MouseEvent, "mousedown", m, true, pseudo);
-            page.compat_mouse_suppressed.set(!pd);
+            if !chorded {
+                page.compat_mouse_suppressed.set(!pd);
+            }
+            // A locked pointer's press has no default action (no focus, caret, drag or context menu): the page
+            // gets the events, the press target is the lock target.
+            if locked.is_some() && !chorded {
+                note_buttons(page, m);
+                page.set_press_target(Some(target));
+                return Ok(None);
+            }
+            if chorded {
+                // The first button's press stays the one a click is measured from.
+                note_buttons(page, m);
+                if m.button == MouseButton::Right && !page.is_disposed() {
+                    if let Some(k) = key_of(page, target) {
+                        let ev = mouse_event(page, EventInterface::PointerEvent, "contextmenu", m, true);
+                        ev.state.borrow_mut().composed = true;
+                        fire(page, k, &ev);
+                    }
+                }
+                return Ok(None);
+            }
+            if on_scrollbar {
+                note_buttons(page, m);
+                return Ok(None);
+            }
             page.set_press_target(Some(target));
+            remember_press(page, target);
             page.pressed_pseudo.set(pseudo);
             note_buttons(page, m);
-            let place_caret = m.button == MouseButton::Left && pd && md;
+            // pyro: a press on a `::scroll-marker` or `::scroll-button()` (the mousedown went to its
+            // originating element) takes the focus by its own rules and selects no text; a marker
+            // clears the selection.
+            let marker_press = m.button == MouseButton::Left
+                && pd
+                && md
+                && page.layout().scroll_marker_group_at(&page.dom.borrow(), (m.x, m.y)).is_some();
+            let pseudo_focused = m.button == MouseButton::Left && pd && md && scroll_pseudo_press_focus(page, m, target);
+            if marker_press {
+                crate::editing::clear_selection(page);
+            }
+            let place_caret = m.button == MouseButton::Left && pd && md && !marker_press;
+            // A middle or secondary press moves the caret in editable content too (Chrome), without starting a
+            // selection drag, and with Shift extends the selection; on a link Shift does not extend.
+            let caret_only = matches!(m.button, MouseButton::Middle | MouseButton::Right) && pd && md;
             // A canceled mousedown prevents dragging, as in Chrome.
             let source =
                 (m.button == MouseButton::Left && pd && md).then(|| drag_source(&page.dom.borrow(), target)).flatten();
             page.drag_candidate.set(source.map(|s| (s, m.x, m.y)));
             // Default action of mousedown: focus the nearest focusable ancestor.
-            if pd && md {
+            if pd && md && !pseudo_focused {
                 let focus_target = {
+                    let layout = page.layout();
                     let dom = page.dom.borrow();
                     let mut cur = Some(target);
                     let mut found = None;
                     while let Some(c) = cur {
                         // A host that delegates focus takes it for a press
                         // anywhere in it (its delegate, see focus()).
-                        if dom.is_focusable(c).unwrap_or(false) || dom.is_delegates_focus_host(c) {
+                        if node_focusable(&layout, &dom, c) || dom.is_delegates_focus_host(c) {
                             found = Some(c);
                             break;
                         }
@@ -3071,6 +4076,7 @@ fn dispatch_mouse_inner(
                     // (WPT css/selectors `focus-visible-script-focus-002`, `-006`, `-016`).
                     Some(f) => {
                         page.pointer_modality.set(true);
+                        page.sequential_start.set(None);
                         focus_element_with_options(page, f, true)
                     }
                     None => {
@@ -3078,6 +4084,20 @@ fn dispatch_mouse_inner(
                         let focused = page.dom.borrow().focused(page.document()).ok().flatten();
                         if let Some(f) = focused {
                             blur_element(page, f);
+                        }
+                        // HTML "sequential focus navigation starting point": a press on content
+                        // that cannot take focus moves it there, so Tab goes on from the clicked
+                        // node (after the blur, whose own starting point it replaces).
+                        page.sequential_start.set(Some(target));
+                        // The press still makes this document's frame the focused one (Chrome's
+                        // `FocusController::SetFocusedFrame` on mouse down): an iframe's owner becomes
+                        // the parent's activeElement and keys go to the frame (WPT css-overscroll-behavior
+                        // `overscroll-behavior-keyboard-scroll-child-frame`).
+                        // (Without scrolling the owner into view: a press reveals nothing.)
+                        if !page.is_disposed() {
+                            if let Some(token) = request_focus(page, FocusTarget::Window, true) {
+                                focus_window_with_transition(page, &token);
+                            }
                         }
                     }
                 }
@@ -3098,9 +4118,15 @@ fn dispatch_mouse_inner(
                     fire(page, k, &ev);
                 }
             }
+            if place_caret || caret_only {
+                let extended = m.modifiers.shift && closest_link(page, target).is_none() && crate::editing::extend_on_press(page, target);
+                if !extended {
+                    crate::editing::caret_on_press(page, target);
+                }
+            }
             if place_caret {
-                crate::editing::caret_on_press(page, target);
                 range_press(page, target, m);
+                number_spin_press(page, target, m);
             }
             page.text_drag.set(None);
             if place_caret && source.is_none() {
@@ -3118,8 +4144,16 @@ fn dispatch_mouse_inner(
             }
             page.drag_candidate.set(None);
             page.text_drag.set(None);
-            set_active(page, page.document(), None);
-            if touch.is_none() {
+            // A release while another button stays down is a `pointermove` carrying the released
+            // button: no `pointerup`, the pointer capture stays, and the click goes with the last
+            // release.
+            let chorded = touch.is_none() && m.buttons & !m.button.mask() != 0;
+            if !chorded {
+                set_active(page, page.document(), None);
+            }
+            if chorded {
+                fire_pointer_move(page, tkey, m, Some(m.button.dom_button()), pseudo);
+            } else if touch.is_none() {
                 fire_mouse(page, tkey, EventInterface::PointerEvent, "pointerup", m, true, pseudo);
                 // Implicit release right after pointerup: lostpointercapture
                 // before the compatibility mouseup and the click.
@@ -3129,21 +4163,21 @@ fn dispatch_mouse_inner(
                 page.mouse_capture.set(c);
                 crate::pointer_capture::process_pending_capture(page, m);
             }
-            if m.button != MouseButton::Right {
+            let (target, tkey) = live_target(page, target, tkey);
+            if m.button != MouseButton::Right && locked.is_none() {
                 crate::popover::light_dismiss(page, target, m.x, m.y, false);
             }
             // Only a canceled pointerdown holds back the mouseup (an app's
             // pointerup handler that calls preventDefault does not).
             // (No mouseup, no mouseup default handling: nor a pick.)
-            let mouseup_ok = !page.compat_mouse_suppressed.replace(false)
-                && (in_disabled_control(page, target)
-                    || fire_mouse(page, tkey, EventInterface::MouseEvent, "mouseup", m, true, pseudo));
+            let suppressed = if chorded { page.compat_mouse_suppressed.get() } else { page.compat_mouse_suppressed.replace(false) };
+            let mouseup_ok = !suppressed && fire_mouse(page, tkey, EventInterface::MouseEvent, "mouseup", m, true, pseudo);
             // A release on an option of a customizable select's open picker picks it.
             if mouseup_ok && m.button == MouseButton::Left && !page.is_disposed() {
                 select_picker_option_release(page, target);
             }
-            let pressed = page.take_press_target();
-            let pressed_pseudo = page.pressed_pseudo.take();
+            let pressed = if chorded { None } else { page.take_press_target() };
+            let pressed_pseudo = if chorded { None } else { page.pressed_pseudo.take() };
             // click targets the common ancestor of press and release targets;
             // under capture, the capture target (as in Chrome).
             let click_target = match pressed {
@@ -3152,8 +4186,9 @@ fn dispatch_mouse_inner(
                 Some(p) => common_ancestor(&page.dom.borrow(), p, target),
                 None => None,
             };
-            // No click (nor auxclick, dblclick) at a disabled form control or inside one.
-            let click_target = click_target.filter(|&ct| !in_disabled_control(page, ct));
+            // No click (nor auxclick, dblclick) at a disabled form control; one inside it stops
+            // below the control (`dispatch_click`, `fire_mouse`).
+            let click_target = click_target.filter(|&ct| disabled_control_of(page, ct) != Some(ct));
             if let Some(ct) = click_target {
                 let name = match m.button {
                     MouseButton::Left | MouseButton::None => "click",
@@ -3272,7 +4307,9 @@ struct ActiveTouch {
     /// The touchstart target: the touch's events go there for the whole
     /// sequence (implicit pointer capture).
     target: NodeId,
-    captured: bool,
+    /// The node the touch is "over" for boundary events: the touchstart target until pointer
+    /// capture moves it to the capturing node (and back when the capture is lost).
+    over: std::cell::Cell<NodeId>,
     /// A scroll took the touch over: no more pointer events for it.
     pointer_cancelled: bool,
 }
@@ -3294,6 +4331,24 @@ pub struct TouchSequence {
     /// pointerdown was canceled: the tap fires no compatibility mouse events.
     mouse_suppressed: bool,
     next_pointer_id: i32,
+    /// The first touch's `touch-action` pan restrictions (x, y blocked), read when it came down:
+    /// later changes of the style do not matter (WPT pointerevents
+    /// `pointerevent_touch-action-modified_touch`).
+    pan_blocked: (bool, bool),
+    /// The pan that scrolls for the sequence's single touch, once it began.
+    pan: Option<TouchPan>,
+}
+
+/// A touch pan (Chrome's gesture scroll): the finger's last position, the scroller each axis
+/// latched to, the scrollers that moved, and the recent finger positions a fling starts from.
+#[derive(Default)]
+struct TouchPan {
+    last: (f64, f64),
+    /// Per axis (x, y): `Some(Some(box))` latched to a box that took the scroll, `Some(None)` to
+    /// a chain end that contains the overscroll; `None`: nothing took it yet, so it still chains.
+    latch: [Option<Option<pyro_dom::layout::ScrollTarget>>; 2],
+    scrolled: Vec<pyro_dom::layout::ScrollTarget>,
+    samples: Vec<(std::time::Instant, f64, f64)>,
 }
 
 impl TouchSequence {
@@ -3331,6 +4386,8 @@ struct PointerState {
     width: f64,
     height: f64,
     pressure: f64,
+    /// `movementX/Y` of a pointermove: the move since the touch's previous position.
+    movement: (f64, f64),
 }
 
 impl PointerState {
@@ -3344,14 +4401,15 @@ impl PointerState {
             width: 2.0 * t.radius_x,
             height: 2.0 * t.radius_y,
             pressure: t.force,
+            movement: (0.0, 0.0),
         }
     }
-    fn moved(t: &TouchInput) -> Self {
-        PointerState { button: -1, ..Self::pressed(t) }
+    fn moved(t: &TouchInput, movement: (f64, f64)) -> Self {
+        PointerState { button: -1, movement, ..Self::pressed(t) }
     }
     /// Up and what follows it: Chrome reports a 1x1 contact without pressure.
     fn released(t: &TouchInput) -> Self {
-        PointerState { x: t.x, y: t.y, button: 0, buttons: 0, width: 1.0, height: 1.0, pressure: 0.0 }
+        PointerState { x: t.x, y: t.y, button: 0, buttons: 0, width: 1.0, height: 1.0, pressure: 0.0, movement: (0.0, 0.0) }
     }
     /// touchCancel's pointercancel keeps the contact size.
     fn cancelled(t: &TouchInput) -> Self {
@@ -3359,7 +4417,7 @@ impl PointerState {
     }
     /// A scroll's pointercancel carries no position (Chrome: 0,0, 1x1).
     fn scrolled() -> Self {
-        PointerState { x: 0.0, y: 0.0, button: 0, buttons: 0, width: 1.0, height: 1.0, pressure: 0.0 }
+        PointerState { x: 0.0, y: 0.0, button: 0, buttons: 0, width: 1.0, height: 1.0, pressure: 0.0, movement: (0.0, 0.0) }
     }
 }
 
@@ -3372,7 +4430,7 @@ fn touch_pointer_event(
     related: Option<TargetKey>,
 ) -> EventData {
     let boundary = matches!(ty, "pointerenter" | "pointerleave");
-    let cancelable = !boundary && !matches!(ty, "pointercancel" | "gotpointercapture" | "lostpointercapture");
+    let cancelable = !boundary && !matches!(ty, "pointercancel" | "pointerrawupdate" | "gotpointercapture" | "lostpointercapture");
     let ev = EventCore::trusted(page, EventInterface::PointerEvent, ty, !boundary, cancelable);
     {
         let mut f = ev.fields.borrow_mut();
@@ -3392,23 +4450,86 @@ fn touch_pointer_event(
         f.width = p.width;
         f.height = p.height;
         f.pressure = p.pressure;
+        if matches!(ty, "pointermove" | "pointerrawupdate") {
+            (f.movement_x, f.movement_y) = p.movement;
+        }
         f.related_target = related;
     }
     ev
 }
 
 fn fire_touch_pointer(page: &Rc<PageDom>, ty: &str, t: &ActiveTouch, p: &PointerState, modifiers: Modifiers) -> bool {
-    match key_of(page, t.target) {
+    fire_touch_pointer_at(page, t.target, ty, t, p, modifiers)
+}
+
+fn fire_touch_pointer_at(page: &Rc<PageDom>, node: NodeId, ty: &str, t: &ActiveTouch, p: &PointerState, modifiers: Modifiers) -> bool {
+    match key_of(page, node) {
         Some(key) => fire(page, key, &touch_pointer_event(page, ty, t, p, modifiers, None)),
         None => true,
     }
 }
 
-/// gotpointercapture before the touch's first event after pointerdown.
-fn capture(page: &Rc<PageDom>, t: &mut ActiveTouch, p: &PointerState, modifiers: Modifiers) {
-    if !t.captured {
-        t.captured = true;
-        fire_touch_pointer(page, "gotpointercapture", t, p, modifiers);
+/// Where the touch's pointermove, pointerup and pointercancel go: its pointer capture target
+/// (the touchstart target while implicit capture is pending); without capture (script released
+/// it, or the target left the document) the element under the touch, else the touchstart target.
+fn fire_touch_pointer_routed(page: &Rc<PageDom>, ty: &str, t: &ActiveTouch, p: &PointerState, modifiers: Modifiers) -> bool {
+    let node = match crate::pointer_capture::touch_capture(page, t.pointer_id) {
+        Some(c) if c.current.is_some() => c.current,
+        Some(c) if c.pending.is_some() => Some(t.target),
+        _ => None,
+    };
+    let node = node.or_else(|| pointer_target(page, t.input.x, t.input.y, true)).unwrap_or(t.target);
+    fire_touch_pointer_at(page, node, ty, t, p, modifiers)
+}
+
+/// "Process pending pointer capture" before the touch's next pointer event: lostpointercapture
+/// at the old capture target, then gotpointercapture at the new one (the implicit one after
+/// pointerdown, or what script set).
+fn capture(page: &Rc<PageDom>, t: &ActiveTouch, p: &PointerState, modifiers: Modifiers) {
+    let (lost, got) = crate::pointer_capture::touch_process_pending(page, t.pointer_id);
+    if let Some(node) = lost {
+        fire_touch_pointer_at(page, node, "lostpointercapture", t, p, modifiers);
+        // The touch is over whatever is under it again.
+        if got.is_none() {
+            let under = pointer_target(page, t.input.x, t.input.y, true).unwrap_or(t.target);
+            touch_hover(page, t, p, modifiers, under);
+        }
+    }
+    if let Some(node) = got {
+        // The capturing node is entered before it hears `gotpointercapture`.
+        touch_hover(page, t, p, modifiers, node);
+        fire_touch_pointer_at(page, node, "gotpointercapture", t, p, modifiers);
+    }
+}
+
+/// Boundary events of touch `t` moving from the node it is over to `to` (out and leave inner to
+/// outer, then over and enter outer to inner), as the mouse's `dispatch_boundary_events`.
+fn touch_hover(page: &Rc<PageDom>, t: &ActiveTouch, p: &PointerState, modifiers: Modifiers, to: NodeId) {
+    let from = t.over.get();
+    if from == to || !page.dom.borrow().is_connected(to).unwrap_or(false) {
+        return;
+    }
+    t.over.set(to);
+    let from_connected = page.dom.borrow().is_connected(from).unwrap_or(false);
+    let (left, entered) = boundary_chains(if from_connected { hover_chain(page, from) } else { Vec::new() }, hover_chain(page, to));
+    let (from_key, to_key) = (key_of(page, from), key_of(page, to));
+    if from_connected {
+        if let Some(k) = from_key {
+            fire(page, k, &touch_pointer_event(page, "pointerout", t, p, modifiers, to_key));
+        }
+    }
+    for n in left {
+        if let Some(k) = key_of(page, n) {
+            fire(page, k, &touch_pointer_event(page, "pointerleave", t, p, modifiers, to_key));
+        }
+    }
+    if let Some(k) = to_key {
+        fire(page, k, &touch_pointer_event(page, "pointerover", t, p, modifiers, from_key));
+    }
+    for n in entered.into_iter().rev() {
+        if let Some(k) = key_of(page, n) {
+            fire(page, k, &touch_pointer_event(page, "pointerenter", t, p, modifiers, from_key));
+        }
     }
 }
 
@@ -3426,10 +4547,15 @@ fn touch_enter(page: &Rc<PageDom>, t: &ActiveTouch, p: &PointerState, modifiers:
 /// pointerout and pointerleave (inner to outer) for a touch going away.
 fn touch_leave(page: &Rc<PageDom>, last: &str, t: &mut ActiveTouch, p: &PointerState, modifiers: Modifiers) {
     capture(page, t, p, modifiers);
-    fire_touch_pointer(page, last, t, p, modifiers);
-    fire_touch_pointer(page, "lostpointercapture", t, p, modifiers);
-    fire_touch_pointer(page, "pointerout", t, p, modifiers);
-    for n in hover_chain(page, t.target) {
+    fire_touch_pointer_routed(page, last, t, p, modifiers);
+    // The implicit release: no capture is pending after the last event of the touch.
+    if let Some(node) = crate::pointer_capture::touch_release_pending(page, t.pointer_id) {
+        fire_touch_pointer_at(page, node, "lostpointercapture", t, p, modifiers);
+    }
+    crate::pointer_capture::touch_capture_end(page, t.pointer_id);
+    let over = t.over.get();
+    fire_touch_pointer_at(page, over, "pointerout", t, p, modifiers);
+    for n in hover_chain(page, over) {
         if let Some(k) = key_of(page, n) {
             fire(page, k, &touch_pointer_event(page, "pointerleave", t, p, modifiers, None));
         }
@@ -3444,6 +4570,8 @@ fn touch_point(page: &PageDom, t: &ActiveTouch) -> crate::event::TouchPoint {
         client_y: t.input.y,
         screen_x: t.input.x,
         screen_y: t.input.y,
+        page_x: t.input.x + page.layout.borrow().scroll_x() as f64,
+        page_y: t.input.y + page.layout.borrow().scroll_y() as f64,
         radius_x: t.input.radius_x,
         radius_y: t.input.radius_y,
         rotation_angle: t.input.rotation_angle,
@@ -3479,10 +4607,178 @@ fn fire_touch_event(
     fire(page, key, &ev)
 }
 
-/// Whether the target's `touch-action` lets a move by (dx, dy) scroll.
-fn touch_pans(page: &PageDom, target: NodeId, dx: f64, dy: f64) -> bool {
+/// The `touch-action` pan restrictions of `target` (x, y blocked).
+fn touch_pan_blocked(page: &PageDom, target: NodeId) -> (bool, bool) {
     let style = page.layout().style().computed(&page.dom.borrow(), target);
-    style.is_none_or(|c| if dx.abs() > dy.abs() { !c.pan_x_blocked } else { !c.pan_y_blocked })
+    style.map_or((false, false), |c| (c.pan_x_blocked, c.pan_y_blocked))
+}
+
+/// Whether `touch-action` (`blocked`: x, y) lets a move by (dx, dy) scroll.
+fn touch_pans(blocked: (bool, bool), dx: f64, dy: f64) -> bool {
+    if dx.abs() > dy.abs() {
+        !blocked.0
+    } else {
+        !blocked.1
+    }
+}
+
+/// A fling's reach: how long the finger's release velocity goes on, in seconds (one jump, as
+/// the momentum), and the velocity limit (px/s) and the least one that flings.
+const FLING_SECONDS: f64 = 0.1;
+const FLING_MAX_VELOCITY: f64 = 4000.0;
+const FLING_MIN_VELOCITY: f64 = 100.0;
+
+/// One step of a touch pan: the finger moved by `finger` (dx, dy), the content follows it. Each
+/// axis goes to the scroller it latched to, else to the first scroll container from `start` up
+/// (the viewport last) that can move that way; one at its limit chains to the next unless it
+/// contains the overscroll, and the first that moves latches the axis for the rest of the
+/// gesture (Chrome's scroll latching). Moves are neither snapped nor smooth; snapping is the
+/// pan's end ([`finish_touch_pan`]). Queues `scroll` for each box that moved.
+fn pan_scroll(page: &Rc<PageDom>, start: NodeId, pan: &mut TouchPan, finger: (f64, f64)) {
+    use pyro_dom::layout::ScrollTarget;
+    let mut moved: Vec<ScrollTarget> = Vec::new();
+    {
+        let dom = page.dom.borrow();
+        let mut layout = page.layout.borrow_mut();
+        // Moves `target` by `amount` along an axis (0: x), whether it moved.
+        let step = |layout: &mut pyro_dom::layout::Layout, target: ScrollTarget, axis: usize, amount: i32| -> bool {
+            let node = match target {
+                ScrollTarget::Viewport => None,
+                ScrollTarget::Container(n) => Some(n),
+            };
+            let cur = layout.scroll_position(node);
+            let want = if axis == 0 { (cur.0.saturating_add(amount), cur.1) } else { (cur.0, cur.1.saturating_add(amount)) };
+            let to = layout.clamp_scroll_position(&dom, node, want);
+            layout.set_scroll_position(&dom, node, to)
+        };
+        for (axis, d) in [finger.0, finger.1].into_iter().enumerate() {
+            // Content follows the finger: the scroll offset moves the other way.
+            let amount = -(d.round().clamp(i32::MIN as f64 + 1.0, i32::MAX as f64) as i32);
+            if amount == 0 {
+                continue;
+            }
+            let latched = pan.latch[axis];
+            let hit = match latched {
+                Some(latched) => latched.filter(|&t| step(&mut *layout, t, axis, amount)),
+                None => {
+                    let axes = pyro_dom::style::ScrollAxes { x: axis == 0, y: axis == 1 };
+                    let mut chosen = None;
+                    let mut contained = false;
+                    let mut cur = Some(start);
+                    while let Some(el) = cur {
+                        let c = match layout.scroll_container(&dom, el, axes) {
+                            ScrollTarget::Container(c) => c,
+                            ScrollTarget::Viewport => break,
+                        };
+                        if step(&mut *layout, ScrollTarget::Container(c), axis, amount) {
+                            chosen = Some(ScrollTarget::Container(c));
+                            break;
+                        }
+                        if layout.contains_overscroll(&dom, c, axes) {
+                            contained = true;
+                            break;
+                        }
+                        cur = flat_parent_element(&dom, c);
+                    }
+                    if chosen.is_none() && !contained && step(&mut *layout, ScrollTarget::Viewport, axis, amount) {
+                        chosen = Some(ScrollTarget::Viewport);
+                    }
+                    if chosen.is_some() || contained {
+                        pan.latch[axis] = Some(chosen);
+                    }
+                    chosen
+                }
+            };
+            if let Some(t) = hit {
+                if !moved.contains(&t) {
+                    moved.push(t);
+                }
+                if !pan.scrolled.contains(&t) {
+                    pan.scrolled.push(t);
+                }
+            }
+        }
+    }
+    // (No borrow is held here: queueing a scroll posts a task.)
+    for t in moved {
+        let node = match t {
+            ScrollTarget::Viewport => None,
+            ScrollTarget::Container(n) => Some(n),
+        };
+        crate::smooth_scroll::cancel(page, node);
+        crate::layout_api::queue_scroll(page, node, false);
+    }
+}
+
+/// The finger's release velocity (px/s) from its last positions: none when it rested before
+/// lifting (a pause between the last move and the release, or one move only).
+fn touch_fling_velocity(pan: &TouchPan, now: std::time::Instant) -> Option<(f64, f64)> {
+    let recent: Vec<&(std::time::Instant, f64, f64)> =
+        pan.samples.iter().filter(|(at, _, _)| now.saturating_duration_since(*at) <= std::time::Duration::from_millis(100)).collect();
+    let (first, last) = (recent.first()?, recent.last()?);
+    if now.saturating_duration_since(last.0) > std::time::Duration::from_millis(50) {
+        return None;
+    }
+    let dt = last.0.saturating_duration_since(first.0).as_secs_f64().max(0.001);
+    if recent.len() < 2 {
+        return None;
+    }
+    let v = |a: f64, b: f64| (b - a) / dt;
+    let (vx, vy) = (v(first.1, last.1), v(first.2, last.2));
+    let speed = vx.hypot(vy);
+    if speed < FLING_MIN_VELOCITY {
+        return None;
+    }
+    let k = if speed > FLING_MAX_VELOCITY { FLING_MAX_VELOCITY / speed } else { 1.0 };
+    Some((vx * k, vy * k))
+}
+
+/// The end of a touch pan (touchend, touchcancel): a release with velocity flings (the content
+/// goes on by `FLING_SECONDS` of it, snapped ahead like a relative scroll), any other release
+/// snaps where it stopped; each box the gesture moved (or the end moved) then gets `scrollend`.
+fn finish_touch_pan(page: &Rc<PageDom>, pan: TouchPan, fling: bool) {
+    use pyro_dom::layout::ScrollTarget;
+    let velocity = if fling { touch_fling_velocity(&pan, std::time::Instant::now()) } else { None };
+    let mut ended: Vec<ScrollTarget> = Vec::new();
+    for &t in &pan.scrolled {
+        let node = match t {
+            ScrollTarget::Viewport => None,
+            ScrollTarget::Container(n) => Some(n),
+        };
+        {
+            let dom = page.dom.borrow();
+            let mut layout = page.layout.borrow_mut();
+            let _moved = match velocity {
+                Some((vx, vy)) => {
+                    // Only the axes that latched to this box continue.
+                    let by = |axis: usize, v: f64| {
+                        (pan.latch[axis] == Some(Some(t))).then(|| (-v * FLING_SECONDS).round().clamp(i32::MIN as f64 + 1.0, i32::MAX as f64) as i32)
+                    };
+                    let (l, tp) = (by(0, vx), by(1, vy));
+                    match node {
+                        Some(el) => layout.element_scroll_by(&dom, el, l, tp),
+                        None => layout.window_scroll_by(&dom, l, tp),
+                    }
+                }
+                None => {
+                    let (x, y) = layout.scroll_position(node);
+                    match node {
+                        Some(el) => layout.element_scroll_to(&dom, el, Some(x), Some(y)),
+                        None => layout.window_scroll_to(&dom, Some(x), Some(y)),
+                    }
+                }
+            };
+        }
+        ended.push(t);
+    }
+    for t in ended {
+        let node = match t {
+            ScrollTarget::Viewport => None,
+            ScrollTarget::Container(n) => Some(n),
+        };
+        crate::smooth_scroll::cancel(page, node);
+        crate::layout_api::queue_scroll(page, node, true);
+    }
 }
 
 /// CDP `Input.dispatchTouchEvent` in this document. `points` are the
@@ -3533,18 +4829,22 @@ pub fn dispatch_touch(
         TouchKind::Cancel => {}
     }
     let pointer_moves: Vec<usize> = moved.iter().map(|(i, _)| *i).collect();
+    let movements: Vec<(f64, f64)> = moved.iter().map(|(i, p)| (p.x - seq.active[*i].input.x, p.y - seq.active[*i].input.y)).collect();
     for (i, p) in moved {
         seq.active[i].input = p;
     }
     if !pointer_moves.is_empty() {
-        for &i in &pointer_moves {
+        for (&i, &movement) in pointer_moves.iter().zip(&movements) {
             let t = &mut seq.active[i];
             if t.pointer_cancelled {
                 continue;
             }
-            let state = PointerState::moved(&t.input);
+            let state = PointerState::moved(&t.input, movement);
             capture(page, t, &state, modifiers);
-            fire_touch_pointer(page, "pointermove", t, &state, modifiers);
+            if !crate::target::unheard(page, "pointerrawupdate") && crate::secure_context::secure_page(page) {
+                fire_touch_pointer_routed(page, "pointerrawupdate", t, &state, modifiers);
+            }
+            fire_touch_pointer_routed(page, "pointermove", t, &state, modifiers);
         }
         // A single touch within the slop region is still a tap: no
         // touchmove (Chrome's touchmove slop suppression).
@@ -3568,11 +4868,33 @@ pub fn dispatch_touch(
             }
             // An uncanceled touchmove out of the slop region starts a scroll
             // (unless touch-action forbids it), which cancels the pointer.
-            if !seq.multi && !seq.scrolling && !canceled && touch_pans(page, seq.active[0].target, dx, dy) {
+            if !seq.multi && !seq.scrolling && !canceled && touch_pans(seq.pan_blocked, dx, dy) {
                 seq.scrolling = true;
+                seq.pan = Some(TouchPan {
+                    last: seq.start,
+                    samples: vec![(std::time::Instant::now(), seq.start.0, seq.start.1)],
+                    ..Default::default()
+                });
                 let t = &mut seq.active[0];
                 t.pointer_cancelled = true;
                 touch_leave(page, "pointercancel", t, &PointerState::scrolled(), modifiers);
+            }
+            // The scroll follows the finger: by its movement since the last step (the first
+            // one since the touch came down, as Chrome's gesture scroll begin carries it).
+            if seq.scrolling && !seq.multi && !page.is_disposed() && seq.doc == Some(page.document()) {
+                if let Some(first) = seq.active.first() {
+                    let (x, y, start) = (first.input.x, first.input.y, first.target);
+                    let blocked = seq.pan_blocked;
+                    if let Some(pan) = seq.pan.as_mut() {
+                        let finger = (if blocked.0 { 0.0 } else { x - pan.last.0 }, if blocked.1 { 0.0 } else { y - pan.last.1 });
+                        pan.last = (if blocked.0 { x } else { pan.last.0 + finger.0.round() }, if blocked.1 { y } else { pan.last.1 + finger.1.round() });
+                        pan.samples.push((std::time::Instant::now(), x, y));
+                        if pan.samples.len() > 8 {
+                            pan.samples.remove(0);
+                        }
+                        pan_scroll(page, start, pan, finger);
+                    }
+                }
             }
         }
     }
@@ -3581,22 +4903,32 @@ pub fn dispatch_touch(
             seq.reset();
             seq.doc = Some(page.document());
             seq.start = (input.x, input.y);
+            // touch-action is what it is as the touch comes down (before pointerdown's
+            // listeners run).
+            seq.pan_blocked = touch_pan_blocked(page, target);
         } else {
             seq.multi = true;
         }
         if seq.next_pointer_id < 2 {
             seq.next_pointer_id = 2;
         }
+        if seq.next_pointer_id == PEN_POINTER_ID {
+            seq.next_pointer_id += 1;
+        }
         let t = ActiveTouch {
             input,
             pointer_id: seq.next_pointer_id,
             primary: seq.active.is_empty(),
             target,
-            captured: false,
+            over: std::cell::Cell::new(target),
             pointer_cancelled: false,
         };
         seq.next_pointer_id += 1;
         let state = PointerState::pressed(&t.input);
+        note_link_pointer_down(page, target);
+        // Implicit capture of the touchstart target is pending from the start of pointerdown
+        // (Pointer Events §4.1.3.2); script may override or release it there.
+        crate::pointer_capture::touch_capture_begin(page, t.pointer_id, target);
         touch_enter(page, &t, &state, modifiers);
         if !fire_touch_pointer(page, "pointerdown", &t, &state, modifiers) {
             seq.mouse_suppressed = true;
@@ -3632,6 +4964,13 @@ pub fn dispatch_touch(
         }
     }
     if seq.active.is_empty() {
+        // The pan ends with the last touch: after touchend, a fling goes on from the release
+        // (a cancel stops where it is).
+        if let Some(pan) = seq.pan.take() {
+            if !page.is_disposed() && seq.doc == Some(page.document()) {
+                finish_touch_pan(page, pan, kind == TouchKind::End);
+            }
+        }
         seq.reset();
     }
     // A tap: Chrome's gesture tap at the release point (mousemove,
@@ -3686,6 +5025,10 @@ pub struct DragData {
     pub items: Vec<DragItem>,
     /// Copy = 1, Link = 2, Move = 16; -1 when every operation is allowed.
     pub drag_operations_mask: i64,
+    /// The mask is the engine's own reading of the in-page source's DataTransfer (an engine-driven
+    /// drag, as the runner's pointer actions make), not one a client sent with
+    /// `Input.dispatchDragEvent`: a target of the first sees what the source left unassigned.
+    pub from_source: bool,
 }
 
 /// CDP `Input.dispatchDragEvent` types.
@@ -3801,6 +5144,22 @@ fn effect_allowed_of(mask: i64) -> &'static str {
     }
 }
 
+/// The `effectAllowed` a drag target's DataTransfer reports. In a drag the engine drives (no
+/// client between the source and the target) the `drop` event's store keeps "uninitialized"
+/// while the in-page source never assigned a valid effectAllowed (measured in Chrome: its
+/// dragenter and dragover still read "all"; the mask round trip alone cannot tell that from
+/// "all"); in one a client dispatches (`Input.dispatchDragEvent`) the target's allowed
+/// operations are the mask the client sent, -1 being "all".
+fn target_effect_allowed(source: &Option<(NodeId, Rc<NativeTransfer>)>, data: &DragData, drop: bool) -> String {
+    let mask = data.drag_operations_mask;
+    match source {
+        Some((_, transfer)) if drop && data.from_source && mask < 0 && transfer.effect_allowed() == "uninitialized" => {
+            "uninitialized".to_string()
+        }
+        _ => effect_allowed_of(mask).to_string(),
+    }
+}
+
 /// Chrome's default operation for what the source allows: copy, then move,
 /// then link; None when it allows nothing.
 fn default_operation(mask: i64) -> Option<&'static str> {
@@ -3913,7 +5272,7 @@ fn start_drag(page: &Rc<PageDom>, pointer_target: NodeId, m: &MouseInput) -> Opt
             }
         })
         .collect();
-    let data = DragData { items, drag_operations_mask: mask_of(&transfer.effect_allowed()) };
+    let data = DragData { items, drag_operations_mask: mask_of(&transfer.effect_allowed()), from_source: true };
     *page.drag.borrow_mut() =
         Some(DragSession { source: Some((source, transfer)), target: None, only_dragover: false, operation: None });
     Some(data)
@@ -3957,10 +5316,17 @@ fn update_drag(
         page,
         &target_strings(data),
         files,
-        effect_allowed_of(data.drag_operations_mask),
+        &target_effect_allowed(&source, data, false),
         Mode::Protected,
     )
     .ok_or("no script context for the drag")?;
+    // Chrome's engine-driven drag starts dragenter and dragover with the default operation the
+    // source allows as their dropEffect (copy for "all"), where a client-dispatched one reads "none".
+    if data.from_source {
+        if let Some(op) = default_operation(data.drag_operations_mask) {
+            transfer.set_drop_effect(op);
+        }
+    }
     let mut accepted = false;
     if target != current {
         if let Some(t) = target {
@@ -3968,6 +5334,7 @@ fn update_drag(
             accepted = !fire_drag(page, t, "dragenter", m, true, &transfer, Mode::Protected);
         }
         if let Some(c) = current {
+            transfer.set_drop_effect("none");
             fire_drag(page, c, "dragleave", m, false, &transfer, Mode::Protected);
         }
         if target.is_some() {
@@ -3993,7 +5360,8 @@ fn update_drag(
 fn end_drag(page: &Rc<PageDom>, source: &Option<(NodeId, Rc<NativeTransfer>)>, m: &MouseInput, effect: &str) {
     if let Some((node, transfer)) = source {
         transfer.set_drop_effect(effect);
-        fire_drag(page, *node, "dragend", m, false, transfer, Mode::Protected);
+        let released = MouseInput { buttons: 0, ..m.clone() };
+        fire_drag(page, *node, "dragend", &released, false, transfer, Mode::Protected);
     }
 }
 
@@ -4022,7 +5390,9 @@ pub fn dispatch_drag_files(
     files: &[crate::file::FileEntry],
     modifiers: Modifiers,
 ) -> Result<(), String> {
-    let m = MouseInput { x, y, modifiers, ..MouseInput::default() };
+    // (The drag the engine drives is a held left button: Chrome's drag events carry it until the
+    // `dragend`, which `end_drag` sends without.)
+    let m = MouseInput { x, y, modifiers, buttons: u16::from(data.from_source), ..MouseInput::default() };
     if page.drag.borrow().is_none() {
         match kind {
             DragKind::Cancel => return Ok(()),
@@ -4033,7 +5403,15 @@ pub fn dispatch_drag_files(
             Some(DragSession { source: None, target: None, only_dragover: false, operation: None });
     }
     match kind {
-        DragKind::Enter | DragKind::Over => update_drag(page, &m, data, files),
+        DragKind::Enter | DragKind::Over => {
+            update_drag(page, &m, data, files)?;
+            // The drag the engine drives follows a dragenter with the target's first dragover at
+            // once (Chrome's DragController does, in the same update; a client sends its own).
+            if data.from_source && page.drag.borrow().as_ref().is_some_and(|s| s.only_dragover) {
+                update_drag(page, &m, data, files)?;
+            }
+            Ok(())
+        }
         DragKind::Drop => {
             if page.drag.borrow().as_ref().is_some_and(|s| s.only_dragover) {
                 update_drag(page, &m, data, files)?;
@@ -4045,7 +5423,7 @@ pub fn dispatch_drag_files(
                         page,
                         &target_strings(data),
                         files,
-                        effect_allowed_of(data.drag_operations_mask),
+                        &target_effect_allowed(&session.source, data, true),
                         Mode::ReadOnly,
                     )
                     .ok_or("no script context for the drag")?;
@@ -4060,7 +5438,7 @@ pub fn dispatch_drag_files(
                             page,
                             &target_strings(data),
                             files,
-                            effect_allowed_of(data.drag_operations_mask),
+                            &target_effect_allowed(&session.source, data, false),
                             Mode::Protected,
                         ) {
                             fire_drag(page, t, "dragleave", &m, false, &transfer, Mode::Protected);
@@ -4094,5 +5472,10 @@ fn common_ancestor(dom: &Dom, a: NodeId, b: NodeId) -> Option<NodeId> {
 /// [`crate::thread_state::reset_thread`]'s part: [`focus_element_from_script`] restores the
 /// option when it returns, so outside of a call it is unset.
 pub(crate) fn thread_leftover() -> Option<&'static str> {
+    // The last press is keyed by a page's address, which a later page may reuse: forgotten.
+    LAST_PRESS.with(|c| c.borrow_mut().take());
+    if TRUSTED_ACTIVATION.with(std::cell::Cell::get) {
+        return Some("input::TRUSTED_ACTIVATION");
+    }
     FOCUS_VISIBLE_OPTION.with(|f| f.get().is_some()).then_some("input::FOCUS_VISIBLE_OPTION")
 }

@@ -3,14 +3,18 @@
 
 mod auth;
 mod cache;
+mod client_hints;
 mod dictionary;
 pub mod client;
+pub mod connection_allowlist;
 pub mod cookies;
 pub mod cors;
 pub mod csp;
 pub mod data_url;
 mod h2_probe;
 mod inflate;
+pub mod nel;
+pub mod nvs;
 pub mod proxy;
 pub mod range;
 pub mod referrer;
@@ -35,6 +39,7 @@ pub use client::{
     NetSettings, PausedRequest, PausedResponse, RequestCanceller, RequestInfo, ResponseDecision, ResponseSink,
 };
 pub use cookies::CookieJar;
+pub use nel::{NelBody, NelReport, ReportingSink};
 /// HTTP types used by Request/ResponseHead for native consumers.
 pub use http;
 pub use proxy::ProxyConfig;

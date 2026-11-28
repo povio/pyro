@@ -44,6 +44,14 @@ fn flush_autofocus(page: &Rc<PageDom>, _doc: NodeId) {
     }
 }
 
+/// A script-blocking style sheet is gone: the rendering update that skipped flushing the
+/// autofocus candidates while it was pending must be followed by one that flushes them.
+pub fn autofocus_unblocked(page: &Rc<PageDom>) {
+    if !page.autofocus_processed.get() && (!page.autofocus_candidates.borrow().is_empty() || page.dom.borrow().has_autofocus_insertions()) {
+        request_top_level_frames(page);
+    }
+}
+
 /// Asks for a rendering update of the top-level page(s) sharing `page`'s DOM, whose flush
 /// handles the autofocus candidates: a child frame's candidates join its top-level
 /// document's, whose page may be idle (no animation frame of its own pending).
@@ -72,6 +80,11 @@ pub(crate) fn request_top_level_frames(page: &Rc<PageDom>) {
 /// none in a cross-origin frame or a document without a browsing context.
 fn autofocus_top_page(page: &Rc<PageDom>, el: NodeId) -> Option<Rc<PageDom>> {
     let doc = page.dom.borrow().node_document(el).ok()?;
+    autofocus_top_page_of(page, doc)
+}
+
+/// [`autofocus_top_page`] for the document `doc` itself.
+fn autofocus_top_page_of(page: &Rc<PageDom>, doc: NodeId) -> Option<Rc<PageDom>> {
     let owner = crate::custom::document_page(page, doc)?;
     if !owner.is_nested_frame() {
         return Some(owner);
@@ -98,8 +111,11 @@ pub(crate) fn dialog_processed_autofocus(page: &Rc<PageDom>, dialog: NodeId) {
 /// processed autofocus.
 fn collect_autofocus_candidates(page: &Rc<PageDom>) {
     let inserted = page.dom.borrow_mut().take_autofocus_insertions();
-    for el in inserted {
-        let Some(top) = autofocus_top_page(page, el) else { continue };
+    for (el, inserted_into) in inserted {
+        // The document it was inserted into, as the insertion steps ran there (a script may have
+        // adopted it into another top-level browsing context's document since: it stays this
+        // one's candidate and the flush skips it); none when that document has no page any more.
+        let Some(top) = autofocus_top_page_of(page, inserted_into) else { continue };
         if top.autofocus_processed.get() {
             continue;
         }
@@ -164,6 +180,11 @@ fn autofocus_target(page: &Rc<PageDom>, el: NodeId) -> Option<(Rc<PageDom>, Node
     if !owner.is_fully_active() {
         return None;
     }
+    // HTML "flush autofocus candidates": a candidate whose node document now belongs to another
+    // top-level browsing context's document is skipped (a child frame of this page's is fine).
+    if !Rc::ptr_eq(&owner, page) && !owner.is_nested_frame() {
+        return None;
+    }
     let target = {
         let layout = owner.layout();
         let dom = page.dom.borrow();
@@ -204,6 +225,10 @@ pub fn load(page: &Rc<PageDom>, doc: NodeId) {
         page.dispatching_load.set(outer);
         page.note_timing(|t| &mut t.load_end);
         fire_for_document(page, w, doc, &page_transition_event(page, "pageshow"));
+        // The SMIL clock of the document started with `load`: its animations begin.
+        if doc == page.document() {
+            crate::smil::start(page);
+        }
     }
     if doc == page.document() {
         page.set_completely_loaded();
@@ -265,6 +290,21 @@ pub fn unload(page: &Rc<PageDom>) {
     unload_document(page, true);
 }
 
+/// HTML "update the visibility state" for a document whose window was minimized or restored
+/// (`Browser.setWindowBounds` with a `windowState`): `document.visibilityState` / `hidden` change and
+/// `visibilitychange` fires at the document (bubbling to the Window) when the state really changed. A
+/// document already unloaded is hidden for good and ignores it.
+pub fn set_window_hidden(page: &Rc<PageDom>, hidden: bool) {
+    if page.is_disposed() || page.is_unloaded() || page.window_hidden() == hidden {
+        return;
+    }
+    page.set_window_hidden_state(hidden);
+    if page.scripting_disabled() || page.window_target().is_none() {
+        return;
+    }
+    crate::input::fire_simple(page, page.document(), "visibilitychange", true, false);
+}
+
 /// The events of a document whose frame was removed from its parent (its iframe left the document),
 /// as Chrome fires them, synchronously after the removal: `pagehide` and `visibilitychange` (now
 /// hidden), and `unload` only when `fire_unload` (the frame being removed, when its container's
@@ -277,7 +317,7 @@ pub fn removed(page: &Rc<PageDom>, fire_unload: bool) {
 fn unload_document(page: &Rc<PageDom>, fire_unload: bool) {
     // Once per document, marked before any listener runs: one that removes an ancestor frame unloads
     // that frame's documents, this one among them, which must not get its events again.
-    if page.is_disposed() || page.is_hidden() || !page.start_unloading() {
+    if page.is_disposed() || page.is_unloaded() || !page.start_unloading() {
         return;
     }
     let window = page.window_target().filter(|_| !page.scripting_disabled());
@@ -290,9 +330,11 @@ fn unload_document(page: &Rc<PageDom>, fire_unload: bool) {
     if listens(page).0 {
         fire_for_document(page, window, doc, &page_transition_event(page, "pagehide"));
     }
+    // A minimized window's document is hidden already: the state does not change, so no event.
+    let was_hidden = page.is_hidden();
     page.set_hidden(true);
     let (window_listens, document_listens) = listens(page);
-    if document_listens || window_listens {
+    if !was_hidden && (document_listens || window_listens) {
         crate::input::fire_simple(page, doc, "visibilitychange", true, false);
     }
     // A listener may have added an `unload` one: look again.
@@ -441,6 +483,12 @@ pub fn popstate(page: &Rc<PageDom>, state: Option<Persistent>) {
 /// HTML "focus update steps" for a document entering (`focus`) or leaving (`blur`) the page's
 /// focus chain: a FocusEvent at its Window, which does not bubble.
 pub fn window_focus(page: &Rc<PageDom>, focused: bool) {
+    // A document that loses focus gives up its pointer lock.
+    if !focused {
+        crate::pointer_lock::release(page);
+    }
+    // Sensor readings go to the focused document and the ones of its origin.
+    crate::sensors::state_changed(page);
     let Some(w) = page.window_target() else { return };
     let ev = EventCore::trusted(page, EventInterface::FocusEvent, if focused { "focus" } else { "blur" }, false, false);
     fire(page, w, &ev);

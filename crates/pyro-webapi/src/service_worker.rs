@@ -50,8 +50,7 @@
 //!
 //! Gaps (explicit): no persistence (registrations live as long as the
 //! context); requests of workers a controlled page starts do not go through
-//! the worker; responses are read whole before the page sees them (no
-//! streaming); no Push, Background Sync, navigation preload or
+//! the worker; no Push, Background Sync or
 //! `Clients.openWindow`; a worker does not stop when idle;
 //! `clients.matchAll` and `claim` see the context's documents that are
 //! clients (above), not every document; templates of `serve --fork` refuse
@@ -112,6 +111,9 @@ pub(crate) enum QueryKind {
     Get(String),
     Unregister,
     Update,
+    /// The registration's `NavigationPreloadManager`: `enable`, `disable`, `setHeaderValue` (with
+    /// `value`) or `getState`.
+    Preload { op: String, value: String },
 }
 
 /// What a worker's thread tells the browser thread.
@@ -127,6 +129,10 @@ pub(crate) enum SwUp {
         id: u64,
         kind: QueryKind,
     },
+    /// The page cancelled the response a `fetch` event streams (the worker's job key).
+    CancelFetch(u64),
+    /// The navigation preload request of the worker's job `key` ended.
+    PreloadDone(u64),
     PostToClient {
         client: String,
         message: WireMessage,
@@ -167,6 +173,15 @@ pub struct Registry {
     /// client the navigation creates, its `resultingClientId`). Taken when
     /// the frame's next document is created.
     reserved: RefCell<Vec<(String, String)>>,
+    /// Documents created while the context had no registration (or none that covers them), with
+    /// their creation URL: every document is a client, made when a worker first asks for the
+    /// clients (`live_clients`: `claim`, `matchAll`, `get`).
+    unregistered: RefCell<Vec<(Weak<PageDom>, pyro_net::Url)>>,
+    /// The dedicated and shared workers of this context's documents (browser thread): clients too.
+    worker_clients: RefCell<Vec<Weak<WorkerClient>>>,
+    /// In a worker's own context (its thread): the link its requests take to the service worker that
+    /// controls it. The browser thread's registry has none.
+    remote: RefCell<Option<Arc<ControlLink>>>,
     /// Registration is blocked in this context
     /// ([`ContextServices::set_service_workers_blocked`]).
     blocked: Cell<bool>,
@@ -178,8 +193,21 @@ impl Registry {
     }
 
     fn live_clients(&self) -> Vec<Rc<ClientInner>> {
+        // The documents that were created before a registration covered them are clients too,
+        // with the URL they were created with.
+        for (page, url) in self.unregistered.take() {
+            if let Some(page) = page.upgrade().filter(|p| !p.is_disposed()) {
+                client_made(&page, None, Some(&url));
+            }
+        }
         let mut clients = self.clients.borrow_mut();
         clients.retain(|c| c.upgrade().and_then(|c| c.page.upgrade()).is_some_and(|p| !p.is_disposed()));
+        clients.iter().filter_map(Weak::upgrade).collect()
+    }
+
+    fn live_worker_clients(&self) -> Vec<Rc<WorkerClient>> {
+        let mut clients = self.worker_clients.borrow_mut();
+        clients.retain(|c| c.upgrade().is_some_and(|c| (c.alive)()));
         clients.iter().filter_map(Weak::upgrade).collect()
     }
 
@@ -206,6 +234,14 @@ impl Registry {
         }
         reserved.push((frame.to_owned(), id.clone()));
         id
+    }
+
+    /// The client a navigation of `frame` creates has the id `id` (a redirect hop that the same
+    /// origin's worker handles keeps the id the navigation's earlier hop reserved).
+    fn reserve_as(&self, frame: &str, id: &str) {
+        let mut reserved = self.reserved.borrow_mut();
+        reserved.retain(|(f, _)| f != frame);
+        reserved.push((frame.to_owned(), id.to_owned()));
     }
 
     fn take_reserved(&self, frame: &str) -> Option<String> {
@@ -253,6 +289,20 @@ impl crate::navigator_extras::ContextServices {
         self.service_workers.close(true);
     }
 
+    /// Bounce Tracking Mitigations: unregisters the registrations of the origins at `site`, as
+    /// `ServiceWorkerRegistration.unregister()` does. Returns how many there were.
+    pub fn unregister_site_service_workers(&self, site: &str) -> usize {
+        let doomed: Vec<Rc<Registration>> = self
+            .service_workers
+            .registrations
+            .borrow()
+            .iter()
+            .filter(|r| crate::bounce_tracking::site_of_url(&r.origin).as_deref() == Some(site))
+            .cloned()
+            .collect();
+        doomed.iter().filter(|r| unregister(r)).count()
+    }
+
     /// Playwright's `serviceWorkers: 'block'` for this context
     /// (`Target.createBrowserContext` `serviceWorkers`): while set,
     /// `navigator.serviceWorker.register()` (the prototype's method too)
@@ -278,6 +328,118 @@ pub(crate) struct ClientInner {
     controller: RefCell<Option<Rc<Version>>>,
 }
 
+/// What a worker's thread needs to send its requests through the service worker that controls it
+/// (HTML/Service Workers "control and use worker client"): the browser thread owns the versions
+/// (`Rc`), so the worker names its controller by id and asks the browser thread to dispatch.
+pub(crate) struct ControlLink {
+    /// The controlling version's id; 0: none. The browser thread sets it (a claim, an activation).
+    version: AtomicU64,
+    /// The worker client's id: the `clientId` of its fetch events.
+    client_id: String,
+    /// Runs a task on the browser thread.
+    poster: crate::page::RemotePoster,
+}
+
+/// A dedicated or shared worker as a service worker client (browser thread): `Clients` lists it
+/// with type `worker` or `sharedworker`, and its requests go through its controller (`ControlLink`).
+pub(crate) struct WorkerClient {
+    id: String,
+    /// The creation URL: the worker's script URL (a `blob:` URL stays one).
+    url: String,
+    /// The URL the registration is matched with: the script's, or for a `blob:` script its
+    /// creator's (it inherits the creator's controller).
+    scope_url: String,
+    kind: &'static str,
+    origin: String,
+    partition: Option<String>,
+    site: SiteContext,
+    /// The worker still runs.
+    alive: Box<dyn Fn() -> bool>,
+    controller: RefCell<Option<Rc<Version>>>,
+    link: Arc<ControlLink>,
+}
+
+impl WorkerClient {
+    fn set_controller(&self, version: Option<Rc<Version>>) {
+        self.link.version.store(version.as_ref().map_or(0, |v| v.id), Ordering::Release);
+        *self.controller.borrow_mut() = version;
+    }
+
+    /// The link the worker's thread keeps.
+    pub(crate) fn link(&self) -> Arc<ControlLink> {
+        self.link.clone()
+    }
+
+    fn json(&self) -> String {
+        format!(
+            "{{\"id\":{},\"url\":{},\"type\":\"{}\",\"frameType\":\"none\"}}",
+            quote(&self.id),
+            quote(&self.url),
+            self.kind,
+        )
+    }
+}
+
+/// A new dedicated (`"worker"`) or shared (`"sharedworker"`) worker of `page`, whose script is
+/// `url`: a client, controlled by the active worker of the registration its script URL matches (a
+/// `blob:` script inherits its creator's controller). `None` for what is never a client (an opaque
+/// origin, a `data:` script, no way back to this thread). The caller keeps the `Rc` as long as the
+/// worker lives.
+pub(crate) fn worker_client(
+    page: &Rc<PageDom>,
+    url: &pyro_net::Url,
+    kind: &'static str,
+    alive: Box<dyn Fn() -> bool>,
+) -> Option<Rc<WorkerClient>> {
+    if !matches!(url.scheme(), "http" | "https" | "blob") {
+        return None;
+    }
+    let creator = client_of(page)?;
+    let poster = page.remote_poster()?;
+    let context = page.context_services();
+    let registry = &context.service_workers;
+    let controller = if url.scheme() == "blob" {
+        creator.controller.borrow().clone()
+    } else {
+        registry
+            .matching(url.as_str(), creator.partition.as_deref(), creator.site)
+            .and_then(|r| r.active.borrow().clone())
+    };
+    let controller = controller.filter(|v| v.state.get() != State::Redundant);
+    let link = Arc::new(ControlLink {
+        version: AtomicU64::new(controller.as_ref().map_or(0, |v| v.id)),
+        client_id: random_id(),
+        poster,
+    });
+    let client = Rc::new(WorkerClient {
+        id: link.client_id.clone(),
+        url: url.to_string(),
+        scope_url: if url.scheme() == "blob" { creator.url.clone() } else { url.to_string() },
+        kind,
+        origin: creator.origin.clone(),
+        partition: creator.partition.clone(),
+        site: creator.site,
+        alive,
+        controller: RefCell::new(controller),
+        link,
+    });
+    let mut clients = registry.worker_clients.borrow_mut();
+    clients.retain(|c| c.upgrade().is_some_and(|c| (c.alive)()));
+    clients.push(Rc::downgrade(&client));
+    Some(client)
+}
+
+/// The link a worker created by a worker takes over from its creator (it shares its controller);
+/// `None` when the creating page is a document.
+pub(crate) fn inherited_control(page: &PageDom) -> Option<Arc<ControlLink>> {
+    page.context_services().service_workers.remote.borrow().clone()
+}
+
+/// Gives a worker's own context its link (the worker's thread, before its script runs).
+pub(crate) fn set_worker_control(page: &PageDom, link: Option<Arc<ControlLink>>) {
+    *page.context_services().service_workers.remote.borrow_mut() = link;
+}
+
 pub(crate) struct Registration {
     id: u64,
     scope: String,
@@ -300,6 +462,11 @@ pub(crate) struct Registration {
     jobs: RefCell<VecDeque<(Weak<PageDom>, pyro_net::Url, Settle)>>,
     /// The version whose script runs for the first time (before `installing`).
     evaluating: RefCell<Option<Rc<Version>>>,
+    /// Navigation preload (`NavigationPreloadManager`): whether a navigation the active worker
+    /// handles starts a preload request, and the value of its `Service-Worker-Navigation-Preload`
+    /// header. They belong to the registration, not to a version.
+    preload_enabled: Cell<bool>,
+    preload_header: RefCell<String>,
 }
 
 pub(crate) struct Version {
@@ -390,6 +557,11 @@ impl Version {
         let Some(context) = registration.context.upgrade() else { return false };
         let clients = context.service_workers.live_clients();
         clients.iter().any(|c| c.controller.borrow().as_ref().is_some_and(|v| Rc::ptr_eq(v, self)))
+            || context
+                .service_workers
+                .live_worker_clients()
+                .iter()
+                .any(|c| c.controller.borrow().as_ref().is_some_and(|v| Rc::ptr_eq(v, self)))
     }
 }
 
@@ -537,13 +709,24 @@ fn client_of(page: &Rc<PageDom>) -> Option<Rc<ClientInner>> {
 /// The page's client; a new one takes `reserved` as its id (the
 /// `resultingClientId` of the navigation that made the document).
 fn client_with_id(page: &Rc<PageDom>, reserved: Option<String>) -> Option<Rc<ClientInner>> {
+    client_made(page, reserved, None)
+}
+
+/// [`client_with_id`], with the URL the document was created with when that is known (it is
+/// the client's creation URL, which later `pushState`s and fragment navigations do not change).
+fn client_made(page: &Rc<PageDom>, reserved: Option<String>, created: Option<&pyro_net::Url>) -> Option<Rc<ClientInner>> {
     if let Some(client) = page.sw_client.borrow().clone() {
         return Some(client);
     }
-    if opaque_origin(page) {
+    // A credentialless document is never a service worker client (it cannot register, and a worker of
+    // the normal partition must not control it): see `register`.
+    if opaque_origin(page) || page.is_credentialless() {
         return None;
     }
-    let url = page.document_url_parsed()?;
+    let url = match created {
+        Some(url) => url.clone(),
+        None => page.document_url_parsed()?,
+    };
     let origin = tuple_origin(&url)?;
     let client = Rc::new(ClientInner {
         id: reserved.unwrap_or_else(random_id),
@@ -575,18 +758,27 @@ fn set_controller(client: &ClientInner, version: Option<Rc<Version>>) {
 /// active worker, it is controlled by that worker. One emptiness test otherwise.
 pub(crate) fn document_created(page: &Rc<PageDom>) {
     let context = page.context_services();
-    if context.service_workers.registrations.borrow().is_empty() {
-        return;
-    }
-    let reserved = page.request_context().frame_id.and_then(|f| context.service_workers.take_reserved(&f));
+    let registry = &context.service_workers;
+    let none_yet = registry.registrations.borrow().is_empty();
+    let reserved = if none_yet { None } else { page.request_context().frame_id.and_then(|f| registry.take_reserved(&f)) };
     let Some(url) = page.document_url_parsed() else { return };
     if !matches!(url.scheme(), "http" | "https") {
         return;
     }
-    let active = context.service_workers
-        .matching(url.as_str(), page.cookie_partition_key().as_deref(), page.cookie_site_context())
-        .and_then(|r| r.active.borrow().clone());
+    let active = if none_yet {
+        None
+    } else {
+        registry
+            .matching(url.as_str(), page.cookie_partition_key().as_deref(), page.cookie_site_context())
+            .and_then(|r| r.active.borrow().clone())
+    };
     let Some(active) = active else {
+        // Not controlled, but still a client: made when the clients are first asked for.
+        let mut unregistered = registry.unregistered.borrow_mut();
+        if unregistered.len() >= 256 {
+            unregistered.retain(|(page, _)| page.strong_count() > 0);
+        }
+        unregistered.push((Rc::downgrade(page), url));
         return;
     };
     if let Some(client) = client_with_id(page, reserved) {
@@ -617,8 +809,45 @@ pub(crate) fn client_gone(page: &PageDom) {
 
 /// `fetch()` and asynchronous XHR: the controller's `fetch` event, or the network.
 pub(crate) fn route(page: &PageDom, net: &NetClient, id: RequestId, request: Request, sink: ResponseSink) {
+    // A controlled worker's thread cannot hold the version: its controller's id and the browser
+    // thread's poster take the request there.
+    let link = page.context_services().service_workers.remote.borrow().clone();
+    if let Some(link) = link {
+        let version = link.version.load(Ordering::Acquire);
+        if version != 0 && !request.skip_interception && matches!(request.url.scheme(), "http" | "https") && !is_embedded_content(&request) {
+            let (client_id, net) = (link.client_id.clone(), net.clone());
+            (link.poster)(Box::new(move || remote_route(version, client_id, net, id, request, sink)));
+            return;
+        }
+        net.fetch_with_id(id, request, sink);
+        return;
+    }
     match subresource_route(page, &request) {
         Some(route) => route.dispatch(net, id, request, sink),
+        None => net.fetch_with_id(id, request, sink),
+    }
+}
+
+/// A synchronous XHR's request: only a controlled worker's goes through its service worker (the
+/// browser thread answers it; a document's own thread is the one blocked, and cannot).
+pub(crate) fn route_blocking(page: &PageDom, net: &NetClient, id: RequestId, request: Request, sink: ResponseSink) {
+    let link = page.context_services().service_workers.remote.borrow().clone();
+    match link {
+        Some(link) if link.version.load(Ordering::Acquire) != 0 && matches!(request.url.scheme(), "http" | "https") && !is_embedded_content(&request) => {
+            let (version, client_id, net) = (link.version.load(Ordering::Acquire), link.client_id.clone(), net.clone());
+            (link.poster)(Box::new(move || remote_route(version, client_id, net, id, request, sink)));
+        }
+        _ => net.fetch_with_id(id, request, sink),
+    }
+}
+
+/// A controlled worker's request, on the browser thread: the controller's `fetch` event, or the
+/// network when the version is gone.
+fn remote_route(version: u64, client_id: String, net: NetClient, id: RequestId, request: Request, sink: ResponseSink) {
+    let version = VERSIONS.with(|v| v.borrow().get(&version).and_then(Weak::upgrade)).filter(|v| v.state.get() != State::Redundant);
+    match version {
+        Some(version) => LoadRoute { version, client_id, resulting_client_id: String::new(), preload: None }
+            .dispatch(&net, id, request, sink),
         None => net.fetch_with_id(id, request, sink),
     }
 }
@@ -629,12 +858,27 @@ pub struct LoadRoute {
     version: Rc<Version>,
     client_id: String,
     resulting_client_id: String,
+    /// A navigation of a registration with navigation preload enabled: the value of the
+    /// `Service-Worker-Navigation-Preload` header its preload request carries.
+    preload: Option<String>,
 }
 
 impl LoadRoute {
     /// Fires the `fetch` event; without `respondWith` (or when the worker is
     /// gone before it ran) the request goes on to `net` with `sink`.
     pub fn dispatch(self, net: &NetClient, id: RequestId, request: Request, sink: ResponseSink) {
+        // Resource and Navigation Timing: the response's `workerStart` is when the worker was asked.
+        let worker_start = std::time::Instant::now();
+        let sink: ResponseSink = {
+            let mut inner = sink;
+            Box::new(move |event| match event {
+                ResponseEvent::Response(mut head) => {
+                    head.timing.worker_start = Some(worker_start);
+                    inner(ResponseEvent::Response(head));
+                }
+                other => inner(other),
+            })
+        };
         // CSP: the response, the worker's included (`respondWith` of another URL's response),
         // is checked against the request's policy by its URL.
         let mut sink = match &request.csp {
@@ -646,6 +890,12 @@ impl LoadRoute {
             sink(ResponseEvent::Failed(pyro_net::NetError::Blocked(pyro_net::csp::BLOCKED_BY_CSP.into())));
             return;
         }
+        let mut request = request;
+        if matches!(request.destination, pyro_net::Destination::Document | pyro_net::Destination::Iframe) && request.origin.is_none() {
+            for (name, value) in net.navigation_client_hints(&request).iter() {
+                request.headers.entry(name.clone()).or_insert_with(|| value.clone());
+            }
+        }
         let job = FetchJob {
             id,
             request: Some(request),
@@ -655,9 +905,78 @@ impl LoadRoute {
             resulting_client_id: self.resulting_client_id,
             dispatched: false,
             observed: false,
+            head_sent: false,
+            sent: 0,
+            race: None,
+            preload: self.preload,
         };
         // A worker that is gone drops the job, which then goes to the network.
         self.version.run(move |s, _| crate::service_worker_scope::fetch(s, job));
+    }
+}
+
+impl LoadRoute {
+    /// The `resultingClientId` of this navigation's `fetch` event.
+    pub fn resulting_client(&self) -> &str {
+        &self.resulting_client_id
+    }
+
+    /// A redirect hop of a navigation within the origin of the hop before it creates the same
+    /// client: its `resultingClientId` is `id`, and the document that commits is that client.
+    pub fn keep_resulting_client(&mut self, services: &ContextServices, id: &str, frame: Option<&str>) {
+        self.resulting_client_id = id.to_owned();
+        if let Some(frame) = frame {
+            services.service_workers.reserve_as(frame, id);
+        }
+    }
+}
+
+impl LoadRoute {
+    /// The route of a speculation-rules prefetch: its `fetch` event has the document that asked
+    /// as `clientId` and no `resultingClientId` (the prefetch creates no client).
+    pub fn for_prefetch(mut self, initiator: &Rc<PageDom>) -> Self {
+        self.client_id = client_id(initiator).unwrap_or_default();
+        self.resulting_client_id = String::new();
+        self
+    }
+}
+
+/// The scopes of the context's registrations with an active worker that a navigation to a URL
+/// of their own site reaches (see `PrefetchRedirectStop`), for the redirects of a prefetch.
+pub fn prefetch_redirect_stop(services: &ContextServices) -> pyro_net::PrefetchRedirectStop {
+    let registrations = services.service_workers.registrations.borrow();
+    let scopes = registrations
+        .iter()
+        .filter(|r| !r.uninstalling.get() && r.site == SiteContext::SameSite && r.active.borrow().is_some())
+        .map(|r| (r.partition.clone(), r.scope.clone()))
+        .collect();
+    pyro_net::PrefetchRedirectStop { scopes, navigation: false, site_bound: false, initiator_site: None }
+}
+
+/// The scopes of the context's registrations with an active worker, for the redirects of a
+/// navigation that no worker handled so far: a hop into one of them goes back to the loader
+/// (`PrefetchRedirectStop::navigation`), which asks that registration's worker for the next hop.
+pub fn navigation_redirect_stop(services: &ContextServices) -> pyro_net::PrefetchRedirectStop {
+    let registrations = services.service_workers.registrations.borrow();
+    let scopes = registrations
+        .iter()
+        .filter(|r| !r.uninstalling.get() && r.active.borrow().is_some())
+        .map(|r| (r.partition.clone(), r.scope.clone()))
+        .collect();
+    pyro_net::PrefetchRedirectStop { scopes, navigation: true, site_bound: false, initiator_site: None }
+}
+
+/// A request of an `<embed>` or `<object>` (their content, a document included): the browser
+/// loads it without the page's service worker (Chrome's "embed"/"object" request contexts are
+/// not intercepted).
+fn is_embedded_content(request: &Request) -> bool {
+    matches!(request.destination, Destination::Embed | Destination::Object)
+}
+
+impl PageDom {
+    /// A service worker controls this document (its requests go through the worker's `fetch` event).
+    pub fn is_service_worker_controlled(&self) -> bool {
+        self.sw_controlled.get()
     }
 }
 
@@ -667,6 +986,7 @@ impl LoadRoute {
 pub fn subresource_route(document: &PageDom, request: &Request) -> Option<LoadRoute> {
     if !document.sw_controlled.get()
         || request.skip_interception
+        || is_embedded_content(request)
         || document.bypass_service_worker()
         || !matches!(request.url.scheme(), "http" | "https")
     {
@@ -678,7 +998,7 @@ pub fn subresource_route(document: &PageDom, request: &Request) -> Option<LoadRo
     if version.state.get() == State::Redundant {
         return None;
     }
-    Some(LoadRoute { version, client_id: client.id.clone(), resulting_client_id: String::new() })
+    Some(LoadRoute { version, client_id: client.id.clone(), resulting_client_id: String::new(), preload: None })
 }
 
 /// A navigation request of a frame of `services`' context (mode `navigate`,
@@ -688,7 +1008,12 @@ pub fn subresource_route(document: &PageDom, request: &Request) -> Option<LoadRo
 /// document is the client the worker saw as `resultingClientId`. Callers test
 /// [`ContextServices::may_route_loads`] first.
 pub fn navigation_route(services: &ContextServices, request: &Request) -> Option<LoadRoute> {
-    if request.skip_interception || !matches!(request.url.scheme(), "http" | "https") {
+    if request.skip_interception || is_embedded_content(request) || !matches!(request.url.scheme(), "http" | "https") {
+        return None;
+    }
+    // A credentialless frame's navigation (it carries the ephemeral cookie jar) goes to the network, not
+    // to a worker of the normal partition that would fetch it with the normal jar.
+    if request.defaults.ephemeral_cookies.is_some() {
         return None;
     }
     let registry = &services.service_workers;
@@ -701,15 +1026,19 @@ pub fn navigation_route(services: &ContextServices, request: &Request) -> Option
     } else {
         SiteContext::CrossSite
     };
-    let version = registry.matching(request.url.as_str(), partition.as_deref(), site)?.active.borrow().clone()?;
+    let registration = registry.matching(request.url.as_str(), partition.as_deref(), site)?;
+    let version = registration.active.borrow().clone()?;
     if version.state.get() == State::Redundant {
         return None;
     }
+    // "Handle Fetch": a GET navigation of a registration with navigation preload enabled.
+    let preload = (registration.preload_enabled.get() && request.method == pyro_net::http::Method::GET && request.mode == RequestMode::Navigate)
+        .then(|| registration.preload_header.borrow().clone());
     let resulting_client_id = match request.frame_id.as_deref() {
         Some(frame) => registry.reserve(frame),
         None => random_id(),
     };
-    Some(LoadRoute { version, client_id: String::new(), resulting_client_id })
+    Some(LoadRoute { version, client_id: String::new(), resulting_client_id, preload })
 }
 
 /// Runs on the browser thread, as a task of its loop.
@@ -727,6 +1056,8 @@ pub(crate) fn deliver(version: u64, up: SwUp) {
             version.run(move |s, _| crate::service_worker_scope::reply(s, id, result));
         }
         SwUp::PostToClient { client, message, queued } => post_to_client(&version, &client, message, queued),
+        SwUp::CancelFetch(key) => version.run(move |s, _| crate::service_worker_scope::fetch_cancelled(s, key)),
+        SwUp::PreloadDone(key) => version.run(move |s, _| crate::service_worker_scope::preload_ready(s, key)),
     }
 }
 
@@ -737,13 +1068,15 @@ fn reply_error(name: &str, message: &str) -> Result<String, (String, String)> {
 fn client_json(client: &ClientInner) -> String {
     let page = client.page.upgrade();
     let hidden = page.as_ref().is_some_and(|p| p.is_hidden());
+    // The document is the selected keyboard frame (`frame.focus()` selects it), in a visible window.
+    let focused = !hidden && page.as_ref().is_some_and(|p| p.hooks().is_none_or(|h| h.is_focused()));
     format!(
         "{{\"id\":{},\"url\":{},\"type\":\"window\",\"frameType\":\"{}\",\"visibilityState\":\"{}\",\"focused\":{}}}",
         quote(&client.id),
-        quote(&page.map(|p| p.document_url()).unwrap_or_else(|| client.url.clone())),
+        quote(&client.url),
         if client.nested { "nested" } else { "top-level" },
         if hidden { "hidden" } else { "visible" },
-        !hidden,
+        focused,
     )
 }
 
@@ -768,6 +1101,7 @@ fn query(version: &Rc<Version>, kind: QueryKind) -> Result<String, (String, Stri
             if !is_active || !matches!(version.state.get(), State::Activating | State::Activated) {
                 return reply_error("InvalidStateError", "Only the active worker can claim clients.");
             }
+            let mut losers: Vec<Rc<Registration>> = Vec::new();
             for client in registry.live_clients() {
                 if !registration.shares_storage(&client) {
                     continue;
@@ -778,12 +1112,42 @@ fn query(version: &Rc<Version>, kind: QueryKind) -> Result<String, (String, Stri
                 if client.controller.borrow().as_ref().is_some_and(|c| Rc::ptr_eq(c, version)) {
                     continue;
                 }
+                // The registration that controlled it until now (Clients.claim step 3.2.3).
+                if let Some(old) = client.controller.borrow().as_ref().and_then(|v| v.registration.upgrade()) {
+                    if !losers.iter().any(|r| Rc::ptr_eq(r, &old)) {
+                        losers.push(old);
+                    }
+                }
                 set_controller(&client, Some(version.clone()));
                 if let Some(page) = client.page.upgrade() {
                     let json = version.json();
                     post_to_module(&page, false, move |s, glue| {
                         call(s, glue, "controller", &[s.string(&json), s.boolean(true)]);
                     });
+                }
+            }
+            // Its dedicated and shared workers whose script URL it covers, too.
+            for worker in registry.live_worker_clients() {
+                if worker.origin != registration.origin || worker.partition != registration.partition || worker.site != registration.site {
+                    continue;
+                }
+                if !registry.matching(&worker.scope_url, worker.partition.as_deref(), worker.site).is_some_and(|r| Rc::ptr_eq(&r, &registration)) {
+                    continue;
+                }
+                if worker.controller.borrow().as_ref().is_some_and(|c| Rc::ptr_eq(c, version)) {
+                    continue;
+                }
+                if let Some(old) = worker.controller.borrow().as_ref().and_then(|v| v.registration.upgrade()) {
+                    if !losers.iter().any(|r| Rc::ptr_eq(r, &old)) {
+                        losers.push(old);
+                    }
+                }
+                worker.set_controller(Some(version.clone()));
+            }
+            // A registration that lost a controllee may have a waiting worker that was waiting for it.
+            for old in losers {
+                if old.waiting.borrow().is_some() {
+                    try_activate(&old);
                 }
             }
             Ok(String::new())
@@ -805,6 +1169,25 @@ fn query(version: &Rc<Version>, kind: QueryKind) -> Result<String, (String, Stri
                     out.push_str(&client_json(&client));
                 }
             }
+            if matches!(kind.as_str(), "worker" | "sharedworker" | "all") {
+                for worker in registry.live_worker_clients() {
+                    if (kind != "all" && worker.kind != kind)
+                        || worker.origin != registration.origin
+                        || worker.partition != registration.partition
+                        || worker.site != registration.site
+                    {
+                        continue;
+                    }
+                    let controlled = worker.controller.borrow().as_ref().is_some_and(|c| Rc::ptr_eq(c, version));
+                    if !include_uncontrolled && !controlled {
+                        continue;
+                    }
+                    if out.len() > 1 {
+                        out.push(',');
+                    }
+                    out.push_str(&worker.json());
+                }
+            }
             out.push(']');
             Ok(out)
         }
@@ -812,11 +1195,43 @@ fn query(version: &Rc<Version>, kind: QueryKind) -> Result<String, (String, Stri
             .live_clients()
             .iter()
             .find(|c| c.id == id && registration.shares_storage(c))
-            .map_or_else(|| "null".to_owned(), |c| client_json(c))),
+            .map(|c| client_json(c))
+            .or_else(|| {
+                registry
+                    .live_worker_clients()
+                    .iter()
+                    .find(|w| w.id == id && w.origin == registration.origin && w.partition == registration.partition && w.site == registration.site)
+                    .map(|w| w.json())
+            })
+            .unwrap_or_else(|| "null".to_owned())),
         QueryKind::Unregister => Ok(unregister(&registration).to_string()),
         // A worker's own update() changes nothing: its script is what it runs.
         QueryKind::Update => Ok(String::new()),
+        QueryKind::Preload { op, value } => preload_op(&registration, &op, &value),
     }
+}
+
+/// `NavigationPreloadManager` of `registration` (https://w3c.github.io/ServiceWorker/#navigation-preload-manager):
+/// `getState` answers the state as JSON; `enable`, `disable` and `setHeaderValue` (`value`: a
+/// ByteString, one char per byte) change it and need an active worker ("InvalidStateError").
+fn preload_op(registration: &Registration, op: &str, value: &str) -> Result<String, (String, String)> {
+    if op == "getState" {
+        return Ok(format!(
+            "{{\"enabled\":{},\"headerValue\":{}}}",
+            registration.preload_enabled.get(),
+            quote(&registration.preload_header.borrow())
+        ));
+    }
+    if registration.active.borrow().is_none() {
+        return reply_error("InvalidStateError", "The registration has no active worker.");
+    }
+    match op {
+        "enable" => registration.preload_enabled.set(true),
+        "disable" => registration.preload_enabled.set(false),
+        "setHeaderValue" => *registration.preload_header.borrow_mut() = value.to_owned(),
+        other => return reply_error("TypeError", &format!("unknown navigation preload operation {other}")),
+    }
+    Ok(String::new())
 }
 
 fn post_to_client(
@@ -905,6 +1320,9 @@ fn try_activate(registration: &Rc<Registration>) {
     let old = registration.active.replace(Some(waiting.clone()));
     waiting.state.set(State::Activating);
     if let Some(handle) = waiting.thread.borrow().clone() { registration.cookies.activating(waiting.id, handle); }
+    // The registrations' clients see the new active worker before `controllerchange` fires
+    // (Activate: "set registration's active worker", then "Handle ... controllerchange").
+    registration.notify();
     if let Some(old) = &old {
         // Its clients move to the new worker.
         for client in context.service_workers.live_clients() {
@@ -918,9 +1336,14 @@ fn try_activate(registration: &Rc<Registration>) {
                 }
             }
         }
+        for worker in context.service_workers.live_worker_clients() {
+            if worker.controller.borrow().as_ref().is_some_and(|c| Rc::ptr_eq(c, old)) {
+                worker.set_controller(Some(waiting.clone()));
+            }
+        }
         old.redundant();
+        registration.notify();
     }
-    registration.notify();
     waiting.run(|s, _| crate::service_worker_scope::lifecycle(s, Lifecycle::Activate));
 }
 
@@ -1052,13 +1475,25 @@ fn register(
     update_via_cache: String,
 ) -> JsResult<()> {
     let prefix = "Failed to register a ServiceWorker";
+    // A credentialless document is in an ephemeral partition: Chrome keys its registrations by the
+    // partition's nonce, which this registry (matched by site) cannot do. A registration made here
+    // would be shared with the normal partition and its worker would fetch with the normal cookie
+    // jar, so the partition has no service workers at all.
+    if page.is_credentialless() {
+        return Err(JsError::dom(
+            "SecurityError",
+            format!("{prefix}: Service workers are not available to a credentialless document."),
+        ));
+    }
     let client = client_of(page)
         .ok_or_else(|| JsError::dom("SecurityError", format!("{prefix}: The document is in an invalid state.")))?;
     let base = page.dom.borrow().document_base_url(page.document()).ok().map(str::to_owned);
     let base = base.and_then(|b| pyro_net::Url::parse(&b).ok());
     let parse = |input: &str, base: Option<&pyro_net::Url>| pyro_net::Url::options().base_url(base).parse(input);
-    let script_url =
+    let mut script_url =
         parse(script, base.as_ref()).map_err(|_| type_error(format!("{prefix}: The URL '{script}' is invalid.")))?;
+    // Register: the script URL's fragment is dropped (the worker's `scriptURL` has none).
+    script_url.set_fragment(None);
     if !matches!(script_url.scheme(), "http" | "https") {
         return Err(type_error(format!("{prefix}: The URL protocol of the script ('{script_url}') is not supported.")));
     }
@@ -1159,6 +1594,8 @@ fn register(
                 updating: Cell::new(false),
                 jobs: RefCell::new(VecDeque::new()),
                 evaluating: RefCell::new(None),
+                preload_enabled: Cell::new(false),
+                preload_header: RefCell::new("true".to_owned()),
             });
             registry.registrations.borrow_mut().push(registration.clone());
             registration
@@ -1192,12 +1629,20 @@ fn update(page: &Rc<PageDom>, registration: &Rc<Registration>, script_url: pyro_
     request.referrer_policy = page.referrer_policy();
     request.frame_id = page.request_context().frame_id;
     request.max_body = Some(MAX_SCRIPT_BYTES);
+    // The creator's `Connection-Allowlist` governs the script's fetch, as a navigation's.
+    request.csp = crate::csp::allowlist_guard(page, &script_url);
     // A redirect would take the body from a URL the max scope was not computed for.
     request.redirect = pyro_net::RedirectMode::Error;
     request.cache =
         if registration.update_via_cache == "all" { pyro_net::CacheMode::Default } else { pyro_net::CacheMode::NoCache };
     request.headers.insert("service-worker", pyro_net::http::HeaderValue::from_static("script"));
     page.apply_request_defaults(&mut request);
+    // The script is fetched by the browser, not a document: no UA client hints go with it (an empty
+    // set is "overridden without metadata": the low-entropy ones are not added) unless the page has
+    // its own metadata override. Its headers are what the update tests read back from the worker.
+    if request.defaults.client_hints.is_none() {
+        request.defaults.client_hints = Some(Arc::new(Vec::new()));
+    }
     request.top_level_site = registration.partition.clone();
     request.cross_site_ancestor = registration.site == SiteContext::CrossSite;
     #[derive(Default)]
@@ -1256,7 +1701,8 @@ fn update(page: &Rc<PageDom>, registration: &Rc<Registration>, script_url: pyro_
                     }
                     ResponseEvent::Failed(error) => {
                         state.done = true;
-                        Err(error.to_string())
+                        // The redirect mode "error": the script is behind a redirect.
+                        Err(if matches!(error, pyro_net::NetError::RedirectNotAllowed) { "redirected".to_owned() } else { error.to_string() })
                     }
                 }
             };
@@ -1340,6 +1786,13 @@ fn fetched_script(
     };
     let (head, body) = match result {
         Ok(found) => found,
+        // Fetch with the redirect mode "error": no service worker script comes from a redirect.
+        Err(error) if error == "redirected" => {
+            return fail(reply_error(
+                "SecurityError",
+                &format!("{prefix}: The script resource is behind a redirect, which is disallowed."),
+            ))
+        }
         Err(_) => {
             return fail(reply_error(
                 "TypeError",
@@ -1364,6 +1817,13 @@ fn fetched_script(
     }
     let max_scope = match head.headers.get("service-worker-allowed").and_then(|v| v.to_str().ok()) {
         Some(allowed) => match script_url.join(allowed) {
+            // The header's value is parsed against the script's URL and must stay on its origin.
+            Ok(url) if url.origin() != script_url.origin() => {
+                return fail(reply_error(
+                    "SecurityError",
+                    &format!("{prefix}: The Service-Worker-Allowed header value ('{allowed}') is cross-origin to the script."),
+                ))
+            }
             Ok(url) => url.path().to_owned(),
             Err(_) => {
                 return fail(reply_error(
@@ -1388,7 +1848,22 @@ fn fetched_script(
             return;
         }
     }
-    start_version(page, registration, script_url, body, settle);
+    // The worker's own `Connection-Allowlist` is its script response's.
+    let allowlist = {
+        let header = |name: &str| {
+            let values: Vec<&str> = head.headers.get_all(name).iter().filter_map(|v| v.to_str().ok()).collect();
+            (!values.is_empty()).then(|| values.join(", "))
+        };
+        pyro_net::connection_allowlist::ConnectionPolicy::from_headers(
+            header("connection-allowlist").as_deref(),
+            header("connection-allowlist-report-only").as_deref(),
+            &head.url,
+        )
+    };
+    // The worker's own embedder policy is its script response's (HTML "run a worker"): its fetches
+    // and the `Cache` it reads are subject to it.
+    let embedder = crate::coep_report::obtain_embedder(&head.headers, &head.url);
+    start_version(page, registration, script_url, body, allowlist, embedder, settle);
 }
 
 fn start_version(
@@ -1396,6 +1871,8 @@ fn start_version(
     registration: &Rc<Registration>,
     script_url: pyro_net::Url,
     script: Bytes,
+    allowlist: Option<Arc<pyro_net::connection_allowlist::ConnectionPolicy>>,
+    embedder: (pyro_net::EmbedderPolicy, pyro_net::EmbedderReporting),
     settle: Settle,
 ) {
     if VERSIONS.with(|v| v.borrow().len()) >= MAX_VERSIONS {
@@ -1425,11 +1902,13 @@ fn start_version(
         service,
         registration.module.get(),
     );
-    let Some(start) = start else {
+    let Some(mut start) = start else {
         settle.done(reply_error("InvalidStateError", "The page cannot start workers."));
         end_update(registration);
         return;
     };
+    start.csp.inherited_allowlist = allowlist;
+    (start.embedder_policy, start.embedder_reporting) = embedder;
     let version = Rc::new(Version {
         id,
         script_url: script_url.to_string(),
@@ -1566,6 +2045,14 @@ fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
         Ok(s.undefined())
     })?;
     native.set_atom("register", f.value())?;
+    // Trusted Types: `register(scriptURL)` takes a TrustedScriptURL ("ServiceWorkerContainer register"); the JS wrapper
+    // calls this inside its try block so a violation rejects the promise with the TypeError.
+    let f = s.function("trustedScriptURL", |s, _, a| {
+        let page = crate::target::page_of(s)?;
+        let url = crate::trusted_types::compliant_string(s, &page, crate::trusted_types::Kind::ScriptUrl, a.get(0), "ServiceWorkerContainer register", false)?;
+        Ok(s.string(&url))
+    })?;
+    native.set_atom("trustedScriptURL", f.value())?;
     let f = s.function("blocked", |s, _, _| {
         let page = crate::target::page_of(s)?;
         Ok(s.boolean(page.context_services().service_workers.blocked.get()))
@@ -1653,8 +2140,39 @@ fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
         Ok(s.undefined())
     })?;
     native.set_atom("update", f.value())?;
+    let f = s.function("preload", |s, _, a| {
+        let page = crate::target::page_of(s)?;
+        let id = a.get(0).to_number()? as u64;
+        let settle = Settle { page: Rc::downgrade(&page), id, realm: s.realm().downgrade() };
+        let op = a.get(2).to_string()?;
+        let value = if a.get(3).is_undefined() { String::new() } else { a.get(3).to_string()? };
+        let registration = same_origin_registration(&page, a.get(1).to_number()? as u64).filter(|r| !r.uninstalling.get());
+        let result = match registration {
+            Some(registration) => preload_op(&registration, &op, &value).map(|json| {
+                // A settled promise's value rides in `value` (see the page glue's `settle`).
+                if op == "getState" { format!("{{\"value\":{json}}}") } else { "{}".to_owned() }
+            }),
+            None => reply_error("InvalidStateError", "The registration is gone."),
+        };
+        settle.done(result);
+        Ok(s.undefined())
+    })?;
+    native.set_atom("preload", f.value())?;
+    // Whether the document is detached (its frame was removed): it has no controller then, and
+    // posts nothing.
+    let f = s.function("detached", |s, _, _| {
+        let page = crate::target::page_of(s)?;
+        Ok(s.boolean(page.is_detached() || page.is_disposed()))
+    })?;
+    native.set_atom("detached", f.value())?;
     let f = s.function("postMessage", |s, _, a| {
         let page = crate::target::page_of(s)?;
+        if page.is_detached() || page.is_disposed() {
+            return Err(JsError::dom(
+                "InvalidStateError",
+                "Failed to execute 'postMessage' on 'ServiceWorker': Cannot post a message from a detached context.",
+            ));
+        }
         let version = a.get(0).to_number()? as u64;
         let options = crate::structured_clone::transfer_options(s, a.opt(2))?;
         // Serialized (and its errors thrown) even when the worker is gone.

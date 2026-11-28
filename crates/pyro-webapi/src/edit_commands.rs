@@ -324,12 +324,18 @@ pub(crate) struct Flat {
     /// Element positions at offsets of `units` (before a `<br>` or object,
     /// at a block's start).
     marks: Vec<(u32, Point)>,
+    /// Offsets in `units` of the [`PARA`]s a block boundary made (not a `<br>` or a preserved
+    /// linefeed): copying leaves out the one a selection ends on.
+    seps: Vec<u32>,
+    /// Ranges of `units` from text whose white space collapses; copying shows a run of it as
+    /// one space.
+    collapsible: Vec<(u32, u32)>,
 }
 
 impl Flat {
     pub(crate) fn build(page: &PageDom, scope: NodeId) -> Flat {
         let dom = page.dom.borrow();
-        let mut flat = Flat { units: Vec::new(), texts: Vec::new(), marks: Vec::new() };
+        let mut flat = Flat { units: Vec::new(), texts: Vec::new(), marks: Vec::new(), seps: Vec::new(), collapsible: Vec::new() };
         flat.walk(page, &dom, scope);
         flat
     }
@@ -339,7 +345,10 @@ impl Flat {
             None | Some(&mut PARA) => {}
             // A <br> ending a block adds no line of its own.
             Some(last @ &mut LINE) => *last = PARA,
-            Some(_) => self.units.push(PARA),
+            Some(_) => {
+                self.seps.push(self.units.len() as u32);
+                self.units.push(PARA)
+            }
         }
     }
 
@@ -362,8 +371,13 @@ impl Flat {
                     self.units.extend(data.encode_utf16().map(|u| match u {
                         PARA if preserved => LINE,
                         PARA => 0x20,
+                        // A carriage return is collapsible white space too.
+                        0x0D if !preserved => 0x20,
                         u => u,
                     }));
+                    if !preserved {
+                        self.collapsible.push((start, self.units.len() as u32));
+                    }
                     self.texts.push((child, start, self.units.len() as u32 - start));
                 }
                 Ok(NodeType::Element) => {
@@ -444,10 +458,29 @@ impl Flat {
     /// The text from `a` to `b` as copied: line breaks as linefeeds, objects
     /// left out.
     fn text(&self, a: u32, b: u32) -> String {
-        let b = (b as usize).min(self.units.len());
-        let slice = &self.units[(a as usize).min(b)..b];
-        let units: Vec<u16> =
-            slice.iter().filter(|&&u| u != OBJECT).map(|&u| if u == LINE || u == PARA { PARA } else { u }).collect();
+        let mut b = (b as usize).min(self.units.len());
+        let a = (a as usize).min(b);
+        // A selection ending at the end of a block does not take the block's line break.
+        if b > a && self.seps.binary_search(&(b as u32 - 1)).is_ok() {
+            b -= 1;
+        }
+        // `collapsible` is in increasing order: the last range starting at or before `i` is the one.
+        let in_collapsible = |i: usize| {
+            let at = self.collapsible.partition_point(|&(start, _)| start as usize <= i);
+            at > 0 && i < self.collapsible[at - 1].1 as usize
+        };
+        let mut units: Vec<u16> = Vec::with_capacity(b - a);
+        for i in a..b {
+            let u = self.units[i];
+            if u == OBJECT {
+                continue;
+            }
+            // A run of collapsible white space shows as one space.
+            if u == 0x20 && in_collapsible(i) && i > a && self.units[i - 1] == 0x20 && in_collapsible(i - 1) {
+                continue;
+            }
+            units.push(if u == LINE || u == PARA { PARA } else { u });
+        }
         String::from_utf16_lossy(&units)
     }
 }
@@ -547,6 +580,10 @@ fn control_replace(
     data: Option<&str>,
 ) -> bool {
     let doc = page.document();
+    // A control that became display:none (a keydown listener hid it) takes no edit.
+    if !crate::show_picker::being_rendered(page, el) {
+        return false;
+    }
     if !editing::input_event(page, el, "beforeinput", input_type, data, true)
         || page.document() != doc
         || !editing::connected(page, el)
@@ -565,6 +602,12 @@ fn apply_control_replace(
     input_type: &str,
     data: Option<&str>,
 ) -> bool {
+    // Chrome edits nothing in a control that is not being rendered: its
+    // editor has no frame to act in (a zombie editor, also after a
+    // beforeinput listener hid it).
+    if !crate::show_picker::being_rendered(page, el) {
+        return false;
+    }
     record_control_edit(page, el, input_type);
     let changed = {
         let mut dom = page.dom.borrow_mut();

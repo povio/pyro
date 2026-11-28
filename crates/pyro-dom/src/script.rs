@@ -14,6 +14,9 @@ pub enum ScriptKind {
     Classic,
     Module,
     ImportMap,
+    /// `type="speculationrules"`: a speculation rule set (WICG Speculation Rules). Not executed:
+    /// the loader parses its text and registers the rule set with the document.
+    SpeculationRules,
     /// Unknown type: a data block, never executed.
     Data,
 }
@@ -142,8 +145,11 @@ pub(crate) struct ResourceQueue {
     pub(crate) prepared_scripts: rustc_hash::FxHashMap<NodeId, (ScriptInfo, NodeId)>,
     /// Elements with `autofocus` connected since the embedder last took them, in insertion
     /// (tree) order: HTML's autofocus insertion steps, which the embedder completes by
-    /// appending them to their top-level document's autofocus candidates.
-    pub(crate) autofocus: Vec<NodeId>,
+    /// appending them to their top-level document's autofocus candidates. Each is paired with the
+    /// document it was inserted into (its node document then): a script may adopt it into another
+    /// top-level browsing context's document before the next rendering update, but the candidate
+    /// stays the first one's.
+    pub(crate) autofocus: Vec<(NodeId, NodeId)>,
     /// `<img>` elements with a relevant mutation (HTML "update the image data") since the
     /// embedder last took them: their current request, and so `currentSrc`, changes in the
     /// microtask the mutation queues (`Dom::take_current_src_updates`).
@@ -172,8 +178,9 @@ impl Dom {
     }
 
     /// The elements with `autofocus` inserted into a document since the last call, in
-    /// insertion order (each insertion again; the embedder keeps the last).
-    pub fn take_autofocus_insertions(&mut self) -> Vec<NodeId> {
+    /// insertion order (each insertion again; the embedder keeps the last), each with the document
+    /// it was inserted into.
+    pub fn take_autofocus_insertions(&mut self) -> Vec<(NodeId, NodeId)> {
         std::mem::take(&mut self.resources.autofocus)
     }
 
@@ -221,7 +228,7 @@ impl Dom {
 
     /// `node` came into or is about to leave its parent: when that is a `<picture>`, a relevant
     /// mutation of the `<img>` itself, or of the picture's `<img>` children for a `<source>`.
-    fn note_picture_child_change(&mut self, node: u32) {
+    pub(crate) fn note_picture_child_change(&mut self, node: u32) {
         if !self.resources.enabled {
             return;
         }
@@ -249,6 +256,20 @@ impl Dom {
             self.release(ev.node);
         }
         events
+    }
+
+    /// Puts back events [`Dom::take_resource_events`] returned that their loader could not handle yet
+    /// (the page of their document is not registered with the embedder), in order, ahead of what was queued
+    /// since: they are taken again by the next drain.
+    pub fn requeue_resource_events(&mut self, events: &[ResourceEvent]) {
+        let mut kept: Vec<ResourceEvent> = Vec::with_capacity(events.len());
+        for ev in events {
+            if self.add_ref(ev.node).is_ok() {
+                kept.push(*ev);
+            }
+        }
+        kept.append(&mut self.resources.events);
+        self.resources.events = kept;
     }
 
     pub(crate) fn resource_kind(&self, idx: u32) -> Option<ResourceKind> {
@@ -400,7 +421,7 @@ impl Dom {
             }
         }
         if self.is_connected_idx(node) && self.is_autofocus_idx(node) {
-            self.resources.autofocus.push(self.id_of(node));
+            self.resources.autofocus.push((self.id_of(node), self.id_of(self.n(node).owner_doc)));
         }
         if meta {
             self.process_viewport_meta(node);
@@ -431,11 +452,27 @@ impl Dom {
         // Only stylesheet owners need removal notifications.
         let mut i = node;
         while i != NIL {
-            if let Some(k @ (ResourceKind::Stylesheet | ResourceKind::StyleText)) = self.resource_kind(i) {
-                self.push_resource(i, k, ResourceReason::Removed);
+            match self.resource_kind(i) {
+                Some(k @ (ResourceKind::Stylesheet | ResourceKind::StyleText)) => {
+                    self.push_resource(i, k, ResourceReason::Removed);
+                }
+                // A speculation rule set leaves the document's list with its element.
+                Some(ResourceKind::Script) if self.is_speculation_rules_script(i) => {
+                    self.push_resource(i, ResourceKind::Script, ResourceReason::Removed);
+                }
+                _ => {}
             }
             i = self.next_shadow_including_rev(i, node);
         }
+    }
+
+    /// Whether `idx` is an HTML `<script type="speculationrules">` (the `type` as
+    /// [`Dom::script_info`] classifies it).
+    fn is_speculation_rules_script(&self, idx: u32) -> bool {
+        self.n(idx).element().is_some_and(|e| {
+            e.is_html()
+                && e.attr_local(&local_name!("type")).is_some_and(|t| t.eq_ignore_ascii_case("speculationrules"))
+        })
     }
 
     /// Called after the attribute `local` of `idx` was set or removed;
@@ -443,6 +480,22 @@ impl Dom {
     pub(crate) fn resources_after_attr(&mut self, idx: u32, local: &str, added: bool) {
         if matches!(local, "src" | "srcset" | "sizes" | "width" | "crossorigin" | "referrerpolicy") {
             self.note_current_src_update(idx);
+        }
+        // HTML "relevant mutations": a `<source>` that is a previous sibling of an `<img>` in a
+        // `<picture>` had its `srcset`, `sizes`, `media` or `type` set, changed or removed.
+        if matches!(local, "srcset" | "sizes" | "media" | "type") && self.resources.enabled {
+            let parent = self.n(idx).parent;
+            let is_source = self.n(idx).element().is_some_and(|e| e.is_html() && e.name.local == local_name!("source"));
+            let in_picture = parent != NIL
+                && self.n(parent).element().is_some_and(|e| e.is_html() && e.name.local == local_name!("picture"));
+            if is_source && in_picture {
+                let later: Vec<u32> = self.child_idx_iter(parent).skip_while(|&c| c != idx).skip(1).filter(|&c| self.is_html_img(c)).collect();
+                for img in later {
+                    self.note_current_src_update(img);
+                    let id = self.id_of(img);
+                    self.queue_image_update(id);
+                }
+            }
         }
         self.iframes_after_attr(idx, local);
         self.media_after_attr(idx, local);
@@ -574,7 +627,7 @@ impl Dom {
         let mut autofocus = Vec::new();
         while i != NIL {
             if track_autofocus && self.is_autofocus_idx(i) {
-                autofocus.push(self.id_of(i));
+                autofocus.push((self.id_of(i), self.id_of(self.n(i).owner_doc)));
             }
             if let Some(k) = self.resource_kind(i) {
                 // Parser-inserted scripts are driven by ParseStep::Script.
@@ -678,6 +731,8 @@ impl Dom {
                     ScriptKind::Module
                 } else if raw == "importmap" {
                     ScriptKind::ImportMap
+                } else if raw == "speculationrules" {
+                    ScriptKind::SpeculationRules
                 } else {
                     ScriptKind::Data
                 }
@@ -731,6 +786,26 @@ impl Dom {
             node: script,
             start_line: e.script_start_line.max(1),
         })
+    }
+
+    /// The 1-based line and column just after the start tag of a `<script>` or `<style>` the
+    /// document's parser created (where a CSP violation of its inline text is located); `None` for
+    /// any other element. The tokenizer tracks lines only: the column is the length of the tag
+    /// as written when it is `<name attr="value" ...>` on one line (an approximation otherwise).
+    pub fn parser_start_position(&self, el: NodeId) -> Option<(u32, u32)> {
+        let e = self.element(el).ok()?;
+        if e.script_start_line == 0 {
+            return None;
+        }
+        // `<`, the name, `>`, and one more: the column after the tag.
+        let mut width = 3 + e.name.local.chars().count();
+        for a in &e.attrs {
+            width += 1 + a.qualified_name().chars().count();
+            if !a.value.is_empty() {
+                width += 3 + a.value.chars().count();
+            }
+        }
+        Some((e.script_start_line, u32::try_from(width).unwrap_or(u32::MAX)))
     }
 
     /// Sets the script's "already started" flag (prepare step 1).
@@ -847,10 +922,10 @@ mod language_attribute_tests {
         let mut dom = dom_ref.borrow_mut();
         let id = |dom: &Dom, name: &str| dom.get_element_by_id(doc, name).unwrap().unwrap();
         let (a, b) = (id(&dom, "a"), id(&dom, "b"));
-        assert_eq!(dom.take_autofocus_insertions(), [a, b]);
+        assert_eq!(dom.take_autofocus_insertions(), [(a, doc), (b, doc)]);
         let div = dom.parent(b).unwrap().unwrap();
         dom.append_child(div, a).unwrap();
-        assert_eq!(dom.take_autofocus_insertions(), [a]);
+        assert_eq!(dom.take_autofocus_insertions(), [(a, doc)]);
         assert!(!dom.has_autofocus_insertions());
     }
 

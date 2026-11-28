@@ -309,7 +309,36 @@ impl Mirror {
         self.doc.set_popover_anchors(anchors);
     }
 
-    pub(crate) fn set_scroll_targets(&mut self, targets: &[(u64, u64)]) {
+    /// Gives the document the directions of the scroll containers' last scrolls (by key;
+    /// `u64::MAX`: the viewport's, which is the root element's), for `scroll-state(scrolled)`.
+    /// Whether they changed.
+    pub(crate) fn set_scroll_directions(&mut self, directions: &[(u64, (i8, i8))]) -> bool {
+        let root = self.doc.try_root_element().map(|root| root.id);
+        let directions = directions
+            .iter()
+            .filter_map(|&(key, dirs)| {
+                let id = if key == u64::MAX { root? } else { self.nodes.get(&key)?.id };
+                Some((id, dirs))
+            })
+            .collect();
+        self.doc.set_scroll_directions(directions)
+    }
+
+    /// Gives the document the elements that are a scroll container's snap target, with the axes
+    /// (x, y) they are snapped on, for `scroll-state(snapped)`. Whether they changed.
+    pub(crate) fn set_snapped(&mut self, snapped: &[(u64, (bool, bool))]) -> bool {
+        let snapped = snapped.iter().filter_map(|&(key, axes)| Some((self.nodes.get(&key)?.id, axes))).collect();
+        self.doc.set_snapped(snapped)
+    }
+
+    /// Gives the document the sticky boxes held at an edge by their insets, with the edges (bit 0
+    /// top, 1 right, 2 bottom, 3 left), for `scroll-state(stuck)`. Whether they changed.
+    pub(crate) fn set_stuck(&mut self, stuck: &[(u64, u8)]) -> bool {
+        let stuck = stuck.iter().filter_map(|&(key, edges)| Some((self.nodes.get(&key)?.id, edges))).collect();
+        self.doc.set_stuck(stuck)
+    }
+
+    pub(crate) fn set_scroll_targets(&mut self, targets: &[(u64, u64)]) -> bool {
         let root = self.doc.try_root_element().map(|root| root.id);
         let targets: Vec<(NodeId, NodeId)> = targets
             .iter()
@@ -318,7 +347,7 @@ impl Mirror {
                 Some((scroller, self.node(target)?))
             })
             .collect();
-        self.doc.set_scroll_targets(targets);
+        self.doc.set_scroll_targets(targets)
     }
 
     /// Gives the `position: sticky` elements in `offsets` (by key) their
@@ -382,7 +411,7 @@ impl Mirror {
                 None => (None, None),
             };
             let same = matches!(&element.special_data, SpecialElementData::Image(image)
-                if matches!(&**image, ImageData::Raster(r) if r.width == canvas.width && r.height == canvas.height)
+                if matches!(&**image, ImageData::Raster(r) if r.width == canvas.width && r.height == canvas.height && r.tainting == canvas.tainting)
                     && ours(image, &canvas.rgba));
             if !same {
                 let replaced = std::mem::take(&mut element.special_data);
@@ -393,7 +422,8 @@ impl Mirror {
                         poster = Some(image);
                     }
                 }
-                let raster = RasterImageData::new(canvas.width, canvas.height, canvas.rgba.clone());
+                let mut raster = RasterImageData::new(canvas.width, canvas.height, canvas.rgba.clone());
+                raster.tainting = canvas.tainting;
                 element.special_data = SpecialElementData::Image(Box::new(ImageData::Raster(raster)));
             }
             self.canvases.push((id, canvas.rgba.clone(), poster));

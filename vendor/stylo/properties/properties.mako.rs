@@ -408,6 +408,11 @@ impl NonCustomPropertyId {
         if rule_types == CssRuleTypes::from(CssRuleType::Margin) {
             return true;
         }
+        // pyro: an `@page` rule keeps every property too, whether or not it applies to a page box
+        // (`column-count`, `display`, ...), as Chrome's CSSOM does (WPT css-page cssom/margin-001).
+        if rule_types == CssRuleTypes::from(CssRuleType::Page) {
+            return true;
+        }
         let allowed_types = rule_types.intersection(CssRuleTypes::DECLARATION_ALLOWED_TYPES);
         debug_assert!(
             !allowed_types.is_empty(),
@@ -2287,6 +2292,9 @@ pub struct StyleBuilder<'a> {
     /// Whether this is the style for the root element.
     pub is_root_element: bool,
 
+    /// pyro: whether this is the style of a MathML element (vi and vb take the root's writing mode there).
+    pub is_mathml_element: bool,
+
     /// The writing mode flags.
     ///
     /// TODO(emilio): Make private.
@@ -2339,6 +2347,7 @@ impl<'a> StyleBuilder<'a> {
             rules,
             modified_reset: false,
             is_root_element,
+            is_mathml_element: false,
             substitution_functions: crate::custom_properties::ComputedSubstitutionFunctions::default(),
             attribute_references: crate::dom::AttributeReferences::default(),
             invalid_non_custom_properties: LonghandIdSet::default(),
@@ -2385,6 +2394,7 @@ impl<'a> StyleBuilder<'a> {
             pseudo: None,
             modified_reset: false,
             is_root_element: false,
+            is_mathml_element: false,
             rules: None,
             attribute_references: crate::dom::AttributeReferences::default(),
             substitution_functions: map,

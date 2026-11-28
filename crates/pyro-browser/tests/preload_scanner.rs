@@ -77,10 +77,18 @@ impl ManualLoader {
             refresh: None,
             content_language: None,
             last_modified: None,
-            reporting_endpoints: None,
+            reporting_endpoints: None, permissions_policy: None,
+            connection_allowlist: None,
+            link_fetches: Vec::new(),
+            integrity_headers: None,
             dictionary_links: Vec::new(),
+            speculation_rules: Vec::new(),
+            no_vary_search: None,
             referrer_policy: None,
-            origin_agent_cluster: false,
+            origin_agent_cluster: false, force_load_at_top: false, isolation_policy: 0, ephemeral_jar: false,
+            embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
+            embedder_reporting: Default::default(),
+            coop: Vec::new(),
             sent_referrer: None,
             timing: None,
             partial: None,
@@ -370,10 +378,11 @@ fn script_attributes_match_the_speculative_request() {
     }
 }
 
-/// Stylesheets, images and preload links after the blocking script are
-/// requested ahead and taken by their elements; markup the parser never
-/// sees as tags (comments, script text, noscript, template) requests
-/// nothing.
+/// Stylesheets, images (with the `srcset` / `<picture>` candidate the
+/// element will pick at density 1) and preload links after the blocking
+/// script are requested ahead and taken by their elements; markup the
+/// parser never sees as tags (comments, script text, noscript, template)
+/// requests nothing.
 #[test]
 fn other_resources_are_speculated_and_skipped_markup_is_not() {
     let mut m = Manual::start(
@@ -389,7 +398,7 @@ fn other_resources_are_speculated_and_skipped_markup_is_not() {
         <script>console.log('inline')</script></body>"#,
         &[("/s1.js", "console.log('s1')"), ("/a.css", "body { color: red }"), ("/p.js", "")],
     );
-    m.wait_pending(&["/s1.js", "/a.css", "/p.js", "/i.png"]);
+    m.wait_pending(&["/s1.js", "/a.css", "/p.js", "/i.png", "/pic.png", "/set.png"]);
     for path in [
         "/comment.js",
         "/text.js",
@@ -399,9 +408,7 @@ fn other_resources_are_speculated_and_skipped_markup_is_not() {
         "/template.js",
         "/template.png",
         "/off.css",
-        "/pic.png",
         "/fallback.png",
-        "/set.png",
         "/set2x.png",
     ] {
         assert_eq!(m.loader.count(path), 0, "{path} is not a request: {:?}", m.loader.requests.borrow());
@@ -410,9 +417,8 @@ fn other_resources_are_speculated_and_skipped_markup_is_not() {
     m.complete("/a.css");
     m.complete("/p.js");
     m.complete("/i.png");
-    // The picture's and the srcset image's sources are the elements' to pick
-    // (the 1x candidate at this scale factor).
-    m.wait_pending(&["/pic.png", "/set.png"]);
+    // The picture's and the srcset image's 1x candidates were requested by
+    // the scan too, and the elements take those requests.
     m.complete("/pic.png");
     m.complete("/set.png");
     m.wait_load();
@@ -504,23 +510,22 @@ fn navigation_cancels_speculative_requests() {
     }
 }
 
-/// A `<meta name=referrer>` in unparsed markup stops the scan there: the
-/// requests after it are the elements' own, with the policy in force then.
+/// A `<meta name=referrer>` in unparsed markup does not stop the scan: the
+/// requests after it are made ahead with the policy in force there, and
+/// the elements take them.
 #[test]
-fn referrer_meta_stops_the_scan() {
+fn referrer_meta_applies_to_the_requests_after_it() {
     let mut m = Manual::start(
         r#"<!doctype html><body><script src="/s1.js"></script><meta name="referrer" content="no-referrer">
         <script src="/s2.js"></script><script>console.log('inline')</script></body>"#,
         &[("/s1.js", "console.log('s1')"), ("/s2.js", "console.log('s2')")],
     );
-    m.wait_pending(&["/s1.js"]);
-    m.thread.run_until_idle(Some(Instant::now() + Duration::from_millis(100)));
-    assert_eq!(m.loader.count("/s2.js"), 0, "{:?}", m.loader.requests.borrow());
+    m.wait_pending(&["/s1.js", "/s2.js"]);
     m.complete("/s1.js");
-    m.wait_pending(&["/s2.js"]);
     m.complete("/s2.js");
     m.wait_load();
     assert_eq!(m.console(), ["s1", "s2", "inline"]);
+    assert_eq!(m.loader.count("/s2.js"), 1, "{:?}", m.loader.requests.borrow());
 }
 
 /// The whole path over HTTP with the network loader: a server that counts

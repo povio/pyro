@@ -14,7 +14,7 @@
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
 
-use pyro_js::{JsResult, Object, RealmOptions, Scope, Value};
+use pyro_js::{JsResult, Object, Persistent, RealmOptions, Scope, Value};
 
 use crate::page::PageDom;
 use crate::paint_worklet::{is_link_error, loaded_or_threw, run_module, Settle};
@@ -27,75 +27,53 @@ pub(crate) struct AudioWorkletGlobal {
     modules: pyro_js::WorkletModuleMap,
     /// The context's sample rate (the global's `sampleRate`).
     rate: f64,
+    /// The context's render quantum size (the global's `renderQuantumSize`).
+    quantum: f64,
+    /// The host object audio_worklet_global.js returned (a value of the worklet realm), once made.
+    host: RefCell<Option<Persistent>>,
 }
 
-/// The global's own members.
-const PRELUDE: &str = r#"(function (global, sampleRate) {
-  'use strict';
-  const definitions = new Map();
-  const TypeErrorC = TypeError;
-  const fail = (message) => `Failed to execute 'registerProcessor' on 'AudioWorkletGlobalScope': ${message}`;
-  // The global has no DOMException interface of its own here: an Error with its name.
-  function DOMExceptionLike(message, name) { const e = new Error(message); e.name = name; return e; }
-  const isConstructor = (f) => {
-    if (typeof f !== 'function') return false;
-    try { Reflect.construct(String, [], f); return true; } catch { return false; }
-  };
-  Object.defineProperty(global, 'registerProcessor', {
-    value: function registerProcessor(name, processorCtor) {
-      if (arguments.length < 2) throw new TypeErrorC(fail(`2 arguments required, but only ${arguments.length} present.`));
-      name = String(name);
-      if (name === '') throw DOMExceptionLike(fail('The processor name cannot be empty.'), 'NotSupportedError');
-      if (definitions.has(name)) throw DOMExceptionLike(fail(`A class with name:'${name}' is already registered.`), 'NotSupportedError');
-      if (typeof processorCtor !== 'function') throw new TypeErrorC(fail("parameter 2 is not of type 'Function'."));
-      if (!isConstructor(processorCtor)) throw new TypeErrorC(fail('The provided class definition is not a constructor.'));
-      const prototype = processorCtor.prototype;
-      if (prototype === null || (typeof prototype !== 'object' && typeof prototype !== 'function')) {
-        throw new TypeErrorC(fail("The 'prototype' object on the class does not exist."));
-      }
-      const descriptors = processorCtor.parameterDescriptors;
-      let parameters = [];
-      if (descriptors !== undefined) {
-        if (descriptors === null || typeof descriptors[Symbol.iterator] !== 'function') {
-          throw new TypeErrorC(fail("The 'parameterDescriptors' property is not iterable."));
-        }
-        parameters = Array.from(descriptors);
-      }
-      definitions.set(name, { processorCtor, parameters });
-    },
-    writable: true, configurable: true,
-  });
-  class AudioWorkletProcessor {
-    constructor() {
-      throw new TypeErrorC("Failed to construct 'AudioWorkletProcessor': Illegal constructor");
-    }
-  }
-  Object.defineProperty(AudioWorkletProcessor.prototype, Symbol.toStringTag, { value: 'AudioWorkletProcessor', configurable: true });
-  Object.defineProperty(global, 'AudioWorkletProcessor', { value: AudioWorkletProcessor, writable: true, configurable: true });
-  const getter = (name, get) => Object.defineProperty(global, name, { get, configurable: true, enumerable: true });
-  getter('sampleRate', () => sampleRate);
-  getter('currentFrame', () => 0);
-  getter('currentTime', () => 0);
-})"#;
+/// The global's own members (`registerProcessor`, `AudioWorkletProcessor`, `MessagePort`, the timing
+/// attributes) and the host object that constructs and runs processors.
+const PRELUDE: &str = include_str!("audio_worklet_global.js");
 
-/// A new `AudioWorklet` for a BaseAudioContext of sample rate `rate` (webaudio.js's
-/// `audioWorklet` getter, once per context), or undefined outside a secure context.
-pub(crate) fn make<'s>(s: &Scope<'s>, page: &Rc<PageDom>, rate: f64) -> JsResult<Value<'s>> {
+/// A new `AudioWorklet` for a BaseAudioContext of sample rate `rate` and render quantum size `quantum`
+/// (webaudio.js's `audioWorklet` getter, once per context): an array of the `AudioWorklet` and a
+/// function returning the global's host object (undefined before the first `addModule()` made the
+/// realm), or undefined outside a secure context.
+pub(crate) fn make<'s>(s: &Scope<'s>, page: &Rc<PageDom>, rate: f64, quantum: f64) -> JsResult<Value<'s>> {
     if !crate::secure_context::secure(s, page) {
         return Ok(s.undefined());
     }
-    let global = Rc::new(AudioWorkletGlobal { realm: RefCell::new(None), modules: Default::default(), rate });
+    let global = Rc::new(AudioWorkletGlobal {
+        realm: RefCell::new(None),
+        modules: Default::default(),
+        rate,
+        quantum,
+        host: RefCell::new(None),
+    });
     page.audio_worklets.borrow_mut().push(global.clone());
     let backend = natives(s, Rc::downgrade(&global))?;
     let factory = crate::paint_worklet::MODULE.module(s, page)?.get("audioWorklet")?;
     let factory = factory.as_object().expect("paint_worklet.js audioWorklet");
-    factory.call(None, &[backend.value()])
+    let worklet = factory.call(None, &[backend.value()])?;
+    let weak = Rc::downgrade(&global);
+    let host = s.function("workletHost", move |s, _, _| {
+        let Some(global) = weak.upgrade() else { return Ok(s.undefined()) };
+        let host = global.host.borrow();
+        Ok(match &*host {
+            Some(host) => host.get(s),
+            None => s.undefined(),
+        })
+    })?;
+    Ok(s.array(&[worklet, host.value()])?.value())
 }
 
 /// Drops the page's AudioWorkletGlobalScopes (at the page's teardown).
 pub(crate) fn dispose(page: &PageDom) {
     let globals = page.audio_worklets.take();
     for global in &globals {
+        drop(global.host.take());
         drop(global.realm.take());
     }
 }
@@ -179,7 +157,17 @@ fn evaluate<'s>(
                 let ws = realm.scope()?;
                 let install = ws.eval(PRELUDE, Some("pyro://internal/audio-worklet-global.js"), 1)?;
                 let install = install.as_object().expect("audio worklet prelude");
-                install.call(None, &[ws.global().value(), ws.number(global.rate)])?;
+                // An exception of a message listener or the like in the global is reported there (the
+                // console, CDP), never to the document's window.
+                let report = ws.function("reportException", |s, _, a| {
+                    s.report_exception(&pyro_js::JsError::thrown(Persistent::new(s, a.get(0))));
+                    Ok(s.undefined())
+                })?;
+                let host = install.call(
+                    None,
+                    &[ws.global().value(), ws.number(global.rate), ws.number(global.quantum), report.value()],
+                )?;
+                *global.host.borrow_mut() = Some(Persistent::new(&ws, host));
             }
             *slot = Some(Rc::new(realm));
         }

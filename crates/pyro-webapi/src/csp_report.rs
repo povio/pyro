@@ -16,6 +16,12 @@
 //! `ReportingObserver`s get (`csp_violation_body`), and the Reporting API send of a report of
 //! another type to a named group (`report_to_group`, for `deprecation` reports).
 //!
+//! Reports of every other type come through `crate::reporting_store` (its top documents the
+//! interface), which hands them to [`report_to_group`]: those wait in the document's queue until
+//! the end of the task that made them, and go out as ONE list per endpoint
+//! ([`flush_pending`]). A group name the document's `Reporting-Endpoints` does not have is looked
+//! up in the browser context's `Report-To` groups (`crate::reporting_store::ReportToStore`).
+//!
 //! Requests go out through the page's network client, shaped like a `navigator.sendBeacon`
 //! POST that outlives its document, with no Resource Timing entry (as in Chrome). The two kinds
 //! stay apart ([`Delivery`]). A `report-uri` report is `no-cors` with credentials `same-origin`
@@ -167,13 +173,19 @@ pub fn serialize_reporting_api(v: &Violation, user_agent: &str) -> String {
 
 /// An `application/reports+json` body holding one report of `report_type` from `url`.
 fn reporting_api_list(report_type: &str, url: &str, user_agent: &str, body: Json) -> String {
+    Json::Array(vec![report_value(report_type, url, user_agent, 0, body)]).to_string()
+}
+
+/// One report of an `application/reports+json` list (Reporting API "serialize reports"). `age`
+/// is in milliseconds.
+fn report_value(report_type: &str, url: &str, user_agent: &str, age: u64, body: Json) -> Json {
     let mut report = Map::new();
     report.insert("type".to_owned(), report_type.into());
-    report.insert("age".to_owned(), 0.into());
+    report.insert("age".to_owned(), age.into());
     report.insert("url".to_owned(), url.into());
     report.insert("user_agent".to_owned(), user_agent.into());
     report.insert("body".to_owned(), body);
-    Json::Array(vec![Json::Object(report)]).to_string()
+    Json::Object(report)
 }
 
 /// The fields of `v`'s `CSPViolationReportBody`, as a `report-to` endpoint and a
@@ -227,6 +239,16 @@ pub fn parse_reporting_endpoints(value: &str, base: &Url) -> Vec<(String, Url)> 
     out
 }
 
+/// The value the loader hands [`PageDom::set_reporting_endpoints`]: the `Reporting-Endpoints`
+/// header value and the `Report-To` one of a document's response, `None` when it has neither.
+pub fn pack_reporting_headers(endpoints: Option<String>, report_to: Option<String>) -> Option<String> {
+    match (endpoints, report_to) {
+        (None, None) => None,
+        (endpoints, None) => endpoints,
+        (endpoints, Some(report_to)) => Some(format!("{}\n{report_to}", endpoints.unwrap_or_default())),
+    }
+}
+
 /// Splits a structured-field dictionary at the commas outside its strings.
 fn split_dictionary(value: &str) -> Vec<&str> {
     let mut parts = Vec::new();
@@ -272,13 +294,42 @@ pub(crate) struct ReportState {
     /// The document's `Reporting-Endpoints`: name → URL.
     endpoints: Vec<(String, Url)>,
     sent: u32,
+    /// Reporting API reports of this document waiting for the end of their task, one batch per
+    /// endpoint ([`enqueue_report`]); `flush_queued`: that task's flush is already posted.
+    pending: Vec<Batch>,
+    flush_queued: bool,
+    /// `<img>` URLs whose request the element's own CSP check blocked and reported, which the
+    /// layout engine's later fetch of the same image must not report again
+    /// ([`PageDom::note_blocked_image`]), with the `<img>` the note belongs to.
+    blocked_images: Vec<(NodeId, String)>,
+}
+
+/// The most blocked-image URLs remembered per document.
+const MAX_BLOCKED_IMAGES: usize = 64;
+
+/// The reports of one document for one endpoint, waiting to be sent together.
+struct Batch {
+    endpoint: Url,
+    /// The document's origin when the first report was queued, the report request's origin even
+    /// if the document has been replaced by the time it goes out.
+    origin: String,
+    reports: Vec<Queued>,
+}
+
+struct Queued {
+    report_type: String,
+    url: String,
+    body: Json,
+    at: std::time::Instant,
 }
 
 impl ReportState {
     /// This state for `doc`, cleared first if it held another document's.
     fn for_doc(&mut self, doc: NodeId) -> &mut ReportState {
         if self.doc != Some(doc) {
-            *self = ReportState { doc: Some(doc), ..ReportState::default() };
+            // (Queued reports carry their endpoint and origin: they go out whoever's they were.)
+            let (pending, flush_queued) = (std::mem::take(&mut self.pending), self.flush_queued);
+            *self = ReportState { doc: Some(doc), pending, flush_queued, ..ReportState::default() };
         }
         self
     }
@@ -298,18 +349,59 @@ impl ReportState {
 }
 
 impl PageDom {
-    /// The document the page shows now has the `Reporting-Endpoints` header `value` (`None`:
-    /// it had none). The loader calls this when it commits a document; the document's earlier
-    /// report state, and any other document's, goes. Only a document whose URL is potentially
-    /// trustworthy gets endpoints (Reporting API "process reporting endpoints").
+    /// The document the page shows now has the reporting headers `value` (`None`: it had none):
+    /// the `Reporting-Endpoints` value, and when the response had a `Report-To` header a newline
+    /// and its value ([`pack_reporting_headers`]; a header value has no newline). The loader calls
+    /// this when it commits a document; the document's earlier report state, and any other
+    /// document's, goes. Only a document whose URL is potentially trustworthy gets endpoints
+    /// (Reporting API "process reporting endpoints"). `Report-To` groups go to the browser
+    /// context's store (`crate::reporting_store`), which outlives the document.
     pub fn set_reporting_endpoints(&self, value: Option<&str>) {
+        let (value, report_to) = match value.and_then(|v| v.split_once('\n')) {
+            Some((endpoints, report_to)) => ((!endpoints.is_empty()).then_some(endpoints), Some(report_to)),
+            None => (value, None),
+        };
+        self.set_report_to(report_to);
         let endpoints = match (value, self.document_url_parsed()) {
             (Some(value), Some(base)) if pyro_net::is_potentially_trustworthy_url(&base) => {
                 parse_reporting_endpoints(value, &base)
             }
             _ => Vec::new(),
         };
-        *self.csp_reports.borrow_mut() = ReportState { doc: Some(self.document()), endpoints, sent: 0 };
+        // Reports the previous document queued still go out, to the endpoints it had.
+        flush_pending(self);
+        *self.csp_reports.borrow_mut() = ReportState { doc: Some(self.document()), endpoints, ..ReportState::default() };
+    }
+
+    /// The `<img>` request for `url` was blocked by CSP and its violation reported by the
+    /// element's own check. The layout engine fetches the same image again when it draws the
+    /// element ([`PageDom::take_blocked_image`]); that second request is the same one, not a
+    /// second violation (Chrome reports an image once).
+    pub fn note_blocked_image(&self, node: NodeId, url: &str) {
+        let mut state = self.csp_reports.borrow_mut();
+        let state = state.for_doc(self.document());
+        // An element has one current request: its earlier note is superseded.
+        state.blocked_images.retain(|(n, _)| *n != node);
+        if state.blocked_images.len() < MAX_BLOCKED_IMAGES {
+            state.blocked_images.push((node, url.to_owned()));
+        }
+    }
+
+    /// Whether `url` was noted by [`PageDom::note_blocked_image`] for an element that is still
+    /// `live(node, url)` (still has that request) and not yet taken; taking forgets one note, so
+    /// a later request for the same URL is reported again. Notes of elements that are no longer
+    /// live are dropped here, so a stale one never stands in for a later request.
+    pub fn take_blocked_image(&self, url: &str, live: &dyn Fn(NodeId, &str) -> bool) -> bool {
+        let mut state = self.csp_reports.borrow_mut();
+        let state = state.for_doc(self.document());
+        state.blocked_images.retain(|(node, noted)| live(*node, noted));
+        match state.blocked_images.iter().position(|(_, u)| u == url) {
+            Some(i) => {
+                state.blocked_images.remove(i);
+                true
+            }
+            None => false,
+        }
     }
 }
 
@@ -345,7 +437,9 @@ fn plan(page: &PageDom, v: &Violation, targets: &ReportTargets) -> Vec<Planned> 
     let mut state = page.csp_reports.borrow_mut();
     let state = state.for_doc(page.document());
     if let Some(group) = &targets.group {
-        let Some(endpoint) = state.endpoint(group) else { return Vec::new() };
+        let Some(endpoint) = state.endpoint(group).or_else(|| crate::reporting_store::report_to_endpoint(page, group)) else {
+            return Vec::new();
+        };
         if !state.take_slot() {
             return Vec::new();
         }
@@ -383,6 +477,14 @@ pub(crate) fn completed(page: &PageDom, v: &Violation) -> Violation {
 /// Delivers the reports of violation `v` of the page's document to `targets` (CSP 3 "report a
 /// violation", after its event). Returns the number of requests started.
 pub fn report_violation(page: &Rc<PageDom>, v: &Violation, targets: &ReportTargets) -> usize {
+    report_violation_from(page, v, targets, None)
+}
+
+/// [`report_violation`] for a violation of a response that never became a document (a
+/// `frame-ancestors` one): `page` only supplies the network and the slots, and `origin` (the
+/// response's, `None`: the page's) is the report request's origin, so a report to the embedder's
+/// origin is cross-origin for it and carries no cookies.
+pub fn report_violation_from(page: &Rc<PageDom>, v: &Violation, targets: &ReportTargets, origin: Option<&str>) -> usize {
     if targets.group.is_none() && targets.uris.is_empty() {
         return 0;
     }
@@ -390,37 +492,127 @@ pub fn report_violation(page: &Rc<PageDom>, v: &Violation, targets: &ReportTarge
     let v = completed(page, v);
     let mut started = 0;
     for (endpoint, delivery, body) in plan(page, &v, targets) {
-        net.fetch(report_request(page, endpoint, delivery, body), Box::new(|_| {}));
+        let mut request = report_request(page, endpoint, delivery, body);
+        if let Some(origin) = origin {
+            request.origin = Some(origin.to_owned());
+        }
+        net.fetch(request, Box::new(|_| {}));
         started += 1;
     }
     started
 }
 
-/// Sends one Reporting API report of `report_type` from `url`, with `body`, to the endpoint the
-/// page's document names `group` (a `deprecation` report goes to `default`), sharing the
-/// document's cap with its CSP reports. Whether a request started: none without a network, an
-/// endpoint of that name, or a free slot.
+/// Queues one Reporting API report of `report_type` from `url`, with `body`, for the endpoint
+/// the page's document names `group` (a `deprecation` report goes to `default`), sharing the
+/// document's cap with its CSP reports. It goes out at the end of the current task, in one
+/// request with the other reports of this document for the same endpoint ([`flush_pending`]).
+/// Whether it was queued: not without a network, an endpoint of that name (the document's
+/// `Reporting-Endpoints`, else a `Report-To` group of its origin), or a free slot.
 pub(crate) fn report_to_group(page: &Rc<PageDom>, group: &str, report_type: &str, url: &str, body: Json) -> bool {
-    let Some(net) = page.net.borrow().clone() else { return false };
-    let endpoint = {
+    enqueue_report(page, group, report_type, url, body)
+}
+
+fn enqueue_report(page: &Rc<PageDom>, group: &str, report_type: &str, url: &str, body: Json) -> bool {
+    if page.net.borrow().is_none() {
+        return false;
+    }
+    let from_document = page.csp_reports.borrow_mut().for_doc(page.document()).endpoint(group);
+    let Some(endpoint) = from_document.or_else(|| crate::reporting_store::report_to_endpoint(page, group)) else {
+        return false;
+    };
+    enqueue_to(page, endpoint, report_type, url, body)
+}
+
+/// [`report_to_group`] for an endpoint URL the caller resolved (a redirect response's
+/// `Reporting-Endpoints`, which no document of its own shows).
+pub(crate) fn report_to_url(page: &Rc<PageDom>, endpoint: Url, report_type: &str, url: &str, body: Json) -> bool {
+    page.net.borrow().is_some() && enqueue_to(page, endpoint, report_type, url, body)
+}
+
+fn enqueue_to(page: &Rc<PageDom>, endpoint: Url, report_type: &str, url: &str, body: Json) -> bool {
+    let origin = page.document_url_parsed().map(|u| u.origin().ascii_serialization()).unwrap_or_else(|| "null".into());
+    let first = {
         let mut state = page.csp_reports.borrow_mut();
         let state = state.for_doc(page.document());
-        let Some(endpoint) = state.endpoint(group) else { return false };
         if !state.take_slot() {
             return false;
         }
-        endpoint
+        let report = Queued { report_type: report_type.to_owned(), url: url.to_owned(), body, at: std::time::Instant::now() };
+        match state.pending.iter_mut().find(|b| b.endpoint == endpoint) {
+            Some(batch) => batch.reports.push(report),
+            None => state.pending.push(Batch { endpoint, origin, reports: vec![report] }),
+        }
+        !std::mem::replace(&mut state.flush_queued, true)
     };
-    let json = reporting_api_list(report_type, url, &crate::window::user_agent(page), body);
-    net.fetch(report_request(page, endpoint, Delivery::ReportingApi, json), Box::new(|_| {}));
+    if first {
+        let weak = Rc::downgrade(page);
+        page.post_task(Box::new(move || {
+            if let Some(page) = weak.upgrade() {
+                flush_pending(&page);
+            }
+        }));
+    }
     true
+}
+
+/// Sends the reports [`report_to_group`] queued: one `application/reports+json` list per
+/// endpoint, each report's `age` the milliseconds since it was generated. Runs at the end of the
+/// task that queued them, before the document is replaced (`set_reporting_endpoints`) and when
+/// it is disposed. A page without a network drops them. Only the first attempt is made: Chrome's
+/// retry of a failed upload (a minute's backoff, five attempts) is not implemented.
+pub(crate) fn flush_pending(page: &PageDom) {
+    let batches = {
+        let mut state = page.csp_reports.borrow_mut();
+        state.flush_queued = false;
+        std::mem::take(&mut state.pending)
+    };
+    if batches.is_empty() {
+        return;
+    }
+    let Some(net) = page.net.borrow().clone() else { return };
+    let user_agent = crate::window::user_agent(page);
+    let now = std::time::Instant::now();
+    for batch in batches {
+        let list: Vec<Json> = batch
+            .reports
+            .into_iter()
+            .map(|r| {
+                let age = now.saturating_duration_since(r.at).as_millis() as u64;
+                report_value(&r.report_type, &r.url, &user_agent, age, r.body)
+            })
+            .collect();
+        let mut request = report_request(page, batch.endpoint, Delivery::ReportingApi, Json::Array(list).to_string());
+        request.origin = Some(batch.origin);
+        net.fetch(request, Box::new(|_| {}));
+    }
+}
+
+/// CSP Integrity: the `csp-hash` reports a fetched script owes the document's policies that ask
+/// for its hashes (`'report-sha256'`...), sent to each policy's `report-to` endpoint. `data` is
+/// the response body, `None` for one the page may not read (a cross-origin no-CORS response:
+/// reported with an empty hash). No `securitypolicyviolation` and no `ReportingObserver` entry:
+/// nothing is blocked, the report only goes out. `url`: the script's request URL.
+pub fn report_script_hashes(page: &Rc<PageDom>, list: &pyro_net::csp::PolicyList, url: &str, data: Option<&[u8]>) {
+    for (group, algorithms) in list.script_hash_reports() {
+        let Some(group) = group else { continue };
+        for algorithm in algorithms {
+            let hash = data.and_then(|data| pyro_net::csp::hash_expression(algorithm, data)).unwrap_or_default();
+            let mut body = Map::new();
+            body.insert("documentURL".to_owned(), strip_url_for_report(&page.document_url()).into());
+            body.insert("subresourceURL".to_owned(), strip_url_for_report(url).into());
+            body.insert("hash".to_owned(), hash.into());
+            body.insert("type".to_owned(), "subresource".into());
+            body.insert("destination".to_owned(), "script".into());
+            let document = strip_url_for_report(&page.document_url());
+            report_to_group(page, &group, "csp-hash", &document, Json::Object(body));
+        }
+    }
 }
 
 /// The report POST of `body` to `endpoint`, as `delivery` makes it.
 fn report_request(page: &PageDom, endpoint: Url, delivery: Delivery, body: String) -> Request {
-    // Both specs use destination "report". pyro-net has no such destination, and the beacon
-    // one has the same request shape: a POST that outlives its document.
-    let mut request = Request::get(endpoint, Destination::Beacon);
+    // Both specs use destination "report" (`Sec-Fetch-Dest: report`).
+    let mut request = Request::get(endpoint, Destination::Report);
     request.method = Method::POST;
     request.headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(delivery.content_type()));
     request.body = Some(Bytes::from(body));
@@ -663,6 +855,48 @@ mod tests {
         assert_eq!(body["sourceFile"], "https://a.test/s.js");
         assert_eq!(body["lineNumber"], 3);
         assert_eq!(body["columnNumber"], 7);
+    }
+
+    #[test]
+    fn report_value_carries_age_and_fields() {
+        let json = report_value("test", "https://a.test/", "UA", 1500, serde_json::json!({"message": "m"}));
+        assert_eq!(json["age"], 1500);
+        assert_eq!(json["type"], "test");
+        assert_eq!(json["body"]["message"], "m");
+    }
+
+    #[test]
+    fn reporting_headers_pack_and_unpack() {
+        assert_eq!(pack_reporting_headers(None, None), None);
+        assert_eq!(pack_reporting_headers(Some("a=\"/x\"".into()), None).as_deref(), Some("a=\"/x\""));
+        assert_eq!(pack_reporting_headers(None, Some("{}".into())).as_deref(), Some("\n{}"));
+        // A Report-To only response gives the document no Reporting-Endpoints, and its groups
+        // reach the store, resolving a name the document lacks.
+        let (page, _dom) = page("https://a.test/doc");
+        page.set_reporting_endpoints(pack_reporting_headers(
+            Some(r#"own="/own""#.into()),
+            Some(r#"{"group":"legacy","max_age":60,"endpoints":[{"url":"/legacy"}]}"#.into()),
+        ).as_deref());
+        let targets = ReportTargets::from_policy("img-src 'none'; report-to legacy", false);
+        let planned = plan(&page, &violation(), &targets);
+        assert_eq!(planned.len(), 1);
+        assert_eq!(planned[0].0.as_str(), "https://a.test/legacy");
+        let own = ReportTargets::from_policy("img-src 'none'; report-to own", false);
+        assert_eq!(plan(&page, &violation(), &own)[0].0.as_str(), "https://a.test/own");
+    }
+
+    #[test]
+    fn blocked_image_notes_are_taken_once() {
+        let (page, _dom) = page("https://a.test/doc");
+        let node = page.document();
+        let (live, gone) = (|_: NodeId, _: &str| true, |_: NodeId, _: &str| false);
+        assert!(!page.take_blocked_image("https://a.test/i.png", &live));
+        page.note_blocked_image(node, "https://a.test/i.png");
+        assert!(page.take_blocked_image("https://a.test/i.png", &live));
+        assert!(!page.take_blocked_image("https://a.test/i.png", &live));
+        page.note_blocked_image(node, "https://a.test/i.png");
+        assert!(!page.take_blocked_image("https://a.test/i.png", &gone), "a note of an element that moved on is dropped");
+        assert!(!page.take_blocked_image("https://a.test/i.png", &live));
     }
 
     #[test]

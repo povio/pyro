@@ -54,6 +54,10 @@ pub struct RenderSnapshot {
     /// Bitmaps of the canvases drawn on (`PageDom::canvas_bitmaps`), in
     /// every form.
     pub canvases: Vec<crate::canvas::CanvasBitmap>,
+    /// The elements among `canvases` whose pixels a page must not read back (a video frame of
+    /// media of another origin without CORS: `current_frame`'s `clean` is false), which the
+    /// renderer marks so that the HTML-in-Canvas privacy paint taints the canvas.
+    pub tainting_canvases: Vec<NodeId>,
     /// An XML document (`pyro_dom::Dom::is_xml_document`), in every form.
     pub xml_document: bool,
     /// A document in quirks mode (`pyro_dom::Dom::is_quirks_mode`), in every form.
@@ -164,7 +168,13 @@ impl PageDom {
             layout.snap_initial_positions(&dom);
         }
         let mut canvases = self.canvas_bitmaps();
-        canvases.extend(self.video_bitmaps());
+        let mut tainting_canvases = Vec::new();
+        for (bitmap, clean) in self.video_frames() {
+            if !clean {
+                tainting_canvases.push(bitmap.0);
+            }
+            canvases.push(bitmap);
+        }
         let selection = crate::editing::selection_range(self);
         let dom = self.dom.borrow();
         let selected_replaced = selection.map_or_else(Vec::new, |range| replaced_in(&dom, self.document(), range));
@@ -203,6 +213,7 @@ impl PageDom {
         let layout = self.layout();
         RenderSnapshot {
             canvases,
+            tainting_canvases,
             selection,
             highlights,
             control_selection,
@@ -273,6 +284,7 @@ fn snapshot_of(
             hovered: dom.hovered(document).map(pyro_dom::snapshot::render_key),
             focused: dom.focused(document).ok().flatten().map(pyro_dom::snapshot::render_key),
             canvases: Vec::new(),
+            tainting_canvases: Vec::new(),
             xml_document: dom.is_xml_document(document),
             quirks_mode: dom.is_quirks_mode(document),
             limited_quirks_mode: dom.is_limited_quirks_mode(document),

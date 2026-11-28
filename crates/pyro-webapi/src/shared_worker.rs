@@ -81,6 +81,8 @@ struct SharedInner {
     shared: Arc<Shared>,
     state: RefCell<State>,
     clients: RefCell<Vec<Client>>,
+    /// The worker as a service worker client.
+    sw_client: Option<Rc<crate::service_worker::WorkerClient>>,
 }
 
 thread_local! {
@@ -106,7 +108,7 @@ impl SharedInner {
                     let _ = handle.post(move |state| match item {
                         Early::Message(message) => state.receive(message),
                         Early::Inspect(task) => state.inspect(task),
-                        Early::Connect(message) => state.connect(message),
+                        Early::Connect(message, check) => state.connect(message, check),
                     });
                 }
                 *self.state.borrow_mut() = State::Running(handle);
@@ -118,11 +120,11 @@ impl SharedInner {
         }
     }
 
-    fn connect(self: &Rc<Self>, message: WireMessage) {
+    fn connect(self: &Rc<Self>, message: WireMessage, check: worker_scope::ConnectCheck) {
         match &mut *self.state.borrow_mut() {
-            State::Held(start) => start.early.push(Early::Connect(message)),
+            State::Held(start) => start.early.push(Early::Connect(message, check)),
             State::Running(handle) => {
-                let _ = handle.post(move |state| state.connect(message));
+                let _ = handle.post(move |state| state.connect(message, check));
             }
             State::Failed | State::Closed => {}
         }
@@ -191,6 +193,19 @@ pub(crate) fn deliver_up(id: u64, up: Up) {
     match up {
         Up::LoadFailed => worker.fail_to_load(),
         Up::Closed => worker.finish(),
+        // The worker's embedder policy is weaker than the connecting document's: `error` at that object only.
+        Up::ConnectRefused(client) => {
+            let refused = {
+                let mut clients = worker.clients.borrow_mut();
+                clients.iter().position(|c| matches!(c.key, TargetKey::Other(k) if k == client)).map(|i| clients.remove(i))
+            };
+            if let Some(client) = refused {
+                reject_client_later(client);
+                if worker.clients.borrow().is_empty() {
+                    worker.finish();
+                }
+            }
+        }
         // The owner's CSP, violated on the worker's thread: reported at a connected document.
         Up::Violations(violations) => {
             let page = worker.clients.borrow().iter().find_map(|c| c.page.upgrade().filter(|p| !p.is_disposed()));
@@ -251,7 +266,8 @@ impl JsClass for SharedWorker {
             if page.is_disposed() {
                 return Err(JsError::ContextDestroyed);
             }
-            let input = dom_string(a.get(0))?;
+            // Trusted Types: the script URL is a TrustedScriptURL sink ("SharedWorker constructor").
+            let input = crate::trusted_types::compliant_string(s, &page, crate::trusted_types::Kind::ScriptUrl, a.get(0), "SharedWorker constructor", false)?;
             let mut name = String::new();
             let mut module = false;
             let mut credentials = Credentials::SameOrigin;
@@ -342,10 +358,11 @@ impl JsClass for SharedWorker {
             // A live worker retains its context's network client. A different
             // profile or top-level site must not reuse that worker's cookie jar.
             let network_context = page.net.borrow().as_ref().map_or(0, |net| Arc::as_ptr(net.cookies()) as usize);
+            let resolved_url = resolved.clone();
             let key = WorkerKey {
                 network_context,
                 cross_site_ancestor: page.cookie_site_context() == pyro_net::cookies::SiteContext::CrossSite,
-                top_level_site: page.cookie_partition_key().unwrap_or_else(|| format!("opaque-page:{}", page.id())),
+                top_level_site: page.storage_partition_key().unwrap_or_else(|| format!("opaque-page:{}", page.id())),
                 origin,
                 url: resolved,
                 name: name.clone(),
@@ -367,11 +384,38 @@ impl JsClass for SharedWorker {
                         down_bytes: AtomicUsize::new(0),
                         up_bytes: AtomicUsize::new(0),
                     });
+                    // A service worker client, controlled by the registration its script URL matches.
+                    let alive = shared.clone();
+                    let sw_client = crate::service_worker::worker_client(
+                        &page,
+                        &url,
+                        "sharedworker",
+                        Box::new(move || !alive.closing.load(Ordering::Acquire)),
+                    );
+                    let control = sw_client.as_ref().map(|c| c.link());
                     let start = WorkerStart::new(id, &page, s, url, name, shared.clone()).map(|mut start| {
+                        start.control = control;
                         start.shared_worker = true;
+                        // A Document-Isolation-Policy does not apply to a shared worker: it does not start with
+                        // its creator's (a `blob:` one inherits the creator's COEP, which a DIP is not).
+                        let reporting = &mut start.embedder_reporting;
+                        if reporting.dip {
+                            start.embedder_policy = pyro_net::EmbedderPolicy::UnsafeNone;
+                            reporting.report_to = None;
+                            reporting.dip = false;
+                        }
+                        if reporting.report_only_dip {
+                            reporting.report_only = pyro_net::EmbedderPolicy::UnsafeNone;
+                            reporting.report_only_report_to = None;
+                            reporting.report_only_dip = false;
+                        }
+                        start.owner_embedder = worker_scope::OwnerEmbedder::of(&page, true);
                         start.module = module;
                         start.credentials = credentials;
                         start.csp = csp;
+                        // The script request's referrer: the creating document, under its policy
+                        // (HTML "fetch a classic/module worker script graph" uses the outside settings).
+                        start.referrer = page.client_referrer().map(|r| (r, page.referrer_policy()));
                         start
                     });
                     // A template process (`serve --fork`) starts no thread.
@@ -387,6 +431,7 @@ impl JsClass for SharedWorker {
                         shared,
                         state: RefCell::new(state),
                         clients: RefCell::new(Vec::new()),
+                        sw_client,
                     });
                     WORKERS.with(|w| w.borrow_mut().insert(key, worker.clone()));
                     BY_ID.with(|b| b.borrow_mut().insert(id, Rc::downgrade(&worker)));
@@ -398,7 +443,15 @@ impl JsClass for SharedWorker {
                 worker.fail_later();
                 return Ok(object);
             }
-            worker.connect(message);
+            let check = worker_scope::ConnectCheck {
+                owner: worker_scope::OwnerEmbedder::of(&page, true),
+                client: match client_key {
+                    TargetKey::Other(k) => k,
+                    _ => unreachable!(),
+                },
+                url: resolved_url,
+            };
+            worker.connect(message, check);
             worker.start();
             Ok(object)
         });

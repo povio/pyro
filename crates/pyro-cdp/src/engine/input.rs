@@ -277,20 +277,48 @@ impl EngineHost {
                     return Err(CdpError::invalid_params("Invalid mouse coordinates or button mask"));
                 }
                 let pressure = if p.buttons == 0 { 0.0 } else { 0.5 };
-                if p.pointer_type.as_deref().is_some_and(|v| v != "mouse")
-                    || p.force.is_some_and(|v| v != pressure)
-                    || p.tangential_pressure != 0.0
-                    || p.tilt_x != 0
-                    || p.tilt_y != 0
-                    || p.twist != 0
-                    || p.timestamp.is_some()
-                {
-                    return Err(CdpError::unsupported("Input pen, custom pressure or timestamp"));
+                if p.timestamp.is_some() {
+                    return Err(CdpError::unsupported("Input timestamp"));
                 }
+                // A pen carries its pressure, tilt and twist (ranges as Chrome checks them);
+                // the mouse has none of them.
+                let pen = match p.pointer_type.as_deref() {
+                    None | Some("mouse") => {
+                        if p.force.is_some_and(|v| v != pressure)
+                            || p.tangential_pressure != 0.0
+                            || p.tilt_x != 0
+                            || p.tilt_y != 0
+                            || p.twist != 0
+                        {
+                            return Err(CdpError::unsupported("Input custom pressure, tilt or twist for a mouse"));
+                        }
+                        None
+                    }
+                    Some("pen") => {
+                        let force = p.force.unwrap_or(0.5);
+                        if !(0.0..=1.0).contains(&force)
+                            || !(-1.0..=1.0).contains(&p.tangential_pressure)
+                            || !(-90..=90).contains(&p.tilt_x)
+                            || !(-90..=90).contains(&p.tilt_y)
+                            || p.twist > 359
+                        {
+                            return Err(CdpError::invalid_params("Invalid pen pressure, tilt or twist"));
+                        }
+                        Some(input::PenState {
+                            tilt_x: p.tilt_x as f64,
+                            tilt_y: p.tilt_y as f64,
+                            twist: p.twist as f64,
+                            pressure: force,
+                            tangential_pressure: p.tangential_pressure,
+                        })
+                    }
+                    Some(_) => return Err(CdpError::invalid_params("Invalid pointer type")),
+                };
                 // A point over an iframe goes to its document, in its own
                 // viewport coordinates (recursively); only the innermost
                 // document receives the mouse events.
-                let (page, x, y) = self.descend_into_frames(native_id, page, p.x, p.y);
+                let frames = self.frame_chain(native_id, page, p.x, p.y);
+                let Some((page, x, y, _)) = frames.last().cloned() else { return Err(CdpError::server("page is gone")) };
                 let mouse = MouseInput {
                     x,
                     y,
@@ -300,12 +328,50 @@ impl EngineHost {
                     modifiers: modifiers(p.modifiers)?,
                     delta_x: p.delta_x,
                     delta_y: p.delta_y,
+                    pen,
+                    ..MouseInput::default()
                 };
+                // The documents around the innermost one hear the pointer too: the frames it left see it go, the
+                // parents see it over the frame's element.
+                if kind != MouseKind::Wheel {
+                    self.update_frame_hover(cmd.page, &frames, &mouse);
+                }
                 let intercept = self.pages.get(&cmd.page).is_some_and(|state| state.intercept_drags);
-                let dragged = input::dispatch_mouse_intercepting_drags(&page, kind, &mouse, intercept)
+                // A drag the engine drives: the pointer stream ended at its start, moves feed the
+                // target under the pointer and the release drops (Chrome's own drag loop).
+                let native = self.pages.get_mut(&cmd.page).and_then(|state| state.native_drag.take());
+                if let Some((source, data)) = native {
+                    if source.is_disposed() || kind == MouseKind::Pressed {
+                        let _ = input::dispatch_drag(&source, DragKind::Cancel, mouse.x, mouse.y, &data, mouse.modifiers);
+                    } else {
+                        let result = match kind {
+                            MouseKind::Moved => input::dispatch_drag(&source, DragKind::Over, mouse.x, mouse.y, &data, mouse.modifiers),
+                            MouseKind::Released => input::dispatch_drag(&source, DragKind::Drop, mouse.x, mouse.y, &data, mouse.modifiers),
+                            _ => Ok(()),
+                        };
+                        if kind != MouseKind::Released && result.is_ok() {
+                            if let Some(state) = self.pages.get_mut(&cmd.page) {
+                                state.native_drag = Some((source, data));
+                            }
+                        } else if kind == MouseKind::Released {
+                            // (A drop that failed has nothing left to end.)
+                            let _ = result;
+                        }
+                        return Ok(Some(json!({})));
+                    }
+                }
+                // Without interception a drag that starts is still started, and driven here.
+                let dragged = input::dispatch_mouse_intercepting_drags(&page, kind, &mouse, true)
                     .map_err(CdpError::server)?;
                 if let Some(data) = dragged {
-                    self.event("Input.dragIntercepted", &drag_data_json(&data), cmd.session_id);
+                    if intercept {
+                        self.event("Input.dragIntercepted", &drag_data_json(&data), cmd.session_id);
+                    } else {
+                        let _ = input::dispatch_drag(&page, DragKind::Enter, mouse.x, mouse.y, &data, mouse.modifiers);
+                        if let Some(state) = self.pages.get_mut(&cmd.page) {
+                            state.native_drag = Some((page.clone(), data));
+                        }
+                    }
                 }
             }
             "dispatchTouchEvent" => self.dispatch_touch(cmd, native_id, page)?,
@@ -342,6 +408,7 @@ impl EngineHost {
                         })
                         .collect(),
                     drag_operations_mask: p.data.drag_operations_mask,
+                    from_source: false,
                 };
                 input::dispatch_drag(&page, kind, p.x, p.y, &data, modifiers(p.modifiers)?)
                     .map_err(CdpError::server)?;
@@ -473,6 +540,64 @@ impl EngineHost {
             state.touches = touches;
         }
         result.map_err(CdpError::server)
+    }
+
+    /// The documents of the frames under (x, y), outermost (the page's) first, each with the point in its own viewport
+    /// coordinates and, for all but the innermost, the element of it that owns the next frame.
+    fn frame_chain(
+        &self,
+        page_id: pyro_browser::PageId,
+        mut page: Rc<pyro_webapi::PageDom>,
+        mut x: f64,
+        mut y: f64,
+    ) -> Vec<(Rc<pyro_webapi::PageDom>, f64, f64, Option<pyro_dom::NodeId>)> {
+        let mut chain = Vec::new();
+        for _ in 0..32 {
+            let next = if self.thread.browser.has_child_frames(page_id) {
+                (|| {
+                    let node = pyro_webapi::layout_api::hit_test(&page, x, y)?;
+                    let frame_id = self.thread.browser.frame_of_owner(page_id, node)?;
+                    let child = self.thread.browser.with_frame(page_id, &frame_id, |f| f.page_dom.clone()).flatten()?;
+                    // The child viewport starts at the iframe's content box.
+                    let local = super::dom::FrameTransform::of_owner(&page, node)?.inverse_point(x, y)?;
+                    Some((node, child, local))
+                })()
+            } else {
+                None
+            };
+            match next {
+                Some((owner, child, (lx, ly))) => {
+                    chain.push((page.clone(), x, y, Some(owner)));
+                    (page, x, y) = (child, lx, ly);
+                }
+                None => {
+                    chain.push((page, x, y, None));
+                    break;
+                }
+            }
+        }
+        chain
+    }
+
+    /// Mouse hover across frames: a document the pointer was over and no longer is hears it leave, deepest first
+    /// (`pointerout`/`pointerleave`), then each document above the innermost has its frame's owner element hovered.
+    fn update_frame_hover(
+        &mut self,
+        key: crate::target::PageKey,
+        chain: &[(Rc<pyro_webapi::PageDom>, f64, f64, Option<pyro_dom::NodeId>)],
+        mouse: &MouseInput,
+    ) {
+        let now: Vec<Rc<pyro_webapi::PageDom>> = chain.iter().map(|c| c.0.clone()).collect();
+        let Some(state) = self.pages.get_mut(&key) else { return };
+        let before = std::mem::replace(&mut state.hover_documents, now.clone());
+        for doc in before.iter().rev().filter(|d| !now.iter().any(|n| Rc::ptr_eq(n, d))) {
+            input::pointer_left_document(doc, mouse);
+        }
+        for (doc, x, y, owner) in chain {
+            if let Some(owner) = owner {
+                input::pointer_over_frame_owner(doc, *owner, &MouseInput { x: *x, y: *y, ..mouse.clone() });
+            }
+        }
     }
 
     /// The innermost frame document under (x, y) and the point in its

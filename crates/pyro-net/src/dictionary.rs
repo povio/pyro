@@ -384,15 +384,19 @@ impl Dictionaries {
 pub(crate) struct ClearSiteData {
     pub cache: bool,
     pub cookies: bool,
+    /// `"prefetchCache"`, which `"cache"` and `"*"` include: the origin's speculation-rules
+    /// prefetches (`NetClient::prefetch_cache_cleared_since`) are dropped.
+    pub prefetch_cache: bool,
 }
 
 pub(crate) fn clear_site_data(headers: &HeaderMap) -> ClearSiteData {
     let mut out = ClearSiteData::default();
     for t in headers.get_all(CLEAR_SITE_DATA).iter().filter_map(|v| v.to_str().ok()).flat_map(|v| v.split(',')) {
         match t.trim() {
-            "\"cache\"" => out.cache = true,
+            "\"cache\"" => (out.cache, out.prefetch_cache) = (true, true),
+            "\"prefetchCache\"" => out.prefetch_cache = true,
             "\"cookies\"" => out.cookies = true,
-            "\"*\"" => (out.cache, out.cookies) = (true, true),
+            "\"*\"" => (out.cache, out.cookies, out.prefetch_cache) = (true, true, true),
             _ => {}
         }
     }
@@ -467,9 +471,9 @@ mod tests {
         h.insert(CLEAR_SITE_DATA, HeaderValue::from_static("\"storage\""));
         assert_eq!(clear_site_data(&h), ClearSiteData::default());
         h.insert(CLEAR_SITE_DATA, HeaderValue::from_static("\"storage\", \"cookies\""));
-        assert_eq!(clear_site_data(&h), ClearSiteData { cache: false, cookies: true });
+        assert_eq!(clear_site_data(&h), ClearSiteData { cache: false, cookies: true, prefetch_cache: false });
         h.insert(CLEAR_SITE_DATA, HeaderValue::from_static("\"*\""));
-        assert_eq!(clear_site_data(&h), ClearSiteData { cache: true, cookies: true });
+        assert_eq!(clear_site_data(&h), ClearSiteData { cache: true, cookies: true, prefetch_cache: true });
         d.clear_origin(&url);
         assert!(best(&d).is_none());
     }

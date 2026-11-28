@@ -118,7 +118,7 @@ pub use self::svg::{SVGPaintOrder, SVGStrokeDashArray, SVGWidth, VectorEffect};
 pub use self::svg_path::SVGPathData;
 pub use self::table::{BorderCollapse, EmptyCells, TableLayout};
 pub use self::text::{
-    HyphenateCharacter, HyphenateLimitChars, Hyphens, RubyAlign, RubyPosition, TextCombineUpright,
+    HyphenateCharacter, HyphenateLimitChars, Hyphens, RubyAlign, RubyOverhang, RubyPosition, TextCombineUpright,
     TextDecorationStyle, TextRendering, TextSecurity, TextSizeAdjust, TextWrapMode, TextWrapStyle,
     UnicodeBidi, WhiteSpaceCollapse,
 };

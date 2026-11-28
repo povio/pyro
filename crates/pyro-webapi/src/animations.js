@@ -162,12 +162,18 @@
 
   // An easing's canonical text and function; a TypeError for anything else.
   function parseEasing(value) {
-    const text = String(value).trim();
+    // CSS escapes in the keyword/function name ('Ease\2d in-out').
+    const text = String(value).trim().replace(/\\([0-9a-f]{1,6})[ \t\n\r\f]?|\\([^0-9a-f\n])/gi, (_, hex, ch) => {
+      if (ch !== undefined) return ch;
+      const cp = parseInt(hex, 16);
+      return cp === 0 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff) ? '\ufffd' : String.fromCodePoint(cp);
+    });
     const lower = text.toLowerCase();
     if (lower === 'linear') return { text: 'linear', fn: x => x };
     if (lower in KEYWORDS) {
       const parsed = parseEasing(KEYWORDS[lower]);
-      return { text: lower, fn: parsed.fn };
+      // Chrome serializes the step keywords as their steps() equivalents.
+      return { text: lower === 'step-start' || lower === 'step-end' ? parsed.text : lower, fn: parsed.fn };
     }
     let m = BEZIER.exec(text);
     if (m) {
@@ -218,6 +224,14 @@
     return n;
   };
 
+  // A CSSNumberish timing member: a percentage (progress-based timelines; a CSSUnitValue) or a
+  // number of milliseconds. `pct` tells which, so getTiming() hands back what was set.
+  const isPercentValue = v => typeof CSSUnitValue === 'function' && v instanceof CSSUnitValue && v.unit === 'percent';
+  function timingNumber(v, what) {
+    if (isPercentValue(v)) return { n: v.value, pct: true };
+    return { n: toDouble(v, what), pct: false };
+  }
+
   function defaultTiming() {
     return {
       delay: 0, endDelay: 0, fill: 'auto', iterationStart: 0, iterations: 1, duration: 'auto',
@@ -234,13 +248,16 @@
       const n = Number(input);
       if (Number.isNaN(n) || n < 0) throw new TypeError('duration must be a non-negative number');
       next.duration = n;
+      if (next.pct) next.pct = { ...next.pct, duration: false };
       return next;
     }
     if (input === undefined || input === null) return next;
     if (!isObject(input)) throw new TypeError('The provided value is not of type EffectTiming');
     const has = k => input[k] !== undefined;
     // Read in WebIDL dictionary (alphabetical) order.
-    if (has('delay')) next.delay = toDouble(input.delay, 'delay');
+    const pct = { ...(timing.pct || {}) };
+    next.pct = pct;
+    if (has('delay')) { const r = timingNumber(input.delay, 'delay'); next.delay = r.n; pct.delay = r.pct; }
     if (has('direction')) {
       const d = String(input.direction);
       if (!DIRECTIONS.includes(d)) throw new TypeError(`'${d}' is not a valid value for direction`);
@@ -248,7 +265,12 @@
     }
     if (has('duration')) {
       const d = input.duration;
-      if (typeof d === 'string') {
+      pct.duration = false;
+      if (isPercentValue(d)) {
+        if (!(d.value >= 0)) throw new TypeError('duration must be a non-negative number');
+        next.duration = d.value;
+        pct.duration = true;
+      } else if (typeof d === 'string') {
         if (d !== 'auto') throw new TypeError(`'${d}' is not a valid value for duration`);
         next.duration = 'auto';
       } else {
@@ -258,7 +280,7 @@
       }
     }
     if (has('easing')) next.easing = parseEasing(input.easing);
-    if (has('endDelay')) next.endDelay = toDouble(input.endDelay, 'endDelay');
+    if (has('endDelay')) { const r = timingNumber(input.endDelay, 'endDelay'); next.endDelay = r.n; pct.endDelay = r.pct; }
     if (has('fill')) {
       const f = String(input.fill);
       if (!FILLS.includes(f)) throw new TypeError(`'${f}' is not a valid value for fill`);
@@ -335,7 +357,11 @@
     }
     const directed = forwards ? simple : 1 - simple;
     out.directed = directed;
-    const before = (out.phase === 'before' && !backwards) || (out.phase === 'after' && backwards);
+    let before = (out.phase === 'before' && !backwards) || (out.phase === 'after' && backwards);
+    // The limit side follows the current direction: when the directed progress runs backwards the
+    // before/after phases approach from the other side.
+    if (!forwards && out.phase !== 'active') before = !before;
+    out.before = before;
     out.progress = t.easing.fn(directed, before);
     return out;
   }
@@ -343,6 +369,10 @@
   // ----- keyframes ----------------------------------------------------------
 
   const COMPOSITES = ['replace', 'add', 'accumulate'];
+  // Properties no animation type is defined for (CSS Animations / Transitions, contain, writing
+  // mode and the like): members naming them are not read when processing keyframes.
+  const NOT_ANIMATABLE = /^(?:animation|transition|scroll-timeline|view-timeline|timeline-scope)(?:-|$)|^(?:contain|direction|text-combine-upright|text-orientation|unicode-bidi|will-change|writing-mode)$/;
+
   // A keyframe member name to its CSS property, or null for anything that is
   // not an animatable property.
   function propertyOf(member) {
@@ -352,14 +382,69 @@
     if (member === 'float' || member === 'offset') return null;
     if (member.startsWith('--')) return member;
     if (/[A-Z]/.test(member[0]) || member.includes('-')) return null;
-    return cssName(member);
+    const name = cssName(member);
+    return name !== null && NOT_ANIMATABLE.test(name) ? null : name;
   }
   function stringValue(v) {
     if (typeof v === 'symbol') throw new TypeError('Cannot convert a Symbol value to a string');
     return String(v);
   }
+  // A keyframe offset at a position of a timeline range (`cover 25%`, Scroll-driven Animations 1
+  // "named range keyframes"): `{rangeName, pct}`; its computed offset depends on the animation's
+  // timeline (`frameOffset`).
+  const KEYFRAME_RANGE_NAMES = ['cover', 'contain', 'entry', 'exit', 'entry-crossing', 'exit-crossing'];
+  const isRangeOffset = v => v !== null && typeof v === 'object' && typeof v.rangeName === 'string';
+  const NUMBER_TEXT = '[+-]?(?:\\d+\\.?\\d*|\\.\\d+)(?:e[+-]?\\d+)?';
+  const RANGE_TEXT = new RegExp(`^(${KEYFRAME_RANGE_NAMES.join('|')})\\s+(${NUMBER_TEXT})%$`, 'i');
+  const PERCENT_TEXT = new RegExp(`^(${NUMBER_TEXT})%$`, 'i');
+  // `calc()` of numbers and percentages joined by + and -: its number.
+  function calcOffset(text) {
+    const m = /^calc\((.*)\)$/i.exec(text);
+    if (!m) return null;
+    const re = new RegExp(`\\s*([+-])?\\s*(${NUMBER_TEXT})(%?)\\s*`, 'iy');
+    let sum = 0, at = 0, first = true;
+    while (at < m[1].length) {
+      re.lastIndex = at;
+      const t = re.exec(m[1]);
+      if (!t || (!first && !t[1])) return null;
+      const value = Number(t[2]) / (t[3] ? 100 : 1);
+      sum += t[1] === '-' ? -value : value;
+      at = re.lastIndex;
+      first = false;
+    }
+    return first ? null : sum;
+  }
   const offsetValue = v => {
     if (v === null || v === undefined) return null;
+    if (isObject(v) && !(typeof CSSUnitValue === 'function' && v instanceof CSSUnitValue)) {
+      // A TimelineRangeOffset dictionary `{rangeName, offset}`.
+      if (!('rangeName' in v)) {
+        const n = Number(v);
+        if (!Number.isFinite(n)) throw new TypeError('offset must be a finite number');
+        if (n < 0 || n > 1) throw new TypeError('Offsets must be null or in the range [0,1]');
+        return n;
+      }
+      const rangeName = String(v.rangeName), offset = v.offset;
+      if (!KEYFRAME_RANGE_NAMES.includes(rangeName)) throw new TypeError(`'${rangeName}' is not a valid timeline range name`);
+      if (!isPercentValue(offset)) throw new TypeError('A timeline range offset must be a percentage');
+      return { rangeName, pct: offset.value };
+    }
+    if (typeof v === 'string') {
+      const text = v.trim();
+      let m = RANGE_TEXT.exec(text);
+      if (m) return { rangeName: m[1].toLowerCase(), pct: Number(m[2]) };
+      // (A string is a <number>, a <percentage> or a calc() of them.)
+      const n = PERCENT_TEXT.test(text) ? parseFloat(text) / 100 : calcOffset(text);
+      if (n !== null) {
+        if (n < 0 || n > 1) throw new TypeError('Offsets must be null or in the range [0,1]');
+        return n;
+      }
+      if (/[^\d\s.eE+-]/.test(text) || text === '') throw new TypeError('offset must be a finite number');
+    }
+    if (typeof CSSUnitValue === 'function' && v instanceof CSSUnitValue) {
+      if (v.unit !== 'number' && v.unit !== 'percent') throw new TypeError('offset must be a number or a percentage');
+      v = v.unit === 'percent' ? v.value / 100 : v.value;
+    }
     const n = Number(v);
     if (!Number.isFinite(n)) throw new TypeError('offset must be a finite number');
     if (n < 0 || n > 1) throw new TypeError('Offsets must be null or in the range [0,1]');
@@ -391,6 +476,7 @@
     if (!isObject(input)) throw new TypeError('Keyframes must be an object or an array');
     const iterator = input[Symbol.iterator];
     let frames = [];
+    let easingError = null;
     if (iterator !== undefined && iterator !== null) {
       if (typeof iterator !== 'function') throw new TypeError('@@iterator is not callable');
       for (const kf of { [Symbol.iterator]: () => apply(iterator, input, []) }) {
@@ -399,24 +485,28 @@
         }
         const obj = kf || {};
         const values = new Map();
-        const offset = offsetValue(obj.offset);
-        const easing = parseEasing(obj.easing === undefined ? 'linear' : obj.easing);
+        // Dictionary members are read in lexicographic order: composite, easing, offset.
         const composite = compositeValue(obj.composite);
+        // An invalid easing is reported only after every keyframe and property was read.
+        let easing = LINEAR;
+        try { const rawEasing = obj.easing; easing = parseEasing(rawEasing === undefined ? 'linear' : rawEasing); } catch (e) { easingError ??= e; }
+        const offset = offsetValue(obj.offset);
         for (const { key, prop } of propertyMembers(obj)) {
           values.set(key, { prop, value: stringValue(obj[key]) });
         }
         frames.push({ offset, easing, composite, values });
       }
+      if (easingError !== null) throw easingError;
       let last = -Infinity;
       for (const f of frames) {
-        if (f.offset === null) continue;
+        if (f.offset === null || isRangeOffset(f.offset)) continue;
         if (f.offset < last) throw new TypeError('Offsets must be monotonically non-decreasing');
         last = f.offset;
       }
     } else {
       // A property-indexed keyframe.
       const list = v => (isObject(v) && typeof v[Symbol.iterator] === 'function' ? Array.from(v) : [v]);
-      const rawOffset = input.offset, rawEasing = input.easing, rawComposite = input.composite;
+      const rawComposite = input.composite, rawEasing = input.easing, rawOffset = input.offset;
       const byOffset = new Map();
       for (const { key, prop } of propertyMembers(input)) {
         const values = list(input[key]).map(stringValue);
@@ -432,7 +522,7 @@
       offsetList.slice(0, frames.length).forEach((o, i) => { frames[i].offset = o; });
       let lastO = -Infinity;
       for (const f of frames) {
-        if (f.offset === null) continue;
+        if (f.offset === null || isRangeOffset(f.offset)) continue;
         if (f.offset < lastO) throw new TypeError('Offsets must be monotonically non-decreasing');
         lastO = f.offset;
       }
@@ -448,13 +538,17 @@
     return frames;
   }
 
-  function computeOffsets(frames) {
-    frames.forEach(f => { f.computed = f.offset; });
-    if (frames.length === 0) return;
-    if (frames.every(f => f.implicit !== undefined && f.offset === null)) {
-      frames.forEach(f => { f.computed = f.implicit; });
+  function computeOffsets(allFrames) {
+    allFrames.forEach(f => { f.computed = isRangeOffset(f.offset) ? null : f.offset; });
+    if (allFrames.length === 0) return;
+    if (allFrames.every(f => f.implicit !== undefined && f.offset === null)) {
+      allFrames.forEach(f => { f.computed = f.implicit; });
       return;
     }
+    // The keyframes at timeline range offsets take no part in spreading the others' offsets (their
+    // own depend on the animation's timeline: `frameOffset`).
+    const frames = allFrames.filter(f => !isRangeOffset(f.offset));
+    if (frames.length === 0) return;
     if (frames.length > 1 && frames[0].computed === null) frames[0].computed = 0;
     if (frames[frames.length - 1].computed === null) frames[frames.length - 1].computed = 1;
     for (let i = 0; i < frames.length; i++) {
@@ -465,6 +559,28 @@
       for (let k = i; k < j; k++) frames[k].computed = a + (b - a) * (k - i + 1) / (j - i + 1);
       i = j;
     }
+  }
+
+  // A frame's computed offset for `effect`: a timeline range offset resolves against the
+  // animation's view timeline and attachment range (a fraction of it, outside 0..1 for positions
+  // beyond it); null when it cannot (no such timeline, inactive, a zero-length range).
+  function frameOffset(effect, f) {
+    if (!isRangeOffset(f.offset)) return f.computed;
+    const anim = effect.animation;
+    if (!anim || !progressBased(anim)) return null;
+    const st = timelines.get(anim.timeline);
+    if (st.subject === null) return null;
+    const bounds = rangeOffsets(anim);
+    const at = rangeBoundary(st, f.offset.rangeName, f.offset.pct);
+    if (bounds === null || at === null || !(bounds[1] > bounds[0])) return null;
+    return (at - bounds[0]) / (bounds[1] - bounds[0]);
+  }
+  // The frames of `effect` with their computed offsets, in offset order, without the ones that
+  // have none (a range offset the effect's timeline cannot resolve).
+  function sampledFrames(effect) {
+    if (!effect.frames.some(f => isRangeOffset(f.offset))) return effect.frames.map(f => ({ frame: f, offset: f.computed }));
+    return effect.frames.map(f => ({ frame: f, offset: frameOffset(effect, f) })).filter(x => x.offset !== null)
+      .sort((a, b) => a.offset - b.offset);
   }
 
   // ----- interpolation ------------------------------------------------------
@@ -507,17 +623,17 @@
     if (timing.progress === null || !effect.target) return out;
     const p = timing.progress;
     const props = new Map();
-    for (const f of effect.frames) {
+    for (const { frame: f, offset } of sampledFrames(effect)) {
       for (const { prop, value } of f.values.values()) {
         if (!props.has(prop)) props.set(prop, []);
-        props.get(prop).push({ offset: f.computed, value, easing: f.easing });
+        props.get(prop).push({ offset, value, easing: f.easing });
       }
     }
     for (const [prop, frames] of props) {
       let list = frames;
       const base = () => underlying(effect.target, prop);
-      if (list[0].offset !== 0) list = [{ offset: 0, value: base(), easing: LINEAR }, ...list];
-      if (list[list.length - 1].offset !== 1) list = [...list, { offset: 1, value: base(), easing: LINEAR }];
+      if (!list.some(f => f.offset === 0)) list = [...list.filter(f => f.offset < 0), { offset: 0, value: base(), easing: LINEAR }, ...list.filter(f => f.offset >= 0)];
+      if (!list.some(f => f.offset === 1)) list = [...list.filter(f => f.offset <= 1), { offset: 1, value: base(), easing: LINEAR }, ...list.filter(f => f.offset > 1)];
       let start, end;
       if (p < 0 && list.filter(f => f.offset === 0).length > 1) {
         start = end = list.find(f => f.offset === 0);
@@ -541,7 +657,7 @@
       }
       const span = end.offset - start.offset;
       const local = span === 0 ? 0 : (p - start.offset) / span;
-      out.set(prop, interpolate(start.value, end.value, start.easing.fn(local, false), prop));
+      out.set(prop, interpolate(start.value, end.value, start.easing.fn(local, timing.before === true), prop));
     }
     return out;
   }
@@ -554,6 +670,11 @@
     get currentTime() {
       const st = brand(timelines, this, 'an AnimationTimeline');
       return now() - st.origin;
+    }
+    // A time-based timeline has no fixed duration (progress timelines override this).
+    get duration() {
+      brand(timelines, this, 'an AnimationTimeline');
+      return null;
     }
   }
   class DocumentTimeline extends AnimationTimeline {
@@ -622,6 +743,11 @@
       if (v.unit === 'number' && v.value === 0) return [1, 0];
     }
     if (typeof CSSKeywordValue === 'function' && v instanceof CSSKeywordValue && v.value === 'auto') return [0, 0];
+    // A math value of one unit type (`new CSSMathNegate(CSS.px(144))`): its px or percent sum.
+    if (typeof CSSNumericValue === 'function' && v instanceof CSSNumericValue) {
+      try { return [1, v.to('px').value]; } catch { /* not a length */ }
+      try { return [2, v.to('percent').value / 100]; } catch { /* not a percentage */ }
+    }
     throw new TypeError('Invalid inset');
   }
   function insetOf(options) {
@@ -696,6 +822,21 @@
   }
   // The animation's attachment range as percentages of its progress-based timeline ([start, end];
   // [0, 100] for 'normal'); null while the timeline is inactive.
+  // The place of `pct`% of the named range `rangeName` of view timeline `st`, in percent of the
+  // timeline (0: cover start); null while it is inactive.
+  function rangeBoundary(st, rangeName, pct) {
+    const state = stateOf(st);
+    if (state === null) return null;
+    const [, start, end, , c0, c1, size] = state;
+    const length = end - start;
+    if (!(length > 0)) return null;
+    const named = {
+      cover: [start, end], contain: [c0, c1], entry: [start, c0], exit: [c1, end],
+      'entry-crossing': [start, start + size], 'exit-crossing': [end - size, end],
+    };
+    const [lo, hi] = named[rangeName];
+    return (lo + (hi - lo) * pct / 100 - start) / length * 100;
+  }
   function rangeOffsets(a) {
     const st = timelines.get(a.timeline);
     const rs = a.rangeStart === undefined ? 'normal' : a.rangeStart;
@@ -800,9 +941,10 @@
     constructor() { throw illegal(); }
     getTiming() {
       const t = brand(effects, this, 'an AnimationEffect').timing;
+      const p = t.pct || {};
       return {
-        delay: t.delay, endDelay: t.endDelay, fill: t.fill, iterationStart: t.iterationStart,
-        iterations: t.iterations, duration: t.duration, direction: t.direction, easing: t.easing.text,
+        delay: p.delay ? percent(t.delay) : t.delay, endDelay: p.endDelay ? percent(t.endDelay) : t.endDelay, fill: t.fill,
+        iterationStart: t.iterationStart, iterations: t.iterations, duration: p.duration ? percent(t.duration) : t.duration, direction: t.direction, easing: t.easing.text,
       };
     }
     getComputedTiming() {
@@ -813,7 +955,8 @@
       const time = v => (onProgress && v !== null ? percent(v) : v);
       // (The delays as specified, as Chromium reports them; the rest in percentages.)
       return {
-        delay: st.timing.delay, endDelay: st.timing.endDelay, fill: t.fill === 'auto' ? 'none' : t.fill,
+        delay: st.timing.pct && st.timing.pct.delay ? percent(st.timing.delay) : st.timing.delay,
+        endDelay: st.timing.pct && st.timing.pct.endDelay ? percent(st.timing.endDelay) : st.timing.endDelay, fill: t.fill === 'auto' ? 'none' : t.fill,
         iterationStart: t.iterationStart, iterations: t.iterations, duration: time(iterationDuration(t)),
         direction: t.direction, easing: t.easing.text, endTime: time(c.end), activeDuration: time(c.active),
         localTime: time(c.localTime), progress: c.progress, currentIteration: c.currentIteration,
@@ -845,6 +988,15 @@
     // (Spread over the animation's attachment range, `rangeStart` to `rangeEnd`.)
     const range = rangeOffsets(anim) || [0, 100];
     const span = Math.max(range[1] - range[0], 0);
+    const p = t.pct;
+    if (p && (p.delay || p.endDelay || p.duration)) {
+      // Percentages are of the attachment range; an `auto` duration is what the delays leave of it.
+      const delay = p.delay ? t.delay * span / 100 : t.delay, endDelay = p.endDelay ? t.endDelay * span / 100 : t.endDelay;
+      let duration = t.duration;
+      if (duration === 'auto') duration = t.iterations > 0 && t.iterations !== Infinity ? Math.max(span - delay - endDelay, 0) / t.iterations : 0;
+      else if (p.duration) duration = duration * span / 100;
+      return { ...t, delay, endDelay, duration };
+    }
     if (t.duration === 'auto') {
       return { ...t, delay: 0, endDelay: 0, duration: t.iterations > 0 && t.iterations !== Infinity ? span / t.iterations : 0 };
     }
@@ -878,8 +1030,8 @@
 
   function exposedFrames(st) {
     if (!st.cssFrameSource) return st.cssFrames ?? st.frames;
-    const { target, name, easing } = st.cssFrameSource;
-    const steps = native.animationFrames(target, name);
+    const { target, name, easing, pseudo } = st.cssFrameSource;
+    const steps = native.animationFrames(target, name, pseudo);
     if (!steps) return st.cssFrames ?? [];
     const frames = [];
     const underlying = new Map();
@@ -977,7 +1129,10 @@
     getKeyframes() {
       const st = brand(effects, this, 'a KeyframeEffect');
       return exposedFrames(st).map(f => {
-        const out = { offset: f.offset, computedOffset: f.computed, easing: f.easing.text, composite: f.composite };
+        const out = {
+          offset: isRangeOffset(f.offset) ? { rangeName: f.offset.rangeName, offset: percent(f.offset.pct) } : f.offset,
+          computedOffset: frameOffset(st, f), easing: f.easing.text, composite: f.composite,
+        };
         for (const [key, { prop, value }] of f.values) {
           if (st.cssFrames) out[key] = value;
           else {
@@ -1023,7 +1178,7 @@
         throw new TypeError("Failed to construct 'AnimationPlaybackEvent': 1 argument required, but only 0 present.");
       }
       super(type, init);
-      const nullable = v => (v === undefined || v === null ? null : Number(v));
+      const nullable = v => (v === undefined || v === null ? null : (typeof CSSUnitValue === 'function' && v instanceof CSSUnitValue ? v : Number(v)));
       eventTimes.set(this, {
         currentTime: isObject(init) ? nullable(init.currentTime) : null,
         timelineTime: isObject(init) ? nullable(init.timelineTime) : null,
@@ -1058,10 +1213,10 @@
   }
 
   function currentTimeOf(a) {
-    if (a.holdTime !== null) return a.holdTime;
+    if (a.holdTime !== null) return a.holdTime + 0;
     const t = timelineTime(a.timeline);
     if (t === null || a.startTime === null) return null;
-    return (t - a.startTime) * a.rate;
+    return (t - a.startTime) * a.rate + 0;
   }
   const effectiveRate = a => (a.pendingRate !== null ? a.pendingRate : a.rate);
   const endOf = a => (a.effect ? endTime(timingOn(a.effect)) : 0);
@@ -1075,7 +1230,7 @@
     const ct = currentTimeOf(a);
     if (ct === null && a.startTime === null && a.pending === null) return 'idle';
     if (a.pending === 'pause' || (a.startTime === null && a.pending !== 'play')) return 'paused';
-    if (ct !== null && ((a.rate > 0 && ct >= endOf(a)) || (a.rate < 0 && ct <= 0))) return 'finished';
+    if (ct !== null && ((effectiveRate(a) > 0 && ct >= endOf(a)) || (effectiveRate(a) < 0 && ct <= 0))) return 'finished';
     return 'running';
   }
 
@@ -1276,7 +1431,7 @@
       if (a.rate > 0 && unconstrained >= end) {
         a.holdTime = didSeek ? unconstrained : (a.previousTime === null ? end : Math.max(a.previousTime, end));
       } else if (a.rate < 0 && unconstrained <= 0) {
-        a.holdTime = didSeek ? unconstrained : (a.previousTime === null ? 0 : Math.min(a.previousTime, 0));
+        a.holdTime = (didSeek ? unconstrained : (a.previousTime === null ? 0 : Math.min(a.previousTime, 0))) + 0;
       } else if (a.rate !== 0 && timelineTime(a.timeline) !== null) {
         if (didSeek && a.holdTime !== null) a.startTime = timelineTime(a.timeline) - a.holdTime / a.rate;
         a.holdTime = null;
@@ -1287,13 +1442,13 @@
     if (finished && !a.finished.settled) {
       if (sync) {
         a.finishGen++;
-        finishNotification(a);
+        finishNotification(a, didSeek);
       } else if (!a.finishQueued) {
         a.finishQueued = true;
         const gen = ++a.finishGen;
         microtask(() => {
           a.finishQueued = false;
-          if (a.finishGen === gen) finishNotification(a);
+          if (a.finishGen === gen) finishNotification(a, didSeek);
         });
       }
     }
@@ -1353,10 +1508,10 @@
       : null;
     // A CSS animation's or transition's own effect has no keyframes (the
     // engine's are the CSS ones); one script gave it has.
-    const frames = e.frames.map(f => {
+    const frames = sampledFrames(e).map(({ frame: f, offset }) => {
       let text = '';
       for (const { prop, value } of f.values.values()) text += `${prop}: ${value}; `;
-      return [f.computed, f.easing.text === 'linear' ? null : f.easing.text, f.composite === 'auto' ? null : f.composite, text];
+      return [offset, f.easing.text === 'linear' ? null : f.easing.text, f.composite === 'auto' ? null : f.composite, text];
     });
     const origin = a.timeline && !timelines.get(a.timeline).scroll ? timelines.get(a.timeline).origin : null;
     reportState(a.key, [
@@ -1369,17 +1524,39 @@
     ]);
   }
 
-  function finishNotification(a) {
+  function finishNotification(a, seeked) {
     if (playStateOf(a) !== 'finished') return;
     settle(a.finished, a.self, false);
     queueEvent(a, 'finish', currentTimeOf(a));
-    removeReplaced(a);
+    // (A finish the timeline's ticking reached replaces right here; one a seek or a timing change
+    // caused waits for the next "update animations and send events".)
+    if (seeked) replaceAtNextFrame(a); else removeReplaced(a);
+  }
+
+  const replaceTriggers = new Set();
+  function replaceAtNextFrame(a) {
+    if (!a.effect) return;
+    if (replaceTriggers.size === 0) {
+      const run = () => {
+        const list = [...replaceTriggers];
+        replaceTriggers.clear();
+        for (const t of list) if (t.effect) removeReplaced(t);
+      };
+      if (requestFrame !== null) apply(requestFrame, globalThis, [run]); else schedule(16, run);
+    }
+    replaceTriggers.add(a);
   }
 
   // Events are dispatched as tasks of their own, after the promise
   // reactions of the step that queued them.
   function queueEvent(a, type, currentTime) {
-    const event = new AnimationPlaybackEvent(type, { currentTime, timelineTime: timelineTime(a.timeline) });
+    let tt = timelineTime(a.timeline);
+    // (On a progress-based timeline the times are percentages: CSSNumberish.)
+    if (progressBased(a)) {
+      if (currentTime !== null) currentTime = percent(currentTime);
+      if (tt !== null) tt = percent(tt);
+    }
+    const event = new AnimationPlaybackEvent(type, { currentTime, timelineTime: tt });
     schedule(0, () => { apply(dispatch, a.self, [event]); });
   }
 
@@ -1408,6 +1585,8 @@
 
   function timingChanged(a) {
     updateFinished(a, false, false);
+    if (a.effect && playStateOf(a) === 'finished') replaceAtNextFrame(a);
+
   }
 
   function track(a) {
@@ -1455,18 +1634,26 @@
     if (!target) return;
     const list = [...live].map(o => animations.get(o)).filter(a =>
       a.effect && a.effect.target === target && a.replaceState === 'active' && playStateOf(a) === 'finished' &&
-      computedTimingOf(a.effect).activeTime !== null);
+      computedTimingOf(a.effect).activeTime !== null).sort((x, y) => x.seq - y.seq);
     const propsOf = a => new Set(a.effect.frames.flatMap(f => [...f.values.values()].map(v => v.prop)));
     const covered = new Set();
+    const removed = [];
     for (let i = list.length - 1; i >= 0; i--) {
       const a = list[i];
       const props = propsOf(a);
       if (i < list.length - 1 && props.size && [...props].every(p => covered.has(p))) {
         a.replaceState = 'removed';
         live.delete(a.self);
-        queueEvent(a, 'remove', currentTimeOf(a));
+        report(a);
+        removed.push(a);
       }
       for (const p of props) covered.add(p);
+    }
+    // The remove events go out in composite order, after the finish events of the same tick (one
+    // more task hop, so the finishes of animations ending together are dispatched first).
+    for (let i = removed.length - 1; i >= 0; i--) {
+      const a = removed[i], ct = currentTimeOf(a);
+      schedule(0, () => queueEvent(a, 'remove', ct));
     }
   }
 
@@ -1479,7 +1666,7 @@
       if (unit === 'percent') return v.value;
       throw new TypeError(`Failed to set the '${what}' property on 'Animation': CSSNumberish must be a percentage for progress-based animations.`);
     }
-    if (unit === 'ms') return v.value;
+    if (unit === 'ms' || unit === 'number') return v.value;
     if (unit === 's') return v.value * 1000;
     if (unit !== null) throw new TypeError(`Failed to set the '${what}' property on 'Animation': Invalid unit`);
     return toDouble(v, what);
@@ -1649,7 +1836,7 @@
       const a = override(scripted(brand(animations, this, 'an Animation')), 'playState');
       if (timelineTime(a.timeline) === null) throw invalidState('Cannot reverse an animation with no active timeline');
       const original = a.pendingRate;
-      a.pendingRate = -effectiveRate(a);
+      a.pendingRate = effectiveRate(a) === 0 ? 0 : -effectiveRate(a);
       try {
         play(a, true);
       } catch (e) {
@@ -1679,8 +1866,10 @@
     }
     persist() {
       const a = brand(animations, this, 'an Animation');
-      if (a.replaceState === 'removed') track(a);
+      const wasRemoved = a.replaceState === 'removed';
+      if (wasRemoved) track(a);
       a.replaceState = 'persisted';
+      if (wasRemoved) report(a);
     }
     commitStyles() {
       const a = brand(animations, this, 'an Animation');
@@ -1776,8 +1965,24 @@
     const cs = computedStyle(el);
     return /^(auto|scroll|hidden)$/.test(cs.overflowX) || /^(auto|scroll|hidden)$/.test(cs.overflowY);
   };
+  // Whether `cs`'s element is the containing block of `position` descendants.
+  const containsPositioned = (cs, position) => {
+    if (position === 'absolute' && cs.position !== 'static') return true;
+    return cs.transform !== 'none' || cs.perspective !== 'none' || cs.filter !== 'none' || /layout|paint|strict|content/.test(cs.contain) ||
+      /transform|perspective|filter/.test(cs.willChange);
+  };
   // (A pseudo-element's nearest scroll container may be its originating element: `self`.)
   function nearestScroller(el, includeSelf) {
+    // An absolutely positioned box moves with its containing block's scroll containers, not with
+    // the ones it sits inside in the tree.
+    const position = computedStyle(el).position;
+    if (!includeSelf && (position === 'absolute' || position === 'fixed')) {
+      let cb = el.parentElement;
+      while (cb !== null && cb !== document.documentElement && !containsPositioned(computedStyle(cb), position)) cb = cb.parentElement;
+      el = cb;
+      includeSelf = true;
+      if (el === null || el === document.documentElement) return scrollingElement();
+    }
     for (let p = includeSelf ? el : el.parentElement; p !== null; p = p.parentElement) {
       if (p === document.documentElement || p === document.body) break;
       if (isScrollContainer(p)) return p;
@@ -1803,25 +2008,72 @@
       return timeline;
     }
     if (t.startsWith('--')) {
-      for (let el = target; el !== null; el = el.parentElement) {
-        const cs = computedStyle(el);
-        const names = s => String(s || '').split(',').map(x => x.trim());
-        const scrollNames = names(cs.getPropertyValue('scroll-timeline-name'));
-        let i = scrollNames.indexOf(t);
-        if (i >= 0) {
-          const axes = names(cs.getPropertyValue('scroll-timeline-axis'));
-          return new ScrollTimeline({ source: el, axis: axes[i % axes.length] || 'block' });
-        }
-        const viewNames = names(cs.getPropertyValue('view-timeline-name'));
-        i = viewNames.indexOf(t);
-        if (i >= 0) {
-          const axes = names(cs.getPropertyValue('view-timeline-axis'));
-          const insets = names(cs.getPropertyValue('view-timeline-inset'));
-          return new ViewTimeline({ subject: el, axis: axes[i % axes.length] || 'block', inset: insets[i % insets.length] || 'auto' });
+      // The nearest ancestor-or-self declaring it (a scroll progress timeline before a view one on
+      // the same element); an ancestor's `timeline-scope` naming it (or `all`) makes the one
+      // element below it declaring it visible, none or several leave it unresolved (Scroll-driven
+      // Animations 1 § 4.5; the engine's `scroll_timeline.rs` `named`).
+      for (let el = target; el !== null; el = parentOf(el)) {
+        const found = declaredTimeline(el, null, t);
+        if (found) return timelineOf(found);
+        let scope = '';
+        try { scope = String(computedStyle(el).getPropertyValue('timeline-scope') || ''); } catch {}
+        const scoped = scope.split(',').map(x => x.trim());
+        if (scoped.some(n => n === t || n === 'all')) {
+          const all = [];
+          scopedDeclarations(el, t, all);
+          return all.length === 1 ? timelineOf(all[0]) : null;
         }
       }
     }
     return null;
+  }
+  // An element's parent, across a shadow root's boundary to its host.
+  function parentOf(el) {
+    if (el.parentElement !== null) return el.parentElement;
+    const root = apply(getRootNode, el, []);
+    return root && root.host ? root.host : null;
+  }
+  // The timeline `name` that `el` (or its `pseudo`-element) declares itself, as
+  // `{pseudo, el, scroll, axis, inset}`; null when it declares none of that name.
+  function declaredTimeline(el, pseudo, name) {
+    let cs;
+    try { cs = pseudo ? computedStyle(el, pseudo) : computedStyle(el); } catch { return null; }
+    const names = v => String(v || '').split(',').map(x => x.trim());
+    const scrollNames = names(cs.getPropertyValue('scroll-timeline-name'));
+    let i = scrollNames.lastIndexOf(name);
+    if (i >= 0) {
+      const axes = names(cs.getPropertyValue('scroll-timeline-axis'));
+      return { pseudo, el, scroll: true, axis: axes[i % axes.length] || 'block' };
+    }
+    const viewNames = names(cs.getPropertyValue('view-timeline-name'));
+    i = viewNames.lastIndexOf(name);
+    if (i >= 0) {
+      const axes = names(cs.getPropertyValue('view-timeline-axis'));
+      const insets = names(cs.getPropertyValue('view-timeline-inset'));
+      return { pseudo, el, scroll: false, axis: axes[i % axes.length] || 'block', inset: insets[i % insets.length] || 'auto' };
+    }
+    return null;
+  }
+  // The declarations of `name` below `scope` (its own pseudo-elements and those of the elements
+  // below it included, shadow trees too), stopping at a second.
+  function scopedDeclarations(scope, name, out) {
+    const visit = el => {
+      if (out.length > 1) return;
+      if (el !== scope) { const d = declaredTimeline(el, null, name); if (d) out.push(d); }
+      for (const pseudo of ['::before', '::after']) { const d = declaredTimeline(el, pseudo, name); if (d) out.push(d); }
+      if (el.shadowRoot) for (const c of el.shadowRoot.children) visit(c);
+      for (const c of el.children) visit(c);
+    };
+    visit(scope);
+  }
+  // The timeline object of a declaration. (A pseudo-element's timeline reports its originating
+  // element as the source or subject, as browsers do: the pseudo-element is never exposed.)
+  function timelineOf(d) {
+    if (d.scroll) return new ScrollTimeline({ source: d.el, axis: d.axis });
+    const timeline = new ViewTimeline({ subject: d.el, axis: d.axis, inset: d.inset });
+    const code = ({ '::before': 2, '::after': 3 })[d.pseudo];
+    if (code) timelines.get(timeline).subjectPseudo = code;
+    return timeline;
   }
   function cssRun([id, target, transition, name, start, delay, duration, iterations, direction, fill, easing, held, pseudo, timelineText, trigger, keyframeEasing, generation]) {
     // The engine hands over computed easings; one it could not compute is
@@ -1835,7 +2087,9 @@
     if (scrollDriven && timing.duration === 0) timing.duration = 'auto';
     const [timelineValue, rangeStartText, rangeEndText] = scrollDriven ? timelineText : [null, 'normal', 'normal'];
     const effect = new KeyframeEffect(target, null, timing);
-    if (!transition && id != null && !pseudo) effects.get(effect).cssFrameSource = { target, name, easing: keyframeEasing };
+    // (A view-transition pseudo-element's run has no id: its transition root keeps its keyframes.)
+    const viewPseudo = typeof pseudo === 'string' && pseudo.startsWith('::view-transition');
+    if (!transition && (viewPseudo || (id != null && !pseudo))) effects.get(effect).cssFrameSource = { target, name, easing: keyframeEasing, pseudo: viewPseudo ? pseudo : undefined };
     if (transition && id != null) {
       const frames = native.transitionFrames(id).map(([offset, property, value]) => {
         const member = keyframeMember(property);
@@ -2341,6 +2595,16 @@
     return relevant(target => isConnected(target) && apply(getRootNode, target, []) === root);
   }
 
+  // WebIDL: the attributes and operations of an interface are enumerable properties of its prototype.
+  for (const C of [Animation, AnimationEffect, KeyframeEffect, AnimationTimeline, DocumentTimeline, AnimationPlaybackEvent,
+    ScrollTimeline, ViewTimeline, CSSAnimation, CSSTransition]) {
+    for (const key of Reflect.ownKeys(C.prototype)) {
+      if (key === 'constructor' || typeof key === 'symbol') continue;
+      const d = Object.getOwnPropertyDescriptor(C.prototype, key);
+      if (d && d.configurable && !d.enumerable) Object.defineProperty(C.prototype, key, { enumerable: true });
+    }
+  }
+
   return {
     Animation, AnimationEffect, KeyframeEffect, AnimationTimeline, DocumentTimeline, AnimationPlaybackEvent,
     ScrollTimeline, ViewTimeline,
@@ -2349,6 +2613,7 @@
       if (animations.get(value)?.css !== (transition ? CSS_TRANSITION : CSS_ANIMATION))
         throw new TypeError(transition ? 'Expected a CSSTransition' : 'Expected a CSSAnimation');
     },
+    cssObject: id => cssRuns.get(id) ?? null,
     animate, elementAnimations, rootAnimations, cssSync, viewRuns, timeline: () => documentTimeline,
   };
 })

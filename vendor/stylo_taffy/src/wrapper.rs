@@ -788,7 +788,8 @@ impl<T: Deref<Target = ComputedValues>> taffy::BlockItemStyle for TaffyStyloStyl
 
     #[inline]
     fn is_table(&self) -> bool {
-        convert::is_table(self.effective_display())
+        // A replaced element with `display: table` is a block-level replaced box (Chrome), not a table.
+        convert::is_table(self.effective_display()) && !self.flags.contains(StyleFlags::IS_REPLACED)
     }
 
     #[inline]
@@ -1006,7 +1007,8 @@ impl<T: Deref<Target = ComputedValues>> taffy::FlexboxItemStyle for TaffyStyloSt
 
     #[inline]
     fn is_table(&self) -> bool {
-        convert::is_table(self.effective_display())
+        // A replaced element with `display: table` is a block-level replaced box (Chrome), not a table.
+        convert::is_table(self.effective_display()) && !self.flags.contains(StyleFlags::IS_REPLACED)
     }
 
     #[inline]
@@ -1519,7 +1521,8 @@ impl<T: Deref<Target = ComputedValues>> taffy::OofItemStyle for TaffyStyloStyle<
 
     #[inline]
     fn is_table(&self) -> bool {
-        convert::is_table(self.effective_display())
+        // A replaced element with `display: table` is a block-level replaced box (Chrome), not a table.
+        convert::is_table(self.effective_display()) && !self.flags.contains(StyleFlags::IS_REPLACED)
     }
 
     #[inline]

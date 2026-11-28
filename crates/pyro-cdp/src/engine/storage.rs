@@ -121,6 +121,16 @@ impl EngineHost {
                 net.cookies().lock().unwrap().clear();
                 Ok(json!({}))
             }
+            // Chrome's `Storage.runBounceTrackingMitigations`: the bounce tracking timer's run with no grace
+            // period (what WebDriver's `run_bounce_tracking_mitigations` calls); the sites it deleted.
+            "Storage.runBounceTrackingMitigations" => {
+                let sites = self
+                    .thread
+                    .browser
+                    .run_bounce_tracking_mitigations(context.id, std::time::Duration::ZERO)
+                    .ok_or_else(|| CdpError::server("Browser context is gone"))?;
+                Ok(json!({"deletedSites":sites}))
+            }
             "Storage.setCookies" => {
                 #[derive(Deserialize)]
                 struct Params {

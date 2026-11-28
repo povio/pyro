@@ -48,6 +48,19 @@ pub enum Destination {
     Beacon,
     /// `<link rel=compression-dictionary>` (`Sec-Fetch-Dest: empty`).
     CompressionDictionary,
+    /// A `Speculation-Rules` header's rule set (`Sec-Fetch-Dest: speculationrules`, CORS mode).
+    SpeculationRules,
+    /// An `<object>` element's resource, or the document it shows (`Sec-Fetch-Dest: object`, and
+    /// `Sec-Fetch-Mode: navigate`: Chrome treats it as a navigation of a nested context).
+    Object,
+    /// An `<embed>` element's resource (`Sec-Fetch-Dest: embed`, mode `navigate`).
+    Embed,
+    /// A CSP or Reporting API report (`Sec-Fetch-Dest: report`).
+    Report,
+    /// `audioWorklet.addModule()` (`Sec-Fetch-Dest: audioworklet`, CORS mode).
+    AudioWorklet,
+    /// `CSS.paintWorklet.addModule()` (`Sec-Fetch-Dest: paintworklet`, CORS mode).
+    PaintWorklet,
     Other,
 }
 
@@ -81,8 +94,14 @@ impl Destination {
             Destination::Fetch => "Fetch",
             Destination::EventSource => "EventSource",
             Destination::WebSocket => "WebSocket",
-            Destination::Beacon => "Ping",
-            Destination::CompressionDictionary | Destination::Other => "Other",
+            Destination::Beacon | Destination::Report => "Ping",
+            Destination::CompressionDictionary
+            | Destination::SpeculationRules
+            | Destination::Object
+            | Destination::Embed
+            | Destination::AudioWorklet
+            | Destination::PaintWorklet
+            | Destination::Other => "Other",
         }
     }
 }
@@ -109,6 +128,80 @@ pub enum RedirectMode {
     Manual,
 }
 
+/// Mixed Content / Upgrade Insecure Requests state of the requesting context, checked by the client on every hop.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct InsecurePolicy {
+    /// Mixed Content "prohibits mixed security contexts": an `https:` origin (the context's, or for an opaque one its nearest ancestor/creator with a tuple origin). As Chrome: an `http://localhost` page is a secure context but does not prohibit.
+    pub prohibits_mixed: bool,
+    /// Upgrade Insecure Requests: an enforced CSP of the context has `upgrade-insecure-requests`.
+    pub upgrade: bool,
+}
+
+/// The value of a context's cross-origin embedder policy (HTML § 7.1.4): what its `no-cors` requests
+/// must be allowed to load (`require-corp`: only a response with a `Cross-Origin-Resource-Policy`
+/// that admits the requester; `credentialless`: any, but fetched without credentials).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum EmbedderPolicy {
+    #[default]
+    UnsafeNone,
+    RequireCorp,
+    Credentialless,
+}
+
+/// The reporting parts of a response's embedder policies (HTML "embedder policy": `report-to` of
+/// `Cross-Origin-Embedder-Policy`, and the whole `Cross-Origin-Embedder-Policy-Report-Only`):
+/// what a document keeps next to its enforced [`EmbedderPolicy`] to report what the policy blocks
+/// or, for the report-only value, would block.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EmbedderReporting {
+    /// The enforced policy's `report-to` endpoint name (only when that parameter is a string).
+    pub report_to: Option<String>,
+    /// The enforced policy is a `Document-Isolation-Policy`'s (no COEP of its own): its reports have
+    /// the type `dip`, and it constrains subresources, not nested navigations.
+    pub dip: bool,
+    /// The report-only policy's value.
+    pub report_only: EmbedderPolicy,
+    /// The report-only policy's `report-to` endpoint name.
+    pub report_only_report_to: Option<String>,
+    /// The report-only policy is a `Document-Isolation-Policy-Report-Only`'s.
+    pub report_only_dip: bool,
+}
+
+/// What a context's Cross-Origin Resource Policy check reports (HTML § 7.1.4 "queue a cross-origin
+/// embedder policy CORP violation report" and "navigation"), handed to [`CorpReport::sink`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CorpViolation {
+    /// The report body's `type`: `"corp"` for a blocked response, `"worker initialization"` for a
+    /// worker script the owner's policy refuses (made by the worker's thread).
+    pub kind: &'static str,
+    /// The request's URL (the first of a redirect chain: Chrome names that one), not yet stripped.
+    pub blocked_url: String,
+    /// The request's Fetch destination (`""` for `fetch()`, `"script"`, `"iframe"`, ...); none for a
+    /// report that has no destination (a worker's initialization).
+    pub destination: Option<&'static str>,
+    /// `true`: the report-only policy would have blocked the response (`disposition: "reporting"`);
+    /// `false`: the enforced policy blocked it.
+    pub report_only: bool,
+}
+
+/// The reporting half of a context's embedder policy, for the network thread: the
+/// `Cross-Origin-Embedder-Policy-Report-Only` value the client checks next to the enforced one,
+/// and where a violation goes (a closure that posts it to the context's own thread).
+#[derive(Clone)]
+pub struct CorpReport {
+    pub report_only: EmbedderPolicy,
+    pub sink: std::sync::Arc<dyn Fn(CorpViolation) + Send + Sync>,
+    /// The URL the request was made for, set by the client when it starts the request: a blocked
+    /// redirect target is reported under it.
+    pub first_url: Option<Url>,
+}
+
+impl std::fmt::Debug for CorpReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CorpReport").field("report_only", &self.report_only).finish_non_exhaustive()
+    }
+}
+
 /// Browser/page defaults, distinct from author headers for CORS preflight.
 /// Cloned into a request so later page changes do not alter an in-flight hop.
 #[derive(Clone, Debug, Default)]
@@ -128,6 +221,33 @@ pub struct RequestDefaults {
     /// `-Platform`) of a page whose agent override carries metadata. Sent
     /// only to potentially trustworthy origins, never over request headers.
     pub client_hints: Option<std::sync::Arc<Vec<(http::HeaderName, HeaderValue)>>>,
+    /// Mixed Content blocking and Upgrade Insecure Requests of the requesting context.
+    pub insecure: InsecurePolicy,
+    /// Cross-origin embedder policy of the requesting context (the embedding document's for a
+    /// nested navigation): the client's Cross-Origin Resource Policy check and credential rules.
+    pub embedder_policy: EmbedderPolicy,
+    /// For a nested navigation (`Destination::Iframe`): the serialized origin of the embedding
+    /// document, which its `embedder_policy`'s Cross-Origin Resource Policy check on the response
+    /// protects (the request itself has no `origin`: it is not a requester's fetch).
+    pub embedder_origin: Option<String>,
+    /// The requesting document's third-party cookie decision, when its browser context has storage
+    /// access rules (`Browser.setStorageAccess`): a request to a URL it blocks sends no cookies and
+    /// stores none. `None` (every context without rules): cookies as the SameSite rules say.
+    pub cookie_blocking: Option<std::sync::Arc<crate::cookies::CookieBlocking>>,
+    /// Where the Cross-Origin Resource Policy check reports its violations, and the report-only
+    /// policy it checks. `None` for a context with neither a policy nor a report-only policy.
+    pub corp_report: Option<CorpReport>,
+    /// The requesting context is credentialless (an anonymous iframe tree): cookies are read from
+    /// and stored in this jar instead of the client's.
+    pub ephemeral_cookies: Option<crate::cookies::EphemeralCookies>,
+    /// A service worker's own requests: the `Accept-CH` hints of an origin are not added to them
+    /// (Client Hints infrastructure: a request a worker makes of its own is not the document's;
+    /// a request it passes on from a `FetchEvent` has them in its headers).
+    pub no_accept_ch: bool,
+    /// The Permissions Policy features of the requesting document that refuse client hints
+    /// (`ch-device-memory`, ...) to its own origin: the `Accept-CH` hints they name are left off
+    /// its same-origin requests (Client Hints: a hint goes only where its `ch-*` feature allows).
+    pub ch_denied: Option<std::sync::Arc<Vec<String>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -181,6 +301,104 @@ pub struct Request {
     /// every redirect target against it before following it, and fails the request with
     /// [`crate::csp::BLOCKED_BY_CSP`] when an enforced policy blocks the hop. `None`: no policy.
     pub csp: Option<std::sync::Arc<crate::csp::RequestCsp>>,
+    /// A speculation-rules prefetch of another site than its initiator (nav-speculation
+    /// "prefetch"; Chrome fetches it in an isolated context): it sends no cookies and no
+    /// non-default client hints, and the cookies its response sets are not stored: they are
+    /// handed to `deferred_cookies` (without one, dropped).
+    pub cross_site_prefetch: bool,
+    /// Where a `cross_site_prefetch` request's `Set-Cookie` headers go instead of the jar: the
+    /// prefetch's owner applies them (`NetClient::apply_deferred_cookies`) when a navigation uses
+    /// the response, as Chrome copies its isolated context's cookies on activation.
+    pub deferred_cookies: Option<std::sync::Arc<DeferredCookies>>,
+    /// A speculation-rules prefetch whose redirects may not enter a service worker's scope: the
+    /// prefetch fails (as a network error) at a redirect to such a URL, as a service worker
+    /// cannot see the hops of a prefetch (Chrome fails these prefetches too).
+    pub prefetch_redirect_stop: Option<std::sync::Arc<PrefetchRedirectStop>>,
+    /// The request's integrity metadata (`Request.integrity`), as the page gave it: the network
+    /// layer does not check it (the page's fetch holds the response until it has), a service worker's
+    /// `FetchEvent.request` shows it.
+    pub integrity: String,
+    /// The request's keepalive flag (`Request.keepalive`), for a service worker's `FetchEvent.request`.
+    pub keepalive: bool,
+}
+
+/// One `Set-Cookie` header a cross-site prefetch's response carried, with what storing it needs.
+#[derive(Clone, Debug)]
+pub struct DeferredCookie {
+    pub url: Url,
+    pub header: String,
+    pub partition: Option<String>,
+    pub site: crate::cookies::SiteContext,
+}
+
+/// The `Set-Cookie` headers of a cross-site prefetch's responses (every hop), in order. Equal and
+/// hashed by identity: it is a shared sink, not a value.
+#[derive(Debug, Default)]
+pub struct DeferredCookies {
+    items: std::sync::Mutex<Vec<DeferredCookie>>,
+}
+
+impl DeferredCookies {
+    pub(crate) fn push(&self, cookie: DeferredCookie) {
+        self.items.lock().unwrap_or_else(|e| e.into_inner()).push(cookie);
+    }
+
+    /// Everything kept so far (the sink is left empty).
+    pub fn take(&self) -> Vec<DeferredCookie> {
+        std::mem::take(&mut *self.items.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+}
+
+impl PartialEq for DeferredCookies {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other)
+    }
+}
+
+impl Eq for DeferredCookies {}
+
+impl std::hash::Hash for DeferredCookies {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::ptr::hash(self, state);
+    }
+}
+
+/// The service worker scopes (with the cookie partition key their registrations have) a
+/// prefetch's redirects must not enter: see [`Request::prefetch_redirect_stop`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PrefetchRedirectStop {
+    pub scopes: Vec<(Option<String>, String)>,
+    /// A navigation's, not a prefetch's: the hop into a scope is not an error but ends the
+    /// request with the redirect response as an opaque-redirect one (as a `manual` redirect
+    /// mode does), and the caller follows it through the scope's service worker.
+    pub navigation: bool,
+    /// A prefetch's: no redirect hop may go to a site other than the previous hop's, nor (for a
+    /// same-site prefetch, which sets `initiator_site`, as `cookies::partition_key` spells it) the
+    /// initiator's. The
+    /// prefetch's cookies and credentials were decided for its first URL only, so a hop that left
+    /// the site would be an authenticated, side-effecting request nobody activated: the prefetch
+    /// fails instead, before that hop is sent (the navigation fetches normally later).
+    pub site_bound: bool,
+    pub initiator_site: Option<String>,
+}
+
+impl PrefetchRedirectStop {
+    /// Whether a `site_bound` prefetch may not follow the redirect from `from` to `target`: the
+    /// target is cross-site to the initiator or to the hop that redirected.
+    pub fn crosses_site(&self, from: &Url, target: &Url) -> bool {
+        if !self.site_bound {
+            return false;
+        }
+        let site = crate::cookies::partition_key(target);
+        site != crate::cookies::partition_key(from) || self.initiator_site.as_ref().is_some_and(|initiator| site.as_ref() != Some(initiator))
+    }
+
+    /// Whether a navigation to `target` would go through a worker of one of the scopes.
+    pub fn stops_at(&self, target: &Url) -> bool {
+        let partition = crate::cookies::partition_key(target);
+        let text = target.as_str().split('#').next().unwrap_or("");
+        self.scopes.iter().any(|(p, scope)| *p == partition && text.starts_with(scope.as_str()))
+    }
 }
 
 /// A `Blob` served for a `blob:` URL: its bytes and its `type`.
@@ -210,6 +428,16 @@ pub enum CacheMode {
 }
 
 impl Request {
+    /// The credentials mode a hop is sent with: a `no-cors` request of a `credentialless` context
+    /// carries none to another origin (HTML "credentialless": its response tainting is not basic).
+    pub(crate) fn hop_credentials(&self, basic_tainting: bool) -> Credentials {
+        if self.defaults.embedder_policy == EmbedderPolicy::Credentialless && self.mode == RequestMode::NoCors && !basic_tainting {
+            Credentials::Omit
+        } else {
+            self.credentials
+        }
+    }
+
     pub fn get(url: Url, destination: Destination) -> Self {
         let mode = match destination {
             Destination::Document | Destination::Iframe => RequestMode::Navigate,
@@ -241,6 +469,11 @@ impl Request {
             blob: None,
             body_from_stream: false,
             csp: None,
+            cross_site_prefetch: false,
+            deferred_cookies: None,
+            prefetch_redirect_stop: None,
+            integrity: String::new(),
+            keepalive: false,
         }
     }
 }
@@ -257,6 +490,9 @@ pub struct ResponseHead {
     pub charset: Option<String>,
     pub redirected: bool,
     pub from_cache: bool,
+    /// A navigation's response came from a speculation-rules prefetch (CDP
+    /// `Network.Response.fromPrefetchCache`): no network request was made for it.
+    pub from_prefetch_cache: bool,
     /// Response tainting for fetch: basic/cors/opaque/opaqueredirect.
     pub kind: ResponseKind,
     /// Remote address "ip:port" when known (CDP remoteIPAddress).

@@ -175,6 +175,30 @@ pub struct ExternalQuads {
     pub fixed: bool,
 }
 
+/// pyro: a hit test point against a box under a transform ([`GeometrySource::hit_plane`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HitPlane {
+    /// The point maps back into the border box through the inverse of the box's transforms, in
+    /// front of the viewer, and the box is not hidden by a 3D transform.
+    pub inside: bool,
+    /// A plane of a 3D rendering context: the key of the context's root and the plane's depth at
+    /// the point (greater: nearer the viewer). Planes of one root are ordered by it, not by paint
+    /// order.
+    pub depth: Option<(u64, f64)>,
+}
+
+/// pyro: which shape of an element a hit test asks about ([`GeometrySource::hit_shape`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HitShapeKind {
+    /// The region its `clip-path` leaves (it clips the element and its descendants).
+    ClipPath,
+    /// The element's own box as painted: a `border-shape`'s outer edge, or the rounded and
+    /// shaped (`corner-shape`) corners of its `border-radius`.
+    Own,
+    /// What its `border-shape` leaves of the content its `overflow` clips (its descendants).
+    Overflow,
+}
+
 /// What a sub-resource a geometry source loads is for (the request's
 /// destination: its `Accept`, `Sec-Fetch-Dest` and CDP resource type).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -703,7 +727,7 @@ pub struct ElementImage {
     pub pixel_height: u32,
     pub rgba: Vec<u8>,
     /// The paint may hold content a page must not read back (an image of unknown origin, a
-    /// nested document, a visited link).
+    /// nested document).
     pub taints: bool,
 }
 
@@ -729,6 +753,26 @@ pub trait GeometrySource {
     /// The page scrolled: its scrolled elements' offsets (by key) and the viewport's, which
     /// scroll-driven animations follow.
     fn set_scroll(&self, _elements: Vec<(u64, (f64, f64))>, _viewport: (f64, f64)) {}
+    /// The direction of each scroll container's last scroll on each axis (-1 towards the start, 1
+    /// towards the end) by key (`u64::MAX`: the viewport), which `scroll-state(scrolled)` follows.
+    fn set_scroll_directions(&self, _directions: Vec<(u64, (i8, i8))>) {}
+    /// The pointer's client position (`None`: it left the page), which `:hover` on the boxes of
+    /// scroll pseudo-elements follows (they are no element for the DOM's hover to name).
+    fn set_pointer(&self, _point: Option<(f64, f64)>) {}
+    /// The elements that are a scroll container's snap target now, by key, with the axes (x, y)
+    /// they are snapped on, which `scroll-state(snapped)` follows.
+    fn set_snapped(&self, _snapped: Vec<(u64, (bool, bool))>) {}
+    /// The scroll targets now (CSS Overflow 5 § 2.1: the element each scroll container was last
+    /// scrolled to, the viewport's under `u64::MAX`), by key, which scroll marker selection follows.
+    fn set_scroll_targets(&self, _targets: Vec<(u64, u64)>) {}
+    /// The sticky boxes held at an edge by their insets now, by key, with the edges (bit 0 top, 1
+    /// right, 2 bottom, 3 left), which `scroll-state(stuck)` follows.
+    fn set_stuck(&self, _stuck: Vec<(u64, u8)>) {}
+    /// Whether a container was queried for `scroll-state()` as of the last sync (no state of
+    /// theirs to tell otherwise).
+    fn uses_scroll_state(&self) -> bool {
+        false
+    }
     /// One element's box as of the last sync (`None`: not rendered).
     fn element_box(&self, key: u64) -> Option<ExternalBox>;
     /// HTML-in-Canvas `drawElementImage`: the element `key` painted alone (its subtree only, its
@@ -767,6 +811,20 @@ pub trait GeometrySource {
     /// rendered, or the engine does not report them).
     fn element_quads(&self, _key: u64) -> Option<ExternalQuads> {
         None
+    }
+    /// pyro: how a box under a transform answers a hit test at the point `(x, y)` (document CSS
+    /// px, where [`Self::element_box`] places the box): see [`HitPlane`]. `None` (the default): no
+    /// transform other than a translation applies to the box (or the engine does not report it):
+    /// the caller tests its rect.
+    fn hit_plane(&self, _key: u64, _x: f64, _y: f64) -> Option<HitPlane> {
+        None
+    }
+    /// pyro: whether the point `(x, y)` (document CSS px, where [`Self::element_box`] places the
+    /// box) is inside the shape `kind` of the element, built as it is painted (zoom, reference
+    /// boxes, `border-shape`, `corner-shape`, SVG `<clipPath>`), through the inverse of the box's
+    /// transforms. `true` (the default) when the element has none, or the engine cannot tell.
+    fn hit_shape(&self, _key: u64, _kind: HitShapeKind, _x: f64, _y: f64) -> bool {
+        true
     }
     /// Hit regions (document x, y, width, height) when fragmentation restricts the element's
     /// bounds. `None` uses the whole box; an empty list admits no hits.
@@ -858,6 +916,12 @@ pub trait GeometrySource {
     fn stale(&self) -> bool {
         false
     }
+    /// pyro: whether a geometry query must sync although the document did not change: `stale`, or
+    /// state that only a full sync (layout) settles, which a style-only sync leaves (told scroll
+    /// offsets a layout has not seen).
+    fn layout_stale(&self) -> bool {
+        self.stale()
+    }
     /// pyro: whether a web font the engine asked its network for has not arrived yet
     /// (`document.fonts`: `status`, `ready`).
     fn fonts_pending(&self) -> bool {
@@ -892,6 +956,9 @@ pub trait GeometrySource {
     fn grid_item_starts(&self, _owner: u64) -> Vec<(u64, u16, u16)> { Vec::new() }
 
     fn css_animation_frames(&self, _key: u64, _name: &str) -> Option<Vec<crate::animation::CssKeyframeStep>> { None }
+
+    /// The keyframes of `name` on the view-transition pseudo-element `pseudo` (as script spells it) of the transition rooted at `root`.
+    fn transition_animation_frames(&self, _root: u64, _pseudo: &str, _name: &str) -> Option<Vec<crate::animation::CssKeyframeStep>> { None }
 
     /// Recompute same-element properties with sampled font-size or line-height values.
     fn sampled_font_style(
@@ -934,6 +1001,16 @@ pub trait GeometrySource {
     /// pyro: the target of the scroll marker at the document point (`x`, `y`): its element's key,
     /// or its multi-column container's and the column's index.
     fn scroll_marker_at(&self, _x: f64, _y: f64) -> Option<(u64, Option<u32>)> {
+        None
+    }
+    /// pyro: the key of the scroll container whose `::scroll-marker-group` holds the marker at the
+    /// document point (`x`, `y`).
+    fn scroll_marker_group_at(&self, _x: f64, _y: f64) -> Option<u64> {
+        None
+    }
+    /// pyro: the targets (an element's key, and the column's index of a multi-column container) of
+    /// the markers of the scroll container `owner`'s group in order, and the index of the active one.
+    fn scroll_marker_group_targets(&self, _owner: u64) -> Option<(Vec<Option<(u64, Option<u32>)>>, Option<usize>)> {
         None
     }
     /// pyro: the `::scroll-button()` of the element `owner` that the painted hit test finds at the

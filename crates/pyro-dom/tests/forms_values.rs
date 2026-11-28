@@ -269,8 +269,12 @@ fn opaque_ranges_reset_only_when_the_relevant_value_changes() {
     dom.set_attribute(i, "value", "a").unwrap();
     assert_eq!(clean.offsets(), (0, 0));
     let clean = dom.create_value_range(t, 1, 3).unwrap();
+    // textContent replaces all children even for the same text (a new text node, as Chrome), so
+    // the clean textarea's value passes through the empty string: Chrome resets the selection
+    // to 0,0 there (measured), and the ranges over the value go with it.
     dom.set_text_content(t, "abc").unwrap();
-    assert_eq!(clean.offsets(), (1, 3));
+    assert_eq!(clean.offsets(), (0, 0));
+    let clean = dom.create_value_range(t, 1, 3).unwrap();
     dom.set_text_content(t, "a").unwrap();
     assert_eq!(clean.offsets(), (0, 0));
     for control in [t, i] {

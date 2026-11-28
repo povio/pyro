@@ -955,11 +955,22 @@ impl NoCalcLength {
                 context
                     .builder
                     .add_flags(ComputedValueFlags::USES_FONT_OR_WM_RELATIVE_UNITS);
-                context
-                    .rule_cache_conditions
-                    .borrow_mut()
-                    .set_writing_mode_dependency(context.builder.writing_mode);
-                if (unit == ViewportUnit::Vb) == context.style().writing_mode.is_vertical() {
+                // pyro: vi/vb follow the writing mode of the element they are computed for (Chrome; WPT
+                // css-values/viewport-units-writing-mode and style queries: the root's mode does not matter).
+                // A MathML element is always horizontal-tb (UA rule), so its axes come from the root element's
+                // writing mode instead (mathml/relations/css-styling/lengths-vi-vb-units).
+                let vertical = if context.builder.is_mathml_element && !context.builder.is_root_element && !context.in_media_query {
+                    // A cached computed value would outlive a change of the root's writing mode.
+                    context.rule_cache_conditions.borrow_mut().set_uncacheable();
+                    context.device().root_writing_mode().is_vertical()
+                } else {
+                    context
+                        .rule_cache_conditions
+                        .borrow_mut()
+                        .set_writing_mode_dependency(context.builder.writing_mode);
+                    context.style().writing_mode.is_vertical()
+                };
+                if (unit == ViewportUnit::Vb) == vertical {
                     size.width
                 } else {
                     size.height

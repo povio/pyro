@@ -157,6 +157,7 @@ pub fn install_with(fetchers: FetcherFactory) {
             sheets: Default::default(),
             resources: std::cell::Cell::new(RESOURCES.load(Ordering::Relaxed)),
             scroll_stale: Default::default(),
+            scroll_layout_stale: Default::default(),
             base_url: RefCell::new(BaseUrl::new(BLANK)),
             snapshot_base: RefCell::new(Default::default()),
             snapshot_quirks: Default::default(),
@@ -257,6 +258,11 @@ pub struct BlitzGeometry {
     /// pyro: scroll offsets were told ([`GeometrySource::set_scroll`]) to a document that uses
     /// scroll markers, which follow them: it syncs again (`stale`).
     scroll_stale: std::cell::Cell<bool>,
+    /// pyro: told scroll offsets that no layout has seen yet. A style-only sync (a computed-style
+    /// read) clears `scroll_stale` but resolves no layout, so the damage the offsets made (a
+    /// `position-try` fallback that follows a scroller) waits for the next geometry read, which
+    /// must still sync ([`GeometrySource::layout_stale`]); a full sync clears it.
+    scroll_layout_stale: std::cell::Cell<bool>,
     /// Each style sheet's owner, whether it is a `<style>`, and its text's
     /// revision (`StyleEngine::sheet_revision`), as last synced (see
     /// [`BlitzGeometry::changed_style_sheets`]).
@@ -547,9 +553,11 @@ impl BlitzGeometry {
         let focused = dom.focused(doc).ok().flatten().map(pyro_dom::snapshot::render_key);
         let active = dom.activated(doc).map(pyro_dom::snapshot::render_key);
         let focus_visible = dom.focus_visible(doc);
+        let marker_group = dom.marker_focus(doc).map(|(owner, ring)| (pyro_dom::snapshot::render_key(owner), ring));
         RENDERER.with(|r| {
             if let Ok(mut r) = r.try_borrow_mut() {
                 if let Some(r) = r.as_mut() {
+                    r.set_focused_scroll_group(self.page, marker_group);
                     r.set_interaction_states(self.page, hovered, focused, active, focus_visible, style_only);
                 }
             }
@@ -755,7 +763,14 @@ impl BlitzGeometry {
     }
 
     fn sync_inner(&self, dom: &Dom, style: &StyleEngine, style_only: bool) {
-        self.scroll_stale.set(false);
+        let told_scroll = self.scroll_stale.replace(false);
+        if style_only {
+            if told_scroll {
+                self.scroll_layout_stale.set(true);
+            }
+        } else {
+            self.scroll_layout_stale.set(false);
+        }
         let resources = self.arrivals();
         let rebuild = self.resources.replace(resources) != resources;
         if rebuild {
@@ -891,6 +906,10 @@ impl GeometrySource for BlitzGeometry {
         self.resources.get() != self.arrivals() || self.scroll_stale.get()
     }
 
+    fn layout_stale(&self) -> bool {
+        self.stale() || self.scroll_layout_stale.get()
+    }
+
     fn fonts_pending(&self) -> bool {
         let loader = self.loader.borrow();
         let Some(loader) = loader.as_ref() else { return false };
@@ -912,8 +931,10 @@ impl GeometrySource for BlitzGeometry {
         // pyro: only image requests the document still references (as laid out last), by request
         // (URL and options), not URL: one whose only rule or element went away is not waited for,
         // though another variant of its URL remains.
+        // pyro: not an `<img>`'s own request: the document's image loader tracks those (an eager
+        // image delays `load` there, a lazy one never does, whatever the renderer's request).
         let referenced = RENDERER.with(|r| {
-            r.try_borrow().ok().and_then(|r| r.as_ref().and_then(|r| r.referenced_images(self.page)))
+            r.try_borrow().ok().and_then(|r| r.as_ref().and_then(|r| r.referenced_non_element_images(self.page)))
         });
         let requested = |key: &pyro_dom::layout::LayoutBodyKey| {
             referenced.as_ref().is_none_or(|images| {
@@ -968,6 +989,65 @@ impl GeometrySource for BlitzGeometry {
                 }
             }
         });
+    }
+
+    fn set_pointer(&self, point: Option<(f64, f64)>) {
+        RENDERER.with(|r| {
+            if let Ok(mut r) = r.try_borrow_mut() {
+                let Some(r) = r.as_mut() else { return };
+                if r.set_pointer(self.page, point) {
+                    self.scroll_stale.set(true);
+                }
+            }
+        });
+    }
+
+    fn set_scroll_directions(&self, directions: Vec<(u64, (i8, i8))>) {
+        RENDERER.with(|r| {
+            if let Ok(mut r) = r.try_borrow_mut() {
+                let r = r.get_or_insert_with(Renderer::new);
+                if r.set_scroll_directions(self.page, directions) {
+                    self.scroll_stale.set(true);
+                }
+            }
+        });
+    }
+
+    fn set_snapped(&self, snapped: Vec<(u64, (bool, bool))>) {
+        RENDERER.with(|r| {
+            if let Ok(mut r) = r.try_borrow_mut() {
+                let r = r.get_or_insert_with(Renderer::new);
+                if r.set_snapped(self.page, snapped) {
+                    self.scroll_stale.set(true);
+                }
+            }
+        });
+    }
+
+    fn set_scroll_targets(&self, targets: Vec<(u64, u64)>) {
+        RENDERER.with(|r| {
+            if let Ok(mut r) = r.try_borrow_mut() {
+                let r = r.get_or_insert_with(Renderer::new);
+                if r.set_scroll_targets(self.page, targets) {
+                    self.scroll_stale.set(true);
+                }
+            }
+        });
+    }
+
+    fn set_stuck(&self, stuck: Vec<(u64, u8)>) {
+        RENDERER.with(|r| {
+            if let Ok(mut r) = r.try_borrow_mut() {
+                let r = r.get_or_insert_with(Renderer::new);
+                if r.set_stuck(self.page, stuck) {
+                    self.scroll_stale.set(true);
+                }
+            }
+        });
+    }
+
+    fn uses_scroll_state(&self) -> bool {
+        RENDERER.with(|r| r.try_borrow().ok().is_some_and(|r| r.as_ref().is_some_and(|r| r.uses_scroll_state(self.page))))
     }
 
     fn sync_styles(&self, dom: &Dom, style: &StyleEngine) {
@@ -1073,6 +1153,21 @@ impl GeometrySource for BlitzGeometry {
             fragments: q.fragments,
             fixed: q.fixed,
         })
+    }
+
+    fn hit_plane(&self, key: u64, x: f64, y: f64) -> Option<pyro_dom::geometry::HitPlane> {
+        let (inside, depth) = RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.hit_plane(self.page, key, x, y))?;
+        Some(pyro_dom::geometry::HitPlane { inside, depth })
+    }
+
+    fn hit_shape(&self, key: u64, kind: pyro_dom::geometry::HitShapeKind, x: f64, y: f64) -> bool {
+        use pyro_dom::geometry::HitShapeKind;
+        let shape = match kind {
+            HitShapeKind::ClipPath => pyro_render::HitShape::ClipPath,
+            HitShapeKind::Own => pyro_render::HitShape::Own,
+            HitShapeKind::Overflow => pyro_render::HitShape::Overflow,
+        };
+        RENDERER.with(|r| r.try_borrow().ok().and_then(|r| r.as_ref().map(|r| r.hit_shape(self.page, key, shape, x, y)))).unwrap_or(true)
     }
 
     fn element_fragments(&self, key: u64) -> Option<Vec<[f64; 4]>> {
@@ -1225,6 +1320,10 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.css_animation_frames(self.page, key, name))
     }
 
+    fn transition_animation_frames(&self, root: u64, pseudo: &str, name: &str) -> Option<Vec<pyro_dom::animation::CssKeyframeStep>> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.transition_animation_frames(self.page, root, pseudo, name))
+    }
+
     fn sampled_font_style(
         &self, key: u64, pseudo: Option<&style::selector_parser::PseudoElement>,
         size: Option<&style::properties::ComputedValues>, line_height: Option<&style::properties::ComputedValues>,
@@ -1283,7 +1382,15 @@ impl GeometrySource for BlitzGeometry {
     }
 
     fn scroll_marker_at(&self, x: f64, y: f64) -> Option<(u64, Option<u32>)> {
-        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.scroll_marker_at(self.page, x, y))
+        RENDERER.with(|r| r.try_borrow_mut().ok()?.as_mut()?.scroll_marker_at(self.page, x, y))
+    }
+
+    fn scroll_marker_group_at(&self, x: f64, y: f64) -> Option<u64> {
+        RENDERER.with(|r| r.try_borrow_mut().ok()?.as_mut()?.scroll_marker_group_at(self.page, x, y))
+    }
+
+    fn scroll_marker_group_targets(&self, owner: u64) -> Option<(Vec<Option<(u64, Option<u32>)>>, Option<usize>)> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.scroll_marker_group_targets(self.page, owner))
     }
 
     fn scroll_button_hit(&self, owner: u64, x: f64, y: f64) -> Option<((i8, i8), bool)> {
@@ -1472,6 +1579,7 @@ mod tests {
             sheets: Default::default(),
             resources: Default::default(),
             scroll_stale: Default::default(),
+            scroll_layout_stale: Default::default(),
             base_url: RefCell::new(super::BaseUrl::new(super::BLANK)),
             snapshot_base: RefCell::new(Default::default()),
             snapshot_quirks: Default::default(),

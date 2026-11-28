@@ -79,6 +79,7 @@ impl Browser {
         let fetch = FetchRequest {
             csp: None,
             required_csp: None,
+            purpose: None,
             parser_priority: false,
             credentials: None,
             post: None,
@@ -93,6 +94,7 @@ impl Browser {
             initiator: Some(initiator),
             module: None,
             part,
+            accept_signature: None,
         };
         resource_loader.fetch_cancellable(
             self,

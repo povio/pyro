@@ -177,7 +177,10 @@ fn scroll_fit_invalidation_coalesces_before_layout() {
     let target = doc.query_selector("b").unwrap().unwrap();
     let scroller = doc.query_selector("section").unwrap().unwrap();
     let unrelated = doc.query_selector("aside").unwrap().unwrap();
-    assert_eq!(doc.get_node(target).unwrap().final_layout().location.y, 50.0);
+    // The box's containing block is the scroll container, so it is contained by the container's
+    // scrollable overflow rectangle (400px here), not its 100px padding box: b at y 100 fits and no
+    // fallback applies, at any scroll offset (Chrome: offsetTop 100 at scrollTop 0, 1, 10 and 50).
+    assert_eq!(doc.get_node(target).unwrap().final_layout().location.y, 100.0);
     let trials = doc.anchor_try_visits();
     assert!(!doc.set_timeline_scroll([(unrelated, (0., 30.))].into(), (0., 0.)));
     for offset in 1..=50 {

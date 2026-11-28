@@ -170,8 +170,60 @@ impl Namespace {
         }
     }
 
+    /// Bounce Tracking Mitigations: deletes the databases of the origins at `site` that no connection
+    /// and no upgrade holds (`deleteDb`'s reset). Returns whether any held data.
+    pub(crate) fn clear_site(&self, site: &str) -> bool {
+        let mut server = self.lock();
+        let mut cleared = false;
+        for (origin, dbs) in server.origins.iter_mut() {
+            if crate::bounce_tracking::site_of_url(origin).as_deref() != Some(site) {
+                continue;
+            }
+            for db in dbs.values_mut().filter(|db| db.conns.is_empty() && db.busy.is_none()) {
+                if let Some(lease) = &self.1 {
+                    let _ = lease.charge(Endpoint::IndexedDb, db.committed_bytes, 0);
+                }
+                cleared |= db.version > 0 || !db.stores.is_empty();
+                db.committed_bytes = 0;
+                db.changes.clear();
+                db.version = 0;
+                db.stores.clear();
+                db.undo.clear();
+                db.locks.clear();
+                db.upgrade = None;
+            }
+        }
+        cleared
+    }
+
     fn lock(&self) -> MutexGuard<'_, Server> {
         self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// What `origin`'s databases occupy, for `navigator.storage.estimate()`: the committed
+    /// serialized records plus each database's, object store's and index's name and key path
+    /// (the metadata an on-disk store keeps, so creating a database or store is not free).
+    pub(crate) fn usage(&self, origin: &str) -> u64 {
+        const METADATA: u64 = 64;
+        let server = self.lock();
+        let Some(dbs) = server.origins.get(origin) else { return 0 };
+        dbs.iter()
+            .map(|(name, db)| {
+                let stores: u64 = db
+                    .stores
+                    .iter()
+                    .map(|(store, data)| {
+                        let indexes: u64 = data
+                            .indexes
+                            .iter()
+                            .map(|(index, i)| METADATA + (index.len() + i.key_path.len()) as u64)
+                            .sum();
+                        METADATA + (store.len() + data.key_path.len()) as u64 + indexes
+                    })
+                    .sum();
+                METADATA + name.len() as u64 + db.committed_bytes + stores
+            })
+            .sum()
     }
 
     fn databases(&self, origin: &str) -> Vec<DatabaseInfo> {

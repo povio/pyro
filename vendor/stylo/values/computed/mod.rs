@@ -131,7 +131,7 @@ pub use self::text::{
     UnicodeBidi, WhiteSpaceCollapse,
 };
 pub use self::text::{InitialLetter, LetterSpacing, LineBreak, TextIndent};
-pub use self::text::{OverflowWrap, RubyPosition, TextOverflow, WordBreak, WordSpacing};
+pub use self::text::{OverflowWrap, RubyOverhang, RubyPosition, TextOverflow, WordBreak, WordSpacing};
 pub use self::text::{TextAlign, TextAlignLast, TextEmphasisPosition, TextEmphasisStyle};
 pub use self::text::{TextAutospace, TextFit, WhiteSpaceTrim, WordSpaceTransform, WrapInside, HangingPunctuation, TextGroupAlign, TextSpacingTrim, TextUnderlinePosition};
 pub use self::text::{TextBoxEdge, TextBoxTrim};

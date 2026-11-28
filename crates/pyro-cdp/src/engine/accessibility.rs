@@ -25,7 +25,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use super::dom::NodeParams;
-use super::driver::{accessible_name_in, aria_true, attr, id_refs, labels, local, normalize, role_of, text_of};
+use super::driver::{ax_name_in, aria_attr, aria_true, attr, id_refs, implicit_role, labels, local, normalize, role_of, text_of};
 use super::EngineHost;
 use crate::msg::{CdpError, CdpResult};
 use crate::target::PageCommand;
@@ -218,6 +218,99 @@ fn from_role(role: &str) -> Class {
         Some(r) => node(r),
         None => Class::Node { role: "generic", custom: Some(role.to_owned()), internal: false, ignored: None },
     }
+}
+
+/// The ARIA roles Chromium accepts in a `role` token besides the static AX names above: the Digital
+/// Publishing and Graphics modules, the landmark-like `sectionheader`/`sectionfooter` and the ARIA 1.3
+/// `comment`/`suggestion`. Abstract roles and anything else are not roles: the token is skipped.
+fn known_role(token: &str) -> bool {
+    const EXTRA: &[&str] = &[
+        "comment",
+        "doc-abstract",
+        "doc-acknowledgments",
+        "doc-afterword",
+        "doc-appendix",
+        "doc-backlink",
+        "doc-biblioentry",
+        "doc-bibliography",
+        "doc-biblioref",
+        "doc-chapter",
+        "doc-colophon",
+        "doc-conclusion",
+        "doc-cover",
+        "doc-credit",
+        "doc-credits",
+        "doc-dedication",
+        "doc-endnote",
+        "doc-endnotes",
+        "doc-epigraph",
+        "doc-epilogue",
+        "doc-errata",
+        "doc-example",
+        "doc-footnote",
+        "doc-foreword",
+        "doc-glossary",
+        "doc-glossref",
+        "doc-index",
+        "doc-introduction",
+        "doc-noteref",
+        "doc-notice",
+        "doc-pagebreak",
+        "doc-pagefooter",
+        "doc-pageheader",
+        "doc-pagelist",
+        "doc-part",
+        "doc-preface",
+        "doc-prologue",
+        "doc-pullquote",
+        "doc-qna",
+        "doc-subtitle",
+        "doc-tip",
+        "doc-toc",
+        "graphics-document",
+        "graphics-object",
+        "graphics-symbol",
+        "sectionfooter",
+        "sectionheader",
+        "suggestion",
+    ];
+    token == "img" || static_role(token).is_some() || EXTRA.contains(&token)
+}
+
+/// `aria-label` with text or an `aria-labelledby`: what makes a `region` or `form` a landmark.
+fn has_aria_name(dom: &Dom, el: NodeId) -> bool {
+    aria_attr(dom, el, "aria-label").is_some_and(|l| !l.trim().is_empty())
+        || aria_attr(dom, el, "aria-labelledby").is_some_and(|l| !l.trim().is_empty())
+}
+
+/// A global ARIA attribute, which keeps `role=none`/`presentation` from removing the element's native role
+/// (ARIA "presentational roles conflict resolution"): label and the other naming attributes count even where
+/// the native role prohibits a name.
+fn has_global_aria_attr(dom: &Dom, el: NodeId) -> bool {
+    const GLOBAL: &[&str] = &[
+        "aria-atomic",
+        "aria-busy",
+        "aria-controls",
+        "aria-current",
+        "aria-describedby",
+        "aria-description",
+        "aria-details",
+        "aria-disabled",
+        "aria-dropeffect",
+        "aria-errormessage",
+        "aria-flowto",
+        "aria-grabbed",
+        "aria-haspopup",
+        "aria-invalid",
+        "aria-keyshortcuts",
+        "aria-label",
+        "aria-labelledby",
+        "aria-live",
+        "aria-owns",
+        "aria-relevant",
+        "aria-roledescription",
+    ];
+    GLOBAL.iter().any(|a| aria_attr(dom, el, a).is_some())
 }
 
 fn boolean(v: bool) -> Prop {
@@ -471,7 +564,32 @@ impl<'a> Builder<'a> {
                 .ok()
                 .flatten()
                 .is_some_and(|p| matches!(local(dom, p), Some("select" | "optgroup")));
-        let skipped = matches!(
+        // An `<area>` of an image map is `display: none` and still an AX node (a link), as in Chromium.
+        let area_in_map = tag == Some("area")
+            && std::iter::successors(dom.parent_element(el).ok().flatten(), |a| dom.parent_element(*a).ok().flatten())
+                .any(|a| local(dom, a) == Some("map"));
+        // SVG elements that are never rendered: their text (a `<title>`) is not content of the tree.
+        let svg_unrendered = self.is_svg_element(el)
+            && dom.element(el).is_ok_and(|e| {
+                matches!(
+                    &*e.name.local,
+                    "title"
+                        | "desc"
+                        | "metadata"
+                        | "defs"
+                        | "style"
+                        | "script"
+                        | "clipPath"
+                        | "mask"
+                        | "marker"
+                        | "pattern"
+                        | "linearGradient"
+                        | "radialGradient"
+                        | "filter"
+                        | "symbol"
+                )
+            });
+        let skipped = svg_unrendered || matches!(
             tag,
             Some(
                 "script"
@@ -490,7 +608,11 @@ impl<'a> Builder<'a> {
                     | "track"
             )
         ) || tag == Some("input") && dom.input_type(el).is_ok_and(|t| t == InputType::Hidden)
-            || if in_select { attr(dom, el, "hidden").is_some() } else { style.is_hidden(dom, el, Default::default()) };
+            || if in_select {
+                attr(dom, el, "hidden").is_some()
+            } else {
+                !area_in_map && style.is_hidden(dom, el, Default::default())
+            };
         if skipped {
             self.flatten(el, parent);
             return;
@@ -561,7 +683,7 @@ impl<'a> Builder<'a> {
                     | "object"
                     | "embed"
             )
-        ) || self.is_svg_root(el);
+        );
         if leaf {
             return;
         }
@@ -599,16 +721,37 @@ impl<'a> Builder<'a> {
     /// Chromium's role for an element (or that it is flattened / ignored).
     fn classify(&self, el: NodeId, tag: Option<&str>) -> Class {
         let dom = self.dom;
-        if let Some(explicit) = attr(dom, el, "role").and_then(|r| r.split_ascii_whitespace().next()) {
-            let explicit = explicit.to_ascii_lowercase();
+        // The first token naming a role Chromium knows, whatever its case (the rest are fallbacks); `region` and
+        // `form` only count with a name. An element whose tokens are all unknown has its native role.
+        let tokens = aria_attr(dom, el, "role").map(|r| r.split_ascii_whitespace().map(str::to_ascii_lowercase).collect::<Vec<_>>());
+        let explicit = tokens.as_ref().and_then(|t| {
+            t.iter().find(|t| known_role(t) && (!matches!(t.as_str(), "region" | "form") || has_aria_name(dom, el))).cloned()
+        });
+        // Whether the native role is read without the `role` attribute (`implicit_role`): every token unknown, or
+        // `none`/`presentation` that a focusable element or a global ARIA attribute overrules.
+        let mut native_only = tokens.is_some() && explicit.is_none();
+        if let Some(explicit) = &explicit {
             match explicit.as_str() {
-                // Presentational roles are ignored on focusable elements.
-                "presentation" | "none" if !self.focusable(el, tag) => return Class::Flatten,
-                "presentation" | "none" => {}
+                "presentation" | "none" => {
+                    if self.focusable(el, tag) || has_global_aria_attr(dom, el) {
+                        native_only = true;
+                    } else {
+                        return Class::Flatten;
+                    }
+                }
                 "img" => return node("image"),
                 "generic" => return node("generic"),
+                // Deprecated in ARIA 1.2: a list.
+                "directory" => return node("list"),
                 other => return from_role(other),
             }
+        } else if self.inherits_presentational(el, tag) {
+            // A list item or table part of a presentational list or table has no role of its own.
+            return Class::Flatten;
+        }
+        // SVG content below the root: Chromium exposes links, images, and named groups and shapes.
+        if !self.is_svg_root(el) && self.is_svg_element(el) {
+            return self.svg_class(el);
         }
         match tag {
             Some("html" | "body") => return ignored(Ignored::Uninteresting),
@@ -631,13 +774,22 @@ impl<'a> Builder<'a> {
             }
             Some("s") => return node("deletion"),
             Some("form") => return node("form"),
+            Some("dir") => return node("list"),
+            // `<header>`/`<footer>` of sectioning content are not landmarks: Chromium's own roles.
+            Some("header") if self.in_sectioning(el) => return node("sectionheader"),
+            Some("footer") if self.in_sectioning(el) => return node("sectionfooter"),
+            // An `<aside>` in `<article>`, `<aside>`, `<nav>` or `<section>` is generic unless named (HTML-AAM).
+            Some("aside") if !has_aria_name(dom, el) && self.in_sectioning_element(el) => return node("generic"),
+            Some("tbody") if has_aria_name(dom, el) => return node("rowgroup"),
             Some("tbody") => return ignored(Ignored::Uninteresting),
             _ => {}
         }
         if self.is_svg_root(el) {
             return node("image");
         }
-        match role_of(dom, el).as_deref() {
+        // HTML-AAM: an element with the `popover` attribute and no other role is a `group` (as in `role_of`).
+        let native = if native_only { implicit_role(dom, el).or_else(|| attr(dom, el, "popover").map(|_| "group".to_owned())) } else { role_of(dom, el) };
+        match native.as_deref() {
             Some("presentation" | "none") => Class::Flatten,
             Some("img") => node("image"),
             // The document role is the RootWebArea.
@@ -645,6 +797,67 @@ impl<'a> Builder<'a> {
             Some(role) => from_role(role),
             None => self.generic(el),
         }
+    }
+
+    fn is_svg_element(&self, el: NodeId) -> bool {
+        self.dom.element(el).ok().is_some_and(|e| e.namespace() == "http://www.w3.org/2000/svg")
+    }
+
+    /// What an SVG element below the `<svg>` root contributes (SVG-AAM): `a` with `href` or `xlink:href` a link,
+    /// `image` an image, and a `g` or shape that has a name (`aria-label`, `aria-labelledby` or a `<title>` child) a
+    /// group or a graphics symbol; the rest is not in the tree and its children attach to the parent.
+    fn svg_class(&self, el: NodeId) -> Class {
+        let dom = self.dom;
+        let Ok(e) = dom.element(el) else { return Class::Flatten };
+        let name: &str = &e.name.local;
+        let titled = dom.children(el).into_iter().flatten().any(|c| dom.element(c).is_ok_and(|c| &*c.name.local == "title"));
+        let named = has_aria_name(dom, el) || titled;
+        match name {
+            "a" if e.attrs.iter().any(|a| &*a.name.local == "href") => node("link"),
+            "image" => node("image"),
+            "g" if named => node("group"),
+            "circle" | "ellipse" | "line" | "path" | "polygon" | "polyline" | "rect" if named => node("graphics-symbol"),
+            _ => Class::Flatten,
+        }
+    }
+
+    /// An ancestor of `el` that makes `<header>`/`<footer>` sectioning-scoped: sectioning content, or an element
+    /// given one of its roles (Playwright's `isInsideSectioning`).
+    fn in_sectioning(&self, el: NodeId) -> bool {
+        let dom = self.dom;
+        std::iter::successors(dom.parent_element(el).ok().flatten(), |a| dom.parent_element(*a).ok().flatten()).any(|a| {
+            let role = attr(dom, a, "role").map(str::to_ascii_lowercase);
+            (matches!(local(dom, a), Some("article" | "aside" | "main" | "nav" | "section")) && role.is_none())
+                || matches!(role.as_deref(), Some("article" | "complementary" | "main" | "navigation" | "region"))
+        })
+    }
+
+    /// Whether `el` is inside an `<article>`, `<aside>`, `<nav>` or `<section>` element.
+    fn in_sectioning_element(&self, el: NodeId) -> bool {
+        let dom = self.dom;
+        std::iter::successors(dom.parent_element(el).ok().flatten(), |a| dom.parent_element(*a).ok().flatten())
+            .any(|a| matches!(local(dom, a), Some("article" | "aside" | "nav" | "section")))
+    }
+
+    /// A `<li>` of a list, or a table part of a table, whose container has the presentational role (`none` or
+    /// `presentation` that nothing overrules): the part is presentational too, a global attribute of its own
+    /// notwithstanding.
+    fn inherits_presentational(&self, el: NodeId, tag: Option<&str>) -> bool {
+        let dom = self.dom;
+        let container = match tag {
+            Some("li") => dom.parent_element(el).ok().flatten().filter(|p| matches!(local(dom, *p), Some("ul" | "ol" | "menu"))),
+            Some("tr" | "td" | "th" | "thead" | "tbody" | "tfoot") => {
+                std::iter::successors(dom.parent_element(el).ok().flatten(), |a| dom.parent_element(*a).ok().flatten())
+                    .find(|a| local(dom, *a) == Some("table"))
+            }
+            _ => None,
+        };
+        let Some(container) = container else { return false };
+        let first = attr(dom, container, "role")
+            .and_then(|r| r.split_ascii_whitespace().map(str::to_ascii_lowercase).find(|t| known_role(t)));
+        matches!(first.as_deref(), Some("presentation" | "none"))
+            && !self.focusable(container, local(dom, container))
+            && !has_global_aria_attr(dom, container)
     }
 
     /// An element with no role: a `generic` node when it carries anything an
@@ -706,23 +919,26 @@ impl<'a> Builder<'a> {
             "LineBreak" => "\n".into(),
             // Options of a `<select>` have no box; name them from their label
             // or text as Chromium does.
-            "option" if self.focusable(el, tag) || dom.is_disabled(el).unwrap_or(false) => attr(dom, el, "aria-label")
+            "option" if self.focusable(el, tag) || dom.is_disabled(el).unwrap_or(false) => aria_attr(dom, el, "aria-label")
                 .or_else(|| attr(dom, el, "label"))
                 .map(normalize)
                 .filter(|l| !l.is_empty())
                 .unwrap_or_else(|| normalize(&text_of(dom, el))),
-            "group" if tag == Some("optgroup") && attr(dom, el, "aria-label").is_none() => {
+            "group" if tag == Some("optgroup") && aria_attr(dom, el, "aria-label").is_none() => {
                 attr(dom, el, "label").map(normalize).unwrap_or_default()
             }
             // Chromium names these only from aria-label/labelledby: rows not
             // from their cells, generics not from title, figures not from
             // their caption.
+            // Their `title` still names them, though (a figure, or a `<section>` without a role).
             "row" | "generic" | "figure"
-                if attr(dom, el, "aria-label").is_none() && attr(dom, el, "aria-labelledby").is_none() =>
+                if aria_attr(dom, el, "aria-label").is_none()
+                    && aria_attr(dom, el, "aria-labelledby").is_none()
+                    && !(attr(dom, el, "title").is_some() && matches!(tag, Some("figure" | "section"))) =>
             {
                 String::new()
             }
-            _ => accessible_name_in(dom, self.layout, self.doc, el, &self.pseudo_content),
+            _ => ax_name_in(dom, self.layout, self.doc, el, &self.pseudo_content),
         };
         let input_type = (tag == Some("input")).then(|| dom.input_type(el).unwrap_or(InputType::Text));
         let text_field =

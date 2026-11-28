@@ -1071,6 +1071,8 @@ pub enum ScrollSnapAxis {
     Block,
     Inline,
     Both,
+    /// pyro: CSS Scroll Snap 2: both axes snap together to one area aligned on both.
+    Pair,
 }
 
 /// https://drafts.csswg.org/css-scroll-snap-1/#snap-strictness
@@ -1135,7 +1137,7 @@ impl ScrollSnapType {
 }
 
 impl Parse for ScrollSnapType {
-    /// none | [ x | y | block | inline | both ] [ mandatory | proximity ]?
+    /// none | [ x | y | block | inline | both | pair ] [ mandatory | proximity ]?
     fn parse(_context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
         if input
             .try_parse(|input| input.expect_ident_matching("none"))
@@ -2734,7 +2736,7 @@ pub enum BoxCollapse {
 pub enum TextOrientation {
     Mixed,
     Upright,
-    #[cfg_attr(feature = "gecko", parse(aliases = "sideways-right"))]
+    #[parse(aliases = "sideways-right")]
     Sideways,
 }
 
@@ -2942,7 +2944,8 @@ pub enum DirectionProperty {
 
 /// pyro: the `scroll-marker-group` property (CSS Overflow 5): whether a scroll container
 /// generates a `::scroll-marker-group` box, and on which side of its own box it goes.
-/// `none | [ [ before | after ] || [ links | tabs ] ]`.
+/// `none | [ [ before | after ] || [ links | tabs ] ]` (the mode after the side: `links after` is
+/// invalid, as Chrome; the computed value always names the mode, `links` by default).
 /// https://drafts.csswg.org/css-overflow-5/#scroll-marker-group-property
 #[derive(
     Clone,
@@ -2952,9 +2955,7 @@ pub enum DirectionProperty {
     Hash,
     MallocSizeOf,
     PartialEq,
-    Parse,
     SpecifiedValueInfo,
-    ToComputedValue,
     ToCss,
     ToResolvedValue,
     ToShmem,
@@ -2982,7 +2983,49 @@ bitflags! {
     }
 }
 
+impl Parse for ScrollMarkerGroup {
+    fn parse(_: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
+        if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+            return Ok(Self::NONE);
+        }
+        let mut result = Self::NONE;
+        // The side first, then the mode (either alone is valid).
+        if input.try_parse(|i| i.expect_ident_matching("before")).is_ok() {
+            result |= Self::BEFORE;
+        } else if input.try_parse(|i| i.expect_ident_matching("after")).is_ok() {
+            result |= Self::AFTER;
+        }
+        if input.try_parse(|i| i.expect_ident_matching("links")).is_ok() {
+            result |= Self::LINKS;
+        } else if input.try_parse(|i| i.expect_ident_matching("tabs")).is_ok() {
+            result |= Self::TABS;
+        }
+        if result == Self::NONE {
+            return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
+        }
+        Ok(result)
+    }
+}
+
+impl crate::values::computed::ToComputedValue for ScrollMarkerGroup {
+    type ComputedValue = Self;
+
+    /// The computed value names the mode: `before` is `before links`.
+    fn to_computed_value(&self, _: &crate::values::computed::Context) -> Self {
+        if self.generates_group() && !self.intersects(Self::LINKS | Self::TABS) {
+            *self | Self::LINKS
+        } else {
+            *self
+        }
+    }
+
+    fn from_computed_value(value: &Self) -> Self {
+        *value
+    }
+}
+
 impl ScrollMarkerGroup {
+    #[allow(dead_code)]
     fn validate_mixed_flags(&self) -> bool {
         !self.contains(Self::BEFORE | Self::AFTER) && !self.contains(Self::LINKS | Self::TABS)
     }
