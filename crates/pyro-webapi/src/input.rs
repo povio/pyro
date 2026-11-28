@@ -1540,7 +1540,10 @@ pub fn dispatch_key(page: &Rc<PageDom>, kind: KeyKind, k: &KeyInput) {
             // Outside editable content a caret command (`moveDown`, `pageDown`, ... which Playwright
             // sends with the key on macOS) moves nothing: the key scrolls instead, as it does on the
             // platforms that send no commands. (Shift+arrow, which extends the selection, is no scroll key.)
-            if k.text.is_empty() && !k.commands.is_empty() && space_scrolls(page, target) && keyboard_scroll(page, k) {
+            // (A command that extends the selection acts outside editable content too: Chrome runs
+            // it, so the key does not scroll; `moveRight` and the like are not enabled there.)
+            let extends = k.commands.iter().any(|c| c.to_ascii_lowercase().ends_with("andmodifyselection"));
+            if k.text.is_empty() && !k.commands.is_empty() && !extends && space_scrolls(page, target) && keyboard_scroll(page, k) {
                 return;
             }
             if k.text.is_empty()
