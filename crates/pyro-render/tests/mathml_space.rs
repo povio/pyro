@@ -103,8 +103,9 @@ fn height_lies_above_the_baseline_and_depth_below() {
 #[test]
 fn author_styles_override_the_attributes() {
     assert_eq!(width("<mspace id=s width='20px' style='width:5px'></mspace>"), 5.0);
-    // An inline box takes no width.
-    assert_eq!(width("<mspace id=s width='20px' style='display:inline'></mspace>"), 0.0);
+    // A MathML element made `display: inline` is an atomic inline (inline math) and keeps the width
+    // (measured in Chrome: 20; 779375347).
+    assert_eq!(width("<mspace id=s width='20px' style='display:inline'></mspace>"), 20.0);
 }
 
 #[test]
