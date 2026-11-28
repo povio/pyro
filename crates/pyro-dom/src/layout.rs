@@ -3499,7 +3499,12 @@ impl Layout {
         }
         let from = self.window_scroll;
         self.window_scroll = (new_x, new_y);
-        self.note_scroll_direction(None, from, (new_x, new_y));
+        // (Only a relative scroll has a direction: `scroll-state(scrolled)` keeps that of the last
+        // one over absolute writes, CSS Conditional 5 § 7.3.2; WPT scroll-state
+        // `scroll-state-scrolled-programmatic-absolute-scrolls`.)
+        if dir.is_some() {
+            self.note_scroll_direction(None, from, (new_x, new_y));
+        }
         self.scroll_anchor_carry.remove(&None);
         self.scroll_generation = self.scroll_generation.wrapping_add(1);
         self.capture_scroll_anchor(dom, None);
@@ -3648,7 +3653,7 @@ impl Layout {
 
     /// Records that `target` (`None`: the viewport) scrolled from `from` to `to`: the direction
     /// of each axis that moved (`scroll-state(scrolled)`).
-    fn note_scroll_direction(&mut self, target: Option<NodeId>, from: (i32, i32), to: (i32, i32)) {
+    pub fn note_scroll_direction(&mut self, target: Option<NodeId>, from: (i32, i32), to: (i32, i32)) {
         if from == to {
             return;
         }
@@ -3858,7 +3863,10 @@ impl Layout {
             return false;
         }
         self.element_scroll.insert(el, (x, y));
-        self.note_scroll_direction(Some(el), current, (x, y));
+        // (As the viewport's: a relative scroll's direction only.)
+        if matches!(write, ScrollWrite::By { .. }) {
+            self.note_scroll_direction(Some(el), current, (x, y));
+        }
         self.scroll_anchor_carry.remove(&Some(el));
         self.scroll_generation = self.scroll_generation.wrapping_add(1);
         self.capture_scroll_anchor(dom, Some(el));

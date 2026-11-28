@@ -110,10 +110,16 @@ fn drag(page: &Rc<PageDom>, m: &MouseInput) -> bool {
     let moved = {
         let dom = page.dom.borrow();
         let mut layout = page.layout.borrow_mut();
-        match hit.target {
+        let from = layout.scroll_position(hit.target);
+        let moved = match hit.target {
             Some(el) => layout.element_scroll_to(&dom, el, left, top),
             None => layout.window_scroll_to(&dom, left, top),
-        }
+        };
+        // A thumb drag is a user scroll with a direction, though it writes absolute offsets
+        // (`scroll-state(scrolled)` follows relative scrolls only).
+        let to = layout.scroll_position(hit.target);
+        layout.note_scroll_direction(hit.target, from, to);
+        moved
     };
     if moved {
         d.moved = true;

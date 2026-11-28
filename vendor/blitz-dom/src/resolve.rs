@@ -1226,6 +1226,13 @@ impl BaseDocument {
             edges.set(ScrollableEdges::RIGHT, offset.x < max.x - EPSILON);
             edges.set(ScrollableEdges::TOP, offset.y > min.y + EPSILON);
             edges.set(ScrollableEdges::BOTTOM, offset.y < max.y - EPSILON);
+            // A `body` whose `overflow` went to the viewport is no scroll container itself: its
+            // own overflow is `visible` (CSS Overflow 3 § 3.3; WPT scroll-state
+            // `scroll-state-scrollable-body-002`). The viewport's scroll is the root's.
+            let propagated = self.nodes.get(id).is_some_and(|node| node.flags.contains(crate::node::NodeFlags::OVERFLOW_TO_VIEWPORT));
+            if propagated {
+                edges = ScrollableEdges::empty();
+            }
             // `scrolled`: the direction of the last scroll that moved on each axis (CSS Conditional
             // 5 § 7.3.2), kept until the next one on that axis.
             let mut scrolled = ScrollableEdges::empty();
@@ -1250,7 +1257,10 @@ impl BaseDocument {
                 stuck.set(ScrollableEdges::BOTTOM, bits & 4 != 0);
                 stuck.set(ScrollableEdges::LEFT, bits & 8 != 0);
             }
-            let entry = crate::tree::ScrollStateEntry { scrollable: edges, scrolled, snapped, stuck };
+            let logical_sides = self.nodes.get(id).and_then(|node| node.primary_styles()).map_or((0, 0), |style| {
+                (style.writing_mode.block_start_physical_side() as u8, style.writing_mode.inline_start_physical_side() as u8)
+            });
+            let entry = crate::tree::ScrollStateEntry { scrollable: edges, scrolled, snapped, stuck, logical_sides };
             let mut queries = self.nodes.scroll_state_queries.lock().unwrap();
             if let Some(previous) = queries.get_mut(&id)
                 && *previous != entry

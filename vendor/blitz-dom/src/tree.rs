@@ -45,6 +45,11 @@ pub(crate) struct ScrollStateEntry {
     pub(crate) snapped: style::stylesheets::container_rule::SnappedAxes,
     /// The edges it is stuck to when it is a sticky box (`stuck`).
     pub(crate) stuck: style::stylesheets::container_rule::ScrollableEdges,
+    /// The physical sides its block start and inline start are at (its writing mode and
+    /// direction): they resolve the logical `<scroll-state>` values, and a change of them changes
+    /// what the queries match while every physical edge stays (WPT scroll-state
+    /// `stuck-writing-direction`).
+    pub(crate) logical_sides: (u8, u8),
 }
 
 /// The versioned map in which the nodes of the DOM tree are stored, backed by
