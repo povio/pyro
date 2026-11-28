@@ -389,6 +389,15 @@ pub fn blur_before_removal(page: &Rc<PageDom>, node: NodeId, children_only: bool
         f
     };
     blur_element(page, focused);
+    // The blur left nothing focused and the removal follows: this is the focus fixup rule's reset
+    // (the removal itself will find the element unfocused), so queue `focusreset` for the document
+    // the element was in (whatwg/html#13050). A blur handler that focused something else cancels it.
+    let mut dom = page.dom.borrow_mut();
+    if let Ok(doc) = dom.node_document(focused) {
+        if dom.focused(doc).ok().flatten().is_none() {
+            dom.queue_focus_reset(doc);
+        }
+    }
 }
 
 /// HTML's focus fixup rule for a focused element that `moveBefore` moved:

@@ -3371,6 +3371,17 @@ impl Dom {
         self.note(Change::Pseudo);
     }
 
+    /// Queues `focusreset` for `doc`: its focused element is about to leave it and the script-level
+    /// removal blurred it first (Chromium's blur before removal), so the fixup rule finds nothing
+    /// focused when the node goes.
+    pub fn queue_focus_reset(&mut self, doc: NodeId) {
+        if let Ok(d) = self.check(doc) {
+            if !self.focus_reset.contains(&d) {
+                self.focus_reset.push(d);
+            }
+        }
+    }
+
     /// Whether a document's focused element was removed and its `focusreset` is still to be fired.
     pub fn has_focus_resets(&self) -> bool {
         !self.focus_reset.is_empty()
