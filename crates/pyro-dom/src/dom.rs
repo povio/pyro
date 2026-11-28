@@ -3368,6 +3368,8 @@ impl Dom {
         if !self.focus_reset.contains(&doc) {
             self.focus_reset.push(doc);
         }
+        // The post-callback hook must look: the reset rides the mutation observer microtask.
+        self.touch_hook();
         self.note(Change::Pseudo);
     }
 
@@ -3378,6 +3380,7 @@ impl Dom {
         if let Ok(d) = self.check(doc) {
             if !self.focus_reset.contains(&d) {
                 self.focus_reset.push(d);
+                self.touch_hook();
             }
         }
     }
