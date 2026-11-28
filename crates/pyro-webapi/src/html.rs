@@ -2303,6 +2303,14 @@ simple_class!(HtmlImageElement, "HTMLImageElement", HtmlElement, |def| {
                 return Ok(s.string(frozen));
             }
         }
+        // With no update pending this is the current request's URL: what a mutation made before
+        // the next read has to keep showing until its microtask (an image read for the first
+        // time after the mutation was frozen at the empty string, where Chrome shows the old one).
+        let mut state = n.page().current_src.borrow_mut();
+        if !state.frozen.contains_key(&n.id) {
+            state.last.insert(n.id, live.clone());
+        }
+        drop(state);
         Ok(s.string(&live))
     });
     def.method("decode", 0, |s, n, _a| crate::image_decode::decode(s, n.page(), n.id));
