@@ -12,7 +12,7 @@ const GLOBALS: &[&str] = &[
     "SubtleCrypto",
     "CryptoKey",
     "Lock",
-    "MediaDevices",
+    "MediaDevices", "MediaDeviceInfo", "InputDeviceInfo",
     "MediaKeySystemAccess", "MediaKeys", "MediaKeySession", "MediaKeyStatusMap", "MediaKeyMessageEvent",
     "Credential",
     "CredentialsContainer",
