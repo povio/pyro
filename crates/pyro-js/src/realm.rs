@@ -3880,6 +3880,19 @@ macro_rules! console_methods {
                     console.set($name, make_native_fn(scope, $name, tramp).value())?;
                 }
             )*
+            // WebIDL "namespace object" (https://webidl.spec.whatwg.org/#namespace-object): its
+            // [[Prototype]] is a fresh ordinary object with no properties of its own (so not
+            // `Object.prototype` itself), and `@@toStringTag` is "console" (not writable, not
+            // enumerable, configurable).
+            let proto = scope.object();
+            proto.set_prototype(scope.global().get_atom("Object")?.as_object().ok_or(JsError::Type("no Object".into()))?.get_atom("prototype")?);
+            console.set_prototype(proto.value());
+            let define = scope.global().get_atom("Object")?.as_object().ok_or(JsError::Type("no Object".into()))?.get_atom("defineProperty")?;
+            let tag = scope.global().get_atom("Symbol")?.as_object().ok_or(JsError::Type("no Symbol".into()))?.get_atom("toStringTag")?;
+            let descriptor = scope.object();
+            descriptor.set_atom("value", scope.string("console"))?;
+            descriptor.set_atom("configurable", scope.boolean(true))?;
+            define.as_object().ok_or(JsError::Type("no defineProperty".into()))?.call(None, &[console.value(), tag, descriptor.value()])?;
             let attrs = sys::kJSPropertyAttributeDontEnum;
             scope.global().set_with(&JsString::new("console"), console.value(), attrs)
         }
