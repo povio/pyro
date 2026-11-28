@@ -4029,7 +4029,7 @@ fn drop_files(page: &Rc<PageDom>, id: NodeId, files: &[UploadFile]) -> Attempt {
             last_modified: file.last_modified.unwrap_or(now),
         })
         .collect();
-    let data = input::DragData { items: Vec::new(), drag_operations_mask: 1 };
+    let data = input::DragData { items: Vec::new(), drag_operations_mask: 1, from_source: false };
     for kind in [input::DragKind::Enter, input::DragKind::Over, input::DragKind::Drop] {
         if let Err(error) = input::dispatch_drag_files(page, kind, x, y, &data, &entries, input::Modifiers::default()) {
             return Attempt::Retry(error);

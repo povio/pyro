@@ -5025,6 +5025,10 @@ pub struct DragData {
     pub items: Vec<DragItem>,
     /// Copy = 1, Link = 2, Move = 16; -1 when every operation is allowed.
     pub drag_operations_mask: i64,
+    /// The mask is the engine's own reading of the in-page source's DataTransfer (an engine-driven
+    /// drag, as the runner's pointer actions make), not one a client sent with
+    /// `Input.dispatchDragEvent`: a target of the first sees what the source left unassigned.
+    pub from_source: bool,
 }
 
 /// CDP `Input.dispatchDragEvent` types.
@@ -5140,13 +5144,17 @@ fn effect_allowed_of(mask: i64) -> &'static str {
     }
 }
 
-/// The `effectAllowed` a drag target's DataTransfer reports. Chrome keeps
-/// "uninitialized" there while the in-page source never assigned a valid
-/// effectAllowed (the mask round trip alone cannot tell that from "all");
-/// otherwise the mask decides.
-fn target_effect_allowed(source: &Option<(NodeId, Rc<NativeTransfer>)>, mask: i64) -> String {
+/// The `effectAllowed` a drag target's DataTransfer reports. In a drag the engine drives (no
+/// client between the source and the target) Chrome keeps "uninitialized" there while the
+/// in-page source never assigned a valid effectAllowed (the mask round trip alone cannot tell
+/// that from "all"); in one a client dispatches (`Input.dispatchDragEvent`) the target's
+/// allowed operations are the mask the client sent, -1 being "all".
+fn target_effect_allowed(source: &Option<(NodeId, Rc<NativeTransfer>)>, data: &DragData) -> String {
+    let mask = data.drag_operations_mask;
     match source {
-        Some((_, transfer)) if mask < 0 && transfer.effect_allowed() == "uninitialized" => "uninitialized".to_string(),
+        Some((_, transfer)) if data.from_source && mask < 0 && transfer.effect_allowed() == "uninitialized" => {
+            "uninitialized".to_string()
+        }
         _ => effect_allowed_of(mask).to_string(),
     }
 }
@@ -5263,7 +5271,7 @@ fn start_drag(page: &Rc<PageDom>, pointer_target: NodeId, m: &MouseInput) -> Opt
             }
         })
         .collect();
-    let data = DragData { items, drag_operations_mask: mask_of(&transfer.effect_allowed()) };
+    let data = DragData { items, drag_operations_mask: mask_of(&transfer.effect_allowed()), from_source: true };
     *page.drag.borrow_mut() =
         Some(DragSession { source: Some((source, transfer)), target: None, only_dragover: false, operation: None });
     Some(data)
@@ -5307,7 +5315,7 @@ fn update_drag(
         page,
         &target_strings(data),
         files,
-        &target_effect_allowed(&source, data.drag_operations_mask),
+        &target_effect_allowed(&source, data),
         Mode::Protected,
     )
     .ok_or("no script context for the drag")?;
@@ -5395,7 +5403,7 @@ pub fn dispatch_drag_files(
                         page,
                         &target_strings(data),
                         files,
-                        &target_effect_allowed(&session.source, data.drag_operations_mask),
+                        &target_effect_allowed(&session.source, data),
                         Mode::ReadOnly,
                     )
                     .ok_or("no script context for the drag")?;
@@ -5410,7 +5418,7 @@ pub fn dispatch_drag_files(
                             page,
                             &target_strings(data),
                             files,
-                            &target_effect_allowed(&session.source, data.drag_operations_mask),
+                            &target_effect_allowed(&session.source, data),
                             Mode::Protected,
                         ) {
                             fire_drag(page, t, "dragleave", &m, false, &transfer, Mode::Protected);

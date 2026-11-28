@@ -377,6 +377,7 @@ impl EngineHost {
                         })
                         .collect(),
                     drag_operations_mask: p.data.drag_operations_mask,
+                    from_source: false,
                 };
                 input::dispatch_drag(&page, kind, p.x, p.y, &data, modifiers(p.modifiers)?)
                     .map_err(CdpError::server)?;
