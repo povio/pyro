@@ -282,7 +282,7 @@ index 475e776..b2de3e3 100644
              anchor.is_none_or(|a| a == element.opaque())
          },
 diff --git a/parser.rs b/parser.rs
-index cac3c1d..08f9560 100644
+index cac3c1d..a1d9537 100644
 --- a/parser.rs
 +++ b/parser.rs
 @@ -1255,6 +1255,7 @@ impl<Impl: SelectorImpl> Selector<Impl> {
@@ -476,7 +476,19 @@ index cac3c1d..08f9560 100644
                  );
              if !ignore_default_ns {
                  builder.push_simple_selector(Component::DefaultNamespace(url));
-@@ -3505,6 +3556,12 @@ where
+@@ -3409,6 +3460,11 @@ where
+                 }
+                 if !p.accepts_state_pseudo_classes() {
+                     state.insert(SelectorParsingState::AFTER_NON_STATEFUL_PSEUDO_ELEMENT);
++                } else {
++                    // pyro: user action and state pseudo-classes apply to the LAST pseudo-element
++                    // of a chain, so a stateful one after a non-stateful one (`::column::scroll-marker:hover`)
++                    // takes them again.
++                    state.remove(SelectorParsingState::AFTER_NON_STATEFUL_PSEUDO_ELEMENT);
+                 }
+                 if p.is_in_pseudo_element_tree() {
+                     state.insert(SelectorParsingState::IN_PSEUDO_ELEMENT_TREE);
+@@ -3505,6 +3561,12 @@ where
              }
              return Ok(Component::Host(Some(parse_inner_compound_selector(parser, input, state)?)));
          },
@@ -489,7 +501,7 @@ index cac3c1d..08f9560 100644
          "not" => {
              return parse_negation(parser, input, state)
          },
-@@ -3628,7 +3685,15 @@ where
+@@ -3628,7 +3690,15 @@ where
                          return Err(ParseError::custom(e));
                      },
                  };

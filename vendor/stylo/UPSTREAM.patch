@@ -2663,7 +2663,7 @@ diff -ruN a/properties/font_face_descriptors.toml b/properties/font_face_descrip
  [font-display]
 diff -ruN a/properties/helpers/animated_properties.mako.rs b/properties/helpers/animated_properties.mako.rs
 --- a/properties/helpers/animated_properties.mako.rs	2026-11-11 19:55:57
-+++ b/properties/helpers/animated_properties.mako.rs	2026-11-28 18:13:56
++++ b/properties/helpers/animated_properties.mako.rs	2026-11-28 18:40:36
 @@ -183,6 +183,20 @@
  }
  
@@ -7521,7 +7521,7 @@ diff -ruN a/servo/restyle_damage.rs b/servo/restyle_damage.rs
          !self.transform.0.is_empty()
 diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 --- a/servo/selector_parser.rs	2026-11-11 19:55:57
-+++ b/servo/selector_parser.rs	2026-11-27 21:47:02
++++ b/servo/selector_parser.rs	2026-11-28 18:58:51
 @@ -24,7 +24,6 @@
  use selectors::attr::{AttrSelectorOperation, CaseSensitivity, NamespaceConstraint};
  use selectors::parser::SelectorParseErrorKind;
@@ -7739,7 +7739,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +    // pyro: `::before::marker` and `::after::marker` (CSS Pseudo-Elements 4 § 4.1): the marker
 +    // of a `::before` or `::after` box that is a list item.
 +    fn valid_after_before_or_after(&self) -> bool {
-+        matches!(self, Self::Marker | Self::ScrollMarker)
++        matches!(self, Self::Marker | Self::ScrollMarker | Self::Column)
 +    }
 +
 +    // pyro: `::column` lets `::scroll-marker` follow it as `::before` and `::after` let
@@ -7750,10 +7750,10 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +
 +    // pyro: `::scroll-marker:target-current`, `::scroll-button(*):disabled`, and the user action
 +    // states, match the pseudo-element's own state (its box node's, `blitz-dom`). `::column`
-+    // accepts them too, or the parser would reject them after its `::scroll-marker` as well
-+    // (`::column::scroll-marker:target-current`: the state the first pseudo-element sets stays).
++    // does not (`::column:hover` is invalid, Multi-column 2 § 4.8): `::column::scroll-marker:target-current`
++    // stays valid because the selector parser lets a stateful pseudo-element clear the flag.
 +    fn accepts_state_pseudo_classes(&self) -> bool {
-+        self.is_in_pseudo_element_tree() || self.is_scroll_marker() || self.is_scroll_button() || matches!(self, Self::FileSelectorButton | Self::Column | Self::WebkitScrollbar | Self::WebkitScrollbarThumb | Self::WebkitScrollbarTrack | Self::WebkitScrollbarTrackPiece | Self::WebkitScrollbarButton | Self::WebkitScrollbarCorner | Self::WebkitResizer)
++        self.is_in_pseudo_element_tree() || self.is_scroll_marker() || self.is_scroll_button() || matches!(self, Self::FileSelectorButton | Self::WebkitScrollbar | Self::WebkitScrollbarThumb | Self::WebkitScrollbarTrack | Self::WebkitScrollbarTrackPiece | Self::WebkitScrollbarButton | Self::WebkitScrollbarCorner | Self::WebkitResizer)
 +    }
 +
 +    // pyro: `::slotted()` can be followed by a tree-abiding pseudo-element (CSS Scoping 1 § 3.2.2),

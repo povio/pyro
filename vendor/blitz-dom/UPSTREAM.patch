@@ -98,15 +98,15 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
 +area:any-link,
 +svg|a:any-link {
 +    cursor: pointer;
-+}
-+
+ }
+ 
 +/* pyro: CSS Overflow 5 scroll markers, as Chromium styles them: a group is a block box (its
 +   layout and size containment are forced, `StyleAdjuster`), a marker is styled as a link
 +   (`a[href]` above). A `::scroll-button()` takes the rules for `button`. */
 +::scroll-marker-group {
 +    display: block;
- }
- 
++}
++
 +::scroll-marker,
 +::column::scroll-marker {
 +    color: LinkText;
@@ -242,7 +242,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  input,
-@@ -86,10 +231,86 @@
+@@ -86,10 +231,78 @@
      font-family: system-ui, sans-serif;
  }
  
@@ -296,15 +296,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
 +        display: contents;
 +    }
 +
-+    option {
-+        display: flex;
-+        align-items: center;
-+        gap: 0.5em;
-+        padding-block: 0;
-+        padding-inline: 0.5em;
-+        min-inline-size: 24px;
-+        min-block-size: max(24px, 1lh);
-+    }
++    /* (The base appearance of `option` is below the generic `option` rule it must follow.) */
 +}
 +
  textarea {
@@ -329,7 +321,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* https://html.spec.whatwg.org/multipage/rendering.html#form-controls */
  input,
  button,
-@@ -108,6 +329,34 @@
+@@ -108,6 +321,34 @@
      text-shadow: initial;
  }
  
@@ -364,7 +356,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* https://html.spec.whatwg.org/multipage/rendering.html#the-select-element-2
     (select only has native appearance here) */
  select {
-@@ -121,17 +370,38 @@
+@@ -121,17 +362,38 @@
      outline: 2px solid #4D90FE;
  }
  
@@ -408,7 +400,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  /* Button-flavored inputs clip their contents to the border box and never
-@@ -150,6 +420,42 @@
+@@ -150,6 +412,42 @@
      background-color: transparent;
  }
  
@@ -451,7 +443,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* https://html.spec.whatwg.org/#the-fieldset-and-legend-elements */
  fieldset {
      display: block;
-@@ -169,12 +475,56 @@
+@@ -169,12 +467,81 @@
      padding-inline-end: 2px;
  }
  
@@ -472,6 +464,31 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
 +    min-block-size: 1.2em;
 +    /* Chromium: not the bolder weight of an enclosing optgroup. */
 +    font-weight: normal;
++}
++
++/* pyro: the base appearance of an option (html.css, `appearance: base-select`). It follows the
++   generic `option` rule above on purpose: both have the same specificity, so the later one wins
++   (that rule's `display: block` and `min-block-size: 1.2em` used to override these). The hover
++   and disabled colors are Chromium's (WPT html/semantics/forms/the-select-element
++   customizable-select/select-option-hover-styles). */
++@appearance-base {
++    option {
++        display: flex;
++        align-items: center;
++        gap: 0.5em;
++        padding-block: 0;
++        padding-inline: 0.5em;
++        min-inline-size: 24px;
++        min-block-size: max(24px, 1lh);
++    }
++
++    option:hover:not(:disabled) {
++        background-color: color-mix(in oklab, currentcolor 10%, transparent);
++    }
++
++    option:disabled {
++        color: color-mix(in oklab, currentcolor 50%, transparent);
++    }
  }
  
 -source {
@@ -511,7 +528,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  /* To ensure http://www.w3.org/TR/REC-html40/struct/dirlang.html#style-bidi:
-@@ -186,13 +536,15 @@
+@@ -186,13 +553,15 @@
   * inherited value) to the transformed element."
   *
   * and the rules in http://dev.w3.org/html5/spec/rendering.html#rendering
@@ -528,7 +545,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  caption,
  center,
  col,
-@@ -202,7 +554,6 @@
+@@ -202,7 +571,6 @@
  div,
  dl,
  dt,
@@ -536,7 +553,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  figcaption,
  figure,
  footer,
-@@ -216,7 +567,6 @@
+@@ -216,7 +584,6 @@
  header,
  hgroup,
  hr,
@@ -544,7 +561,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  legend,
  li,
  listing,
-@@ -249,15 +599,17 @@
+@@ -249,15 +616,17 @@
      unicode-bidi: isolate;
  }
  
@@ -567,7 +584,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      unicode-bidi: plaintext;
  }
  
-@@ -287,9 +639,10 @@
+@@ -287,9 +656,10 @@
      margin: 8px;
  }
  
@@ -580,7 +597,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      display: block;
      margin-block-start: 1em;
      margin-block-end: 1em;
-@@ -569,6 +922,19 @@
+@@ -569,6 +939,19 @@
      text-align: center;
  }
  
@@ -600,7 +617,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  table[align="center"]>caption {
      margin-inline-start: auto;
      margin-inline-end: auto;
-@@ -762,6 +1128,17 @@
+@@ -762,6 +1145,17 @@
      text-align: match-parent;
  }
  
@@ -618,7 +635,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* nested lists have no top/bottom margins */
  :is(ul, ol, dir, menu, dl) ul,
  :is(ul, ol, dir, menu, dl) ol,
-@@ -832,16 +1209,49 @@
+@@ -832,16 +1226,49 @@
      position: static ! important;
      float: none ! important;
      border: none ! important;
@@ -668,7 +685,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  spacer {
      position: static ! important;
      float: none ! important;
-@@ -851,8 +1261,34 @@
+@@ -851,8 +1278,34 @@
      user-select: none;
  }
  
@@ -703,7 +720,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  html:focus-visible {
      /* These elements historically don't show outlines when focused by default.
     * We could consider changing that if needed. */
-@@ -886,9 +1322,10 @@
+@@ -886,9 +1339,10 @@
      display: none;
  }
  
@@ -716,7 +733,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  iframe:fullscreen {
-@@ -897,6 +1334,34 @@
+@@ -897,6 +1351,34 @@
      padding: unset !important;
  }
  
@@ -751,7 +768,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* Details and summary
   * https://html.spec.whatwg.org/#the-details-and-summary-elements
   *
-@@ -922,6 +1387,11 @@
+@@ -922,6 +1404,11 @@
      display: none !important;
  }
  
@@ -763,7 +780,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* media elements */
  video {
      object-fit: contain;
-@@ -992,12 +1462,23 @@
+@@ -992,12 +1479,23 @@
      height: -moz-fit-content;
  }
  
@@ -788,7 +805,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      position: fixed;
      overflow: auto;
      visibility: visible;
-@@ -1017,6 +1498,8 @@
+@@ -1017,6 +1515,8 @@
      display: inline-block;
      vertical-align: text-bottom;
      text-align: start;
@@ -797,7 +814,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  marquee:is([direction="up"], [direction="down"]) {
-@@ -1082,9 +1565,9 @@
+@@ -1082,9 +1582,9 @@
      font-size: unset;
  }
  
@@ -809,7 +826,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  rtc {
      unicode-bidi: isolate;
  }
-@@ -1128,37 +1611,152 @@
+@@ -1128,37 +1628,152 @@
  }
  
  /* Popover UA style, https://html.spec.whatwg.org/#flow-content-3 */
@@ -873,14 +890,14 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
 +   the sampled transition values rank below important declarations here. */
 +dialog:modal, :popover-open {
 +    overlay: auto;
-+}
+ }
 +
 +:popover-open::backdrop {
 +    position: fixed;
 +    inset: 0;
 +    pointer-events: none !important;
 +    background-color: transparent;
- }
++}
 +
 +/* pyro: preformatted and code text gets no automatic spacing between ideographs and letters
 + * (HTML § 15.3.4, as Gecko; WPT css-text `text-autospace-preformatted-001`). */
@@ -7493,7 +7510,7 @@ diff --git a/packages/blitz-dom/src/has_invalidation.rs b/packages/blitz-dom/src
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/has_invalidation.rs
-@@ -0,0 +1,356 @@
+@@ -0,0 +1,361 @@
 +//! pyro: `:has()` invalidation through Stylo's relative selector
 +//! invalidation, as Gecko runs it on every state and attribute change.
 +//!
@@ -7551,6 +7568,11 @@ new file mode 100644
 +    .union(ElementState::DEFAULT)
 +    .union(ElementState::OPEN)
 +    .union(ElementState::MODAL)
++    // The `dialog-in-top-layer` token sets it (`pyro_state_bits`): it has to be in the mask that
++    // is cleared before the tokens are applied again, or a dialog that was once modal keeps
++    // matching the UA sheet's `dialog:-moz-topmost-modal` rule (fixed, `overflow:auto`) after it
++    // leaves the top layer (css-position-4 §4.1 top-layer styling stops applying).
++    .union(ElementState::TOPMOST_MODAL)
 +    .union(ElementState::POPOVER_OPEN)
 +    .union(ElementState::INRANGE)
 +    .union(ElementState::OUTOFRANGE)
@@ -28187,10 +28209,9 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                  if node.oof_containing_block.get() == Some(containing_block) {
                      node.oof_containing_block.set(None);
 +                    self.doc.oof_hoisted.remove(&hoisted_id);
-                 }
-             }
-         }
--        hoisted.clear();
++                }
++            }
++        }
 +        let mut list = hoisted;
 +        list.clear();
 +        *self.node_from_id(node_id).hoisted_children.borrow_mut() = list;
@@ -28218,11 +28239,12 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                        return between;
 +                    }
 +                    up = self.nodes[m].layout_parent.get();
-+                }
+                 }
 +                return false;
-+            }
+             }
 +            at = self.nodes[node].parent;
-+        }
+         }
+-        hoisted.clear();
 +        false
 +    }
 +
@@ -28437,7 +28459,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -782,16 +3434,248 @@
+@@ -782,16 +3434,256 @@
          self.child_layout_style(self.node_from_id(child_node_id))
      }
  
@@ -28588,6 +28610,14 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +            if box_.overflow_x.is_scrollable() || box_.overflow_y.is_scrollable() {
 +                return false;
 +            }
++            // pyro: a box that is, or sits in, an unbreakable chain (`break-inside: avoid`) breaks
++            // nowhere while it fits a column, so it aligns its content as in any block (css-align-3
++            // § 5.1 applies per fragment; WPT css-align `blocks/align-content-block-002..011`).
++            // One taller than the column would still be cut: the cut is at the column end, the
++            // alignment stays that of the whole box.
++            if super::layout::multicol::avoids_column_break_inside(&style) {
++                return false;
++            }
 +            use style::values::specified::box_::DisplayInside;
 +            if !matches!(style.clone_display().inside(), DisplayInside::Flow | DisplayInside::FlowRoot) {
 +                return false;
@@ -28690,7 +28720,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  }
  
-@@ -806,6 +3690,18 @@
+@@ -806,6 +3698,18 @@
      where
          Self: 'a;
  
@@ -28709,7 +28739,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      fn get_flexbox_container_style(&self, node_id: NodeId) -> Self::FlexboxContainerStyle<'_> {
          self.get_core_container_style(node_id)
      }
-@@ -844,6 +3740,30 @@
+@@ -844,6 +3748,30 @@
              element.detailed_layout_info = DetailedLayoutInfo::Grid(Box::new(detailed_grid_info));
          }
      }
@@ -28740,7 +28770,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl RoundTree for LayoutPassState<'_> {
-@@ -852,7 +3772,19 @@
+@@ -852,7 +3780,19 @@
      }
  
      fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -28761,7 +28791,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-@@ -868,6 +3800,30 @@
+@@ -868,6 +3808,30 @@
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
          taffy_node_id(self.node_from_id(node_id).hoisted_children.borrow()[index])
      }
@@ -28792,7 +28822,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  pub(crate) struct TaffyDebugTree<'doc>(pub(crate) &'doc BaseDocument);
-@@ -972,3 +3928,240 @@
+@@ -972,3 +3936,240 @@
          })
      }
  }
@@ -29037,7 +29067,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,4159 @@
+@@ -0,0 +1,4178 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -30998,6 +31028,23 @@ new file mode 100644
 +        // pyro: a table cell's `vertical-align` (as `align-content`) moves its columns down in a
 +        // taller cell (`stylo_taffy::convert::table_cell_vertical_align`).
 +        let free = height - pb_sum.height - columns_height;
++        // pyro: `align-content` on the container itself aligns all its column rows (spanners
++        // included) as one unit in its content box (css-align-3 § 5.1 "Block containers",
++        // distribution-multicol; WPT css-align `multicol/align-content-multicol`).
++        let own_align = {
++            let item = self.nodes[dom_id].layout_style();
++            taffy::BlockContainerStyle::align_content(&item)
++        };
++        let is_cell = self.nodes[dom_id].primary_styles().is_some_and(|style| style.clone_display().inside() == DisplayInside::TableCell);
++        if let Some(shift) = (own_align.keyword != taffy::AlignContentKeyword::Normal && !vertical && !is_cell)
++            .then(|| taffy::compute_block_align_content_offset(own_align, free))
++            .filter(|shift| shift.abs() > EPSILON)
++        {
++            let shift = snap(shift);
++            for fragment in &mut fragments {
++                fragment.offset.y += shift;
++            }
++        }
 +        if free > EPSILON
 +            && let Some(style) = self.nodes[dom_id].primary_styles()
 +            && style.clone_display().inside() == DisplayInside::TableCell
@@ -32490,20 +32537,22 @@ new file mode 100644
 +                    found.parallel = previous_parallel;
 +                    found.parallel_end = previous_end;
 +                }
-+            } else if let Some(bands) = (!held_whole(child, &style))
++            } else if let Some(bands) = (!held_whole(child, &style) && !avoids_column_break_inside(&style))
 +                .then(|| self.grid_row_bands(child_id, child_top))
 +                .flatten()
 +                .filter(|b| b.len() > 1)
 +            {
 +                // pyro: a grid breaks between its rows as a table does (Chromium fragments grids; WPT
-+                // css-grid `alignment/grid-item-mixed-baseline-004`).
++                // css-grid `alignment/grid-item-mixed-baseline-004`), unless it avoids breaks inside
++                // (`break-inside: avoid`: kept whole below, as a column is grown to hold it; WPT
++                // css-multicol `balance-grid-001`).
 +                for &band in &bands {
 +                    found.strict.push(band);
 +                    found.loose.push(band);
 +                }
 +                found.strict.push((child_top, bands[0].1));
 +                found.strict.push((bands[bands.len() - 1].0, child_bottom));
-+            } else if let Some(bands) = child.flags.is_table_root().then(|| self.table_row_bands(child_id, child_top)).filter(|b| b.len() > 1) {
++            } else if let Some(bands) = (child.flags.is_table_root() && !avoids_column_break_inside(&style)).then(|| self.table_row_bands(child_id, child_top)).filter(|b| b.len() > 1) {
 +                // pyro: a table breaks between its rows (Chromium fragments tables): each row,
 +                // and its first and last rows with the table's edges, kept together.
 +                for &band in &bands {
@@ -32568,7 +32617,7 @@ new file mode 100644
 +
 +/// pyro: whether `style`'s `break-inside` avoids column breaks (`avoid`, `avoid-column`; not
 +/// `avoid-page`, which is for pages only: CSS Fragmentation 3 § 3.2).
-+fn avoids_column_break_inside(style: &ComputedValues) -> bool {
++pub(crate) fn avoids_column_break_inside(style: &ComputedValues) -> bool {
 +    matches!(style.get_box().break_inside, BreakWithin::Avoid | BreakWithin::AvoidColumn)
 +}
 +
