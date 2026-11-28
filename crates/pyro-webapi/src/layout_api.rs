@@ -923,8 +923,9 @@ pub(crate) fn scroll_into_view<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> 
     let arg = a.get(0);
     let (mut block, mut inline) = (ScrollAlign::Start, ScrollAlign::Nearest);
     let mut behavior = ScrollBehavior::Auto;
+    let mut nearest = false;
     if let Some(o) = arg.as_object() {
-        // Dictionary members in lexicographic order: behavior, block, inline.
+        // Dictionary members in lexicographic order: behavior, block, container, inline.
         behavior = scroll_behavior(&o, "scrollIntoView", "Element")?;
         let position = |k: &str, out: &mut ScrollAlign| -> JsResult<()> {
             let v = o.get(k)?;
@@ -940,13 +941,31 @@ pub(crate) fn scroll_into_view<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> 
             Ok(())
         };
         position("block", &mut block)?;
+        // ScrollIntoViewContainer: "all" (the default) or "nearest".
+        let container = o.get("container")?;
+        if !container.is_undefined() {
+            let text = dom_string(container)?;
+            nearest = match text.as_str() {
+                "all" => false,
+                "nearest" => true,
+                _ => {
+                    return Err(pyro_js::JsError::type_error(format!(
+                        "Failed to execute 'scrollIntoView' on 'Element': The provided value '{text}' is not a valid enum value of type ScrollIntoViewContainer."
+                    )))
+                }
+            };
+        }
         position("inline", &mut inline)?;
     } else if !arg.is_undefined() && !arg.is_null() && !arg.to_bool() {
         block = ScrollAlign::End;
     }
     let page = n.page();
     let waiter = perform_scroll(page, behavior, &[], |dom, layout| {
-        let moved = layout.scroll_into_view_aligned_script_targets(dom, n.id, block, inline);
+        let moved = if nearest {
+            layout.scroll_into_view_nearest_script_targets(dom, n.id, block, inline)
+        } else {
+            layout.scroll_into_view_aligned_script_targets(dom, n.id, block, inline)
+        };
         moved.iter().map(scroll_target_node).collect()
     });
     scroll_promise(s, page, waiter)

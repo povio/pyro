@@ -5900,7 +5900,7 @@ impl Layout {
     fn scroll_into_view_aligned_targets(&mut self, dom: &Dom, el: NodeId, center: bool) -> Vec<ScrollTarget> {
         let offset: fn(f64, f64, f64, i64) -> Option<i32> =
             if center { centered_scroll_offset } else { center_if_needed_offset };
-        self.scroll_into_view_offset_targets(dom, el, RevealAlignment::Physical(offset), false)
+        self.scroll_into_view_offset_targets(dom, el, RevealAlignment::Physical(offset), false, false)
     }
 
     /// Script-facing `Element.scrollIntoView(options)` with an explicit
@@ -5915,9 +5915,22 @@ impl Layout {
         block: ScrollAlign,
         inline: ScrollAlign,
     ) -> Vec<ScrollTarget> {
-        let moved = self.scroll_into_view_offset_targets(dom, el, RevealAlignment::Logical { block, inline }, true);
+        let moved = self.scroll_into_view_offset_targets(dom, el, RevealAlignment::Logical { block, inline }, true, false);
         self.set_scroll_target(dom, el);
         moved
+    }
+
+    /// [`Self::scroll_into_view_aligned_script_targets`] with `container: "nearest"` (CSSOM View
+    /// ScrollIntoViewOptions): only the nearest scroll container scrolls the element into view, or
+    /// the viewport when it has none.
+    pub fn scroll_into_view_nearest_script_targets(
+        &mut self,
+        dom: &Dom,
+        el: NodeId,
+        block: ScrollAlign,
+        inline: ScrollAlign,
+    ) -> Vec<ScrollTarget> {
+        self.scroll_into_view_offset_targets(dom, el, RevealAlignment::Logical { block, inline }, true, true)
     }
 
     /// CSS Overflow 5 § 2.1: `el` is the current scroll target of each scroll container it was
@@ -5995,7 +6008,7 @@ impl Layout {
     ) -> Vec<ScrollTarget> {
         let offset: fn(f64, f64, f64, i64) -> Option<i32> =
             if center_if_needed { center_if_needed_offset } else { nearest_scroll_offset };
-        let moved = self.scroll_into_view_offset_targets(dom, el, RevealAlignment::Physical(offset), true);
+        let moved = self.scroll_into_view_offset_targets(dom, el, RevealAlignment::Physical(offset), true, false);
         self.set_scroll_target(dom, el);
         moved
     }
@@ -6099,6 +6112,7 @@ impl Layout {
         el: NodeId,
         alignment: RevealAlignment,
         script: bool,
+        nearest: bool,
     ) -> Vec<ScrollTarget> {
         if self.in_hidden_contents(dom, el) {
             return Vec::new();
@@ -6157,6 +6171,11 @@ impl Layout {
                     .flatten();
                 if self.element_scroll_to(dom, node, left, top) {
                     moved.push(ScrollTarget::Container(node));
+                }
+                // ScrollIntoViewOptions `container: "nearest"`: only the nearest scroll container scrolls
+                // (not its ancestors, nor the viewport).
+                if nearest {
+                    return moved;
                 }
             }
             cur = flat_parent(node);
