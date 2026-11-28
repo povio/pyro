@@ -634,7 +634,7 @@ fn touch_moves_cancel_the_tap_scroll_and_follow_ids() {
         log,
         [
             "pointerdown@a T,true,2,2,1,0,1,10,10",
-            "touchstart@a 1,1,1,true,true,true",
+            "touchstart@a 1,1,1,false,true,true",
             "gotpointercapture@a T,true,2,2,0,-1,0,10,10",
             "pointercancel@a T,true,2,2,0,-1,0,10,10",
             "lostpointercapture@a T,true,2,2,0,-1,0,10,10",
