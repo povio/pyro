@@ -224,6 +224,15 @@ thread_local! {
     static NESTED_MS: std::cell::RefCell<Vec<f64>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
+/// This module's part of [`crate::thread_state::reset_thread`]: the per-document states of dropped
+/// documents are pruned and a document still holding one is named; the task accounting and the
+/// `elementtiming` cache (keyed by a process-unique page id) start again.
+pub(crate) fn thread_leftover() -> Option<&'static str> {
+    NESTED_MS.with(|nested| nested.borrow_mut().clear());
+    element::forget_last();
+    lcp::thread_leftover().or_else(shift::thread_leftover)
+}
+
 /// Accounts a finished task of `depth` (`pyro_runtime::task_depth`, 1 = outermost) that took
 /// `duration` ms, once per task before its documents are told: returns the ms
 /// the tasks nested in it took ([`TaskInfo::nested_ms`]) and adds its own

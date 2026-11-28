@@ -82,12 +82,19 @@ pub(crate) fn define_attribute<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C
     );
 }
 
+thread_local! {
+    /// The document and DOM version [`has_marked_element`] looked at last, and its answer.
+    static LAST: std::cell::Cell<Option<(u64, u64, bool)>> = const { std::cell::Cell::new(None) };
+}
+
+/// Forgets the document [`has_marked_element`] looked at last.
+pub(super) fn forget_last() {
+    LAST.with(|last| last.set(None));
+}
+
 /// Whether the document has an element with an `elementtiming` attribute, looked up once per
 /// DOM version (a page nobody marks pays one walk per change, no layout).
 fn has_marked_element(page: &PageDom) -> bool {
-    thread_local! {
-        static LAST: std::cell::Cell<Option<(u64, u64, bool)>> = const { std::cell::Cell::new(None) };
-    }
     let Ok(dom) = page.dom.try_borrow() else { return true };
     let version = dom.version();
     if let Some((id, v, marked)) = LAST.get() {

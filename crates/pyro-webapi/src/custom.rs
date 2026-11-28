@@ -1304,5 +1304,10 @@ pub(crate) fn thread_leftover() -> Option<&'static str> {
     if CONSTRUCTIONS.with(|c| !c.borrow().is_empty()) {
         return Some("custom::CONSTRUCTIONS");
     }
+    // The reaction loop's guard truncates its frame on the way out, so none is left between calls;
+    // `REACTION_STACK_BASE` is rewritten by every outermost loop before it is read.
+    if FRAMES.with(|f| !f.borrow().is_empty()) {
+        return Some("custom::FRAMES");
+    }
     association::thread_leftover()
 }

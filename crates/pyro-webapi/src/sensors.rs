@@ -285,6 +285,25 @@ thread_local! {
     static PUMPS: RefCell<Vec<Pump>> = RefCell::new(Vec::new());
 }
 
+/// This module's part of [`crate::thread_state::reset_thread`]: the watchers and pumps of dropped
+/// pages go; one still held names the static.
+pub(crate) fn thread_leftover() -> Option<&'static str> {
+    if WATCHERS.with(|w| {
+        let mut w = w.borrow_mut();
+        w.retain(|watcher| watcher.page.strong_count() > 0);
+        !w.is_empty()
+    }) {
+        return Some("sensors::WATCHERS");
+    }
+    PUMPS
+        .with(|p| {
+            let mut p = p.borrow_mut();
+            p.retain(|pump| pump.page.strong_count() > 0);
+            !p.is_empty()
+        })
+        .then_some("sensors::PUMPS")
+}
+
 struct Watcher {
     page: Weak<PageDom>,
     realm: WeakRealm,

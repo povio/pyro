@@ -925,6 +925,8 @@ pub(crate) fn thread_leftover() -> Option<&'static str> {
     if QUERIES.get() != 0 {
         return Some("service_worker_scope::QUERIES");
     }
+    // Navigation preloads belong to a fetch job; `tear_down` drops them with the job table.
+    drop(PRELOADS.with(|p| std::mem::take(&mut *p.borrow_mut())));
     NEXT_KEY.set(1);
     None
 }

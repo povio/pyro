@@ -30,6 +30,18 @@ thread_local! {
     static PAGES: RefCell<HashMap<u64, Weak<PageDom>>> = RefCell::new(HashMap::new());
 }
 
+/// This module's part of [`crate::thread_state::reset_thread`]: a page of this thread that still
+/// has a report to post.
+pub(crate) fn thread_leftover() -> Option<&'static str> {
+    PAGES
+        .with(|pages| {
+            let mut pages = pages.borrow_mut();
+            pages.retain(|_, page| page.strong_count() > 0);
+            !pages.is_empty()
+        })
+        .then_some("coep_report::PAGES")
+}
+
 impl PageDom {
     /// Fills `defaults` with the embedder policy this context's requests are subject to: the
     /// enforced value, the report-only value and where violations go (`None` when the context

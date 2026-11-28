@@ -68,6 +68,19 @@ thread_local! {
     static STORES: RefCell<(u32, HashMap<u32, (u64, SharedKeys)>)> = RefCell::new((0, HashMap::new()));
 }
 
+/// This module's part of [`crate::thread_state::reset_thread`]: every page is gone, so is every store
+/// ([`release_document`]); the ids start again.
+pub(crate) fn thread_leftover() -> Option<&'static str> {
+    STORES.with(|stores| {
+        let mut stores = stores.borrow_mut();
+        if !stores.1.is_empty() {
+            return Some("eme::STORES");
+        }
+        stores.0 = 0;
+        None
+    })
+}
+
 fn lookup(id: f64) -> Option<SharedKeys> {
     STORES.with(|stores| stores.borrow().1.get(&(id as u32)).map(|(_, keys)| keys.clone()))
 }

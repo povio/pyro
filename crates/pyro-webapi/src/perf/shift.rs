@@ -111,6 +111,18 @@ thread_local! {
     static STATES: RefCell<FxHashMap<u64, State>> = RefCell::new(FxHashMap::default());
 }
 
+/// This module's part of [`crate::thread_state::reset_thread`]: the states of dropped documents go;
+/// one still held names the static.
+pub(super) fn thread_leftover() -> Option<&'static str> {
+    STATES
+        .with(|states| {
+            let mut states = states.borrow_mut();
+            states.retain(|_, s| s.page.upgrade().is_some_and(|p| !p.is_disposed()));
+            !states.is_empty()
+        })
+        .then_some("shift::STATES")
+}
+
 fn with_state<R>(page: &Rc<PageDom>, f: impl FnOnce(&mut State) -> R) -> R {
     STATES.with(|states| {
         let mut states = states.borrow_mut();

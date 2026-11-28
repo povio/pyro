@@ -5441,5 +5441,10 @@ fn common_ancestor(dom: &Dom, a: NodeId, b: NodeId) -> Option<NodeId> {
 /// [`crate::thread_state::reset_thread`]'s part: [`focus_element_from_script`] restores the
 /// option when it returns, so outside of a call it is unset.
 pub(crate) fn thread_leftover() -> Option<&'static str> {
+    // The last press is keyed by a page's address, which a later page may reuse: forgotten.
+    LAST_PRESS.with(|c| c.borrow_mut().take());
+    if TRUSTED_ACTIVATION.with(std::cell::Cell::get) {
+        return Some("input::TRUSTED_ACTIVATION");
+    }
     FOCUS_VISIBLE_OPTION.with(|f| f.get().is_some()).then_some("input::FOCUS_VISIBLE_OPTION")
 }

@@ -54,6 +54,13 @@ thread_local! {
     static TOUCH_CAPTURE: RefCell<Vec<(usize, i32, TouchCapture)>> = const { RefCell::new(Vec::new()) };
 }
 
+/// This module's part of [`crate::thread_state::reset_thread`]: a touch sequence of a closed page
+/// is keyed by an address a later page may reuse, so the list is emptied.
+pub(crate) fn thread_leftover() -> Option<&'static str> {
+    TOUCH_CAPTURE.with(|t| t.borrow_mut().clear());
+    None
+}
+
 fn page_key(page: &PageDom) -> usize {
     page as *const PageDom as usize
 }
