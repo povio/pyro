@@ -191,6 +191,22 @@ pub(crate) fn has_policies(page: &PageDom) -> bool {
     !page.dom.borrow().csp_policies(page.document()).is_empty()
 }
 
+/// The `Content-Security-Policy` and `-Report-Only` values of a worker script's response, each
+/// header's values joined with `,` (CSP3 §4.2.2: they are the worker global's own list). A value
+/// is read as Latin-1 bytes like any header value: one with a non-ASCII byte must still apply
+/// (dropping it would leave the worker with no policy at all).
+pub(crate) fn response_policies(headers: &pyro_net::http::HeaderMap) -> (String, String) {
+    let joined = |name: &str| {
+        headers
+            .get_all(name)
+            .iter()
+            .map(|v| v.as_bytes().iter().map(|&b| char::from(b)).collect::<String>())
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    (joined("content-security-policy"), joined("content-security-policy-report-only"))
+}
+
 /// The pre-request check of `request` against `page`'s CSP list (CSP3 "Should request be
 /// blocked by Content Security Policy?"). Its violations are reported at `target` (an element of
 /// the document), else the document. `Ok` carries the guard the request should carry for its
@@ -843,6 +859,21 @@ mod tests {
         let (_, targets) = report_parts(&violation(PolicySource::Meta, &[], Some("g")));
         assert!(targets.uris.is_empty());
         assert_eq!(targets.group.as_deref(), Some("g"));
+    }
+
+    /// A worker script response's CSP header with a non-ASCII byte still applies (Latin-1, as any
+    /// header value): dropping it would give the worker no policy.
+    #[test]
+    fn response_policies_keep_values_with_non_ascii_bytes() {
+        use pyro_net::http::{HeaderMap, HeaderValue};
+        let mut headers = HeaderMap::new();
+        headers.append("content-security-policy", HeaderValue::from_bytes(b"script-src 'self'; report-uri /r\xE9").unwrap());
+        headers.append("content-security-policy", HeaderValue::from_static("default-src 'none'"));
+        headers.append("content-security-policy-report-only", HeaderValue::from_static("img-src 'none'"));
+        let (enforce, report_only) = response_policies(&headers);
+        assert_eq!(enforce, "script-src 'self'; report-uri /r\u{e9},default-src 'none'");
+        assert_eq!(report_only, "img-src 'none'");
+        assert_eq!(response_policies(&HeaderMap::new()), (String::new(), String::new()));
     }
 
     #[test]

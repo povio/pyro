@@ -1886,10 +1886,7 @@ fn fetched_script(
     let embedder = crate::coep_report::obtain_embedder(&head.headers, &head.url);
     // ... and so is its CSP list (CSP3 §4.2.2): `eval`, `importScripts`, `fetch` and WebAssembly in the
     // worker follow it, and a service worker inherits nothing from the page that registered it.
-    let joined = |name: &str| {
-        head.headers.get_all(name).iter().filter_map(|v| v.to_str().ok()).collect::<Vec<_>>().join(",")
-    };
-    let csp = (joined("content-security-policy"), joined("content-security-policy-report-only"));
+    let csp = crate::csp::response_policies(&head.headers);
     start_version(page, registration, script_url, body, allowlist, embedder, csp, settle);
 }
 

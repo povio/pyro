@@ -1630,11 +1630,7 @@ fn fetch_script(
                         head.headers.get_all("referrer-policy").iter().filter_map(|v| v.to_str().ok()),
                     ));
                     // The worker's own CSP list is its script's response's (CSP3 §4.2.2).
-                    let joined = |name: &str| {
-                        head.headers.get_all(name).iter().filter_map(|v| v.to_str().ok()).collect::<Vec<_>>().join(",")
-                    };
-                    let (enforce, report_only) =
-                        (joined("content-security-policy"), joined("content-security-policy-report-only"));
+                    let (enforce, report_only) = crate::csp::response_policies(&head.headers);
                     if !enforce.is_empty() || !report_only.is_empty() {
                         let _ = page.dom.borrow_mut().set_trusted_types_policies(page.document(), &enforce, &report_only);
                     }

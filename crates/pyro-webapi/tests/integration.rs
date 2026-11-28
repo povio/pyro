@@ -21,6 +21,7 @@ mod font_loading_js;
 mod form_data_js;
 mod forms_js;
 mod identity_js;
+mod inline_handler_csp_js;
 mod image_input_js;
 mod indexeddb_js;
 mod layout_text_js;

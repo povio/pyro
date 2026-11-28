@@ -1272,6 +1272,22 @@ mod tests {
         assert!(allowed("default-src 'none'; img-src *; connect-src 'none', default-src 'none'; img-src 'none'; connect-src *", "https://a.test/d.xml", p));
     }
 
+    /// `register()` checks the registering document's policies for a service worker script as for
+    /// a dedicated worker's: `worker-src`, then `child-src`, `script-src`, `default-src`.
+    #[test]
+    fn service_worker_script_follows_worker_src_and_its_fallbacks() {
+        let url = "https://a.test/sw.js";
+        let sw = RequestDest::ServiceWorker;
+        assert!(!allowed("worker-src 'none'", url, sw));
+        assert!(allowed("worker-src 'self'", url, sw));
+        assert!(!allowed("worker-src 'self'", "https://b.test/sw.js", sw));
+        assert!(!allowed("child-src 'none'; script-src 'self'; default-src 'none'", url, sw));
+        assert!(!allowed("script-src 'none'", url, sw));
+        assert!(!allowed("default-src 'none'", url, sw));
+        assert!(allowed("default-src 'none'; worker-src 'self'", url, sw));
+        assert!(allowed("img-src 'none'", url, sw));
+    }
+
     #[test]
     fn worker_fallback_and_redirects() {
         assert!(!allowed("script-src 'self'", "https://b.test/w.js", RequestDest::Worker));

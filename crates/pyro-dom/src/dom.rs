@@ -3545,6 +3545,25 @@ impl Dom {
         std::mem::take(&mut self.pending_inline_handlers)
     }
 
+    /// The pending entries whose node document is `doc`. One `Dom` holds the documents of every
+    /// frame of a page, each drained by its own window: an entry of another active document stays
+    /// queued for that one (taking the whole list would lose a child frame's handlers whenever
+    /// the parent drained first). Entries of a document that is not active (a template's inert
+    /// contents: adoption notes them again, in the document they move to) and of dead nodes go.
+    pub fn take_pending_inline_handlers_of(&mut self, doc: NodeId) -> Vec<NodeId> {
+        let pending = std::mem::take(&mut self.pending_inline_handlers);
+        let mut mine = Vec::new();
+        for id in pending {
+            let Ok(owner) = self.node_document(id) else { continue };
+            if owner == doc {
+                mine.push(id);
+            } else if self.document_data(owner).is_ok_and(|d| d.active) {
+                self.pending_inline_handlers.push(id);
+            }
+        }
+        mine
+    }
+
     pub fn clone_node(&mut self, node: NodeId, deep: bool, doc: Option<NodeId>) -> DomResult<NodeId> {
         let fallback = match doc {
             Some(d) => self.registry_association(d)?,
