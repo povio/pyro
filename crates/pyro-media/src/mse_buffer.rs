@@ -199,9 +199,17 @@ impl TrackBuffer {
         let mut sorted: Vec<_> =
             self.samples.iter().map(|s| (s.sample.pts, s.sample.pts + s.sample.duration)).collect();
         sorted.sort_by(|a, b| a.0.total_cmp(&b.0));
+        // A frame starting within half the track's longest frame after the range's end belongs to
+        // that range. Chrome's SourceBufferStream appends a frame to the range it follows within
+        // its fudge room (a multiple of the largest interbuffer distance), so the rounding between
+        // a frame's duration and the next frame's start (WPT test.mp4 has trun durations 3000, 1,
+        // 5999, ... ticks of 1/90000 s: the frames end one tick before the next begins) is not a
+        // gap that splits `buffered` into 90 ranges and stalls playback. `remove()` takes whole
+        // frames, so the gap it leaves is at least one frame and stays a gap.
+        let fudge = sorted.iter().map(|&(start, end)| end - start).fold(0., f64::max) / 2.;
         let mut ranges: Vec<(f64, f64)> = Vec::new();
         for (start, end) in sorted {
-            if let Some(last) = ranges.last_mut().filter(|r| start <= r.1 + TIME_EPSILON) {
+            if let Some(last) = ranges.last_mut().filter(|r| start <= r.1 + TIME_EPSILON + fudge) {
                 last.1 = last.1.max(end);
             } else {
                 ranges.push((start, end));
@@ -533,6 +541,16 @@ mod tests {
         let packets = b.tracks[0].samples().iter().map(|s| s.sample.data[0]).collect::<Vec<_>>();
         assert_eq!(packets, [0, 3, 4, 5]);
         assert_eq!(b.tracks[0].sample_bytes, 4);
+    }
+
+    #[test]
+    fn a_rounding_gap_far_below_a_frame_does_not_split_buffered() {
+        let mut b = setup();
+        // Frames one unit long, the second one starting 0.001 after the first ends, then a real gap.
+        for (time, key) in [(0., true), (1.001, false), (2.002, false), (4.5, true)] {
+            b.process_sample(sample(time, key, 1)).unwrap();
+        }
+        assert_eq!(b.ranges(false), vec![(0., 3.002), (4.5, 5.5)]);
     }
 
     #[test]
