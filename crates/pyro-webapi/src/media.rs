@@ -1252,9 +1252,13 @@ fn fetch_resource(page: &Rc<PageDom>, node: NodeId, generation: u32, resource: R
         start_fetch(page, node, generation, resource, source, Seek::default());
         return;
     }
+    // A blob: URL names data this page already holds, so there is no network load to defer: Chrome
+    // resolves it at once (a revoked or corrupted one fires `error` under preload=none as well, which
+    // media-source/mediasource-preload.html expects). A MediaSource URL took the branch above.
+    let local = matches!(&resource, Resource::Url(url) if url.starts_with("blob:"));
     let preload_none =
         page.dom.borrow().get_attribute(node, "preload").ok().flatten().is_some_and(|p| p.eq_ignore_ascii_case("none"));
-    if preload_none && !attr(page, node, "autoplay") && peek(page, node, |st| st.paused) {
+    if preload_none && !local && !attr(page, node, "autoplay") && peek(page, node, |st| st.paused) {
         with(page, node, |st| st.suspended = Some((resource, source)));
         queue(page, node, generation, move |page| {
             if peek(page, node, |st| st.suspended.is_none()) {
