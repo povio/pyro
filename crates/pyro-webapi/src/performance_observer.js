@@ -109,15 +109,15 @@
         options.droppedEntriesCount = dropped;
         d.requiresDropped = false;
       }
-      // The callback descends from the code that began observing, when that was attributed.
-      const outer = d.attribution !== 0 ? native.ambient() : 0;
+      // The callback descends from the code that began observing, when that was attributed. (Not undone
+      // after it: the microtasks of its promises run when this task's script returns, and the task, a timer's,
+      // ends the attribution.)
       if (d.attribution !== 0) native.setAmbient(d.attribution);
       try {
         d.callback.call(observer, list, observer, options);
       } catch (e) {
         native.reportException(e);
       }
-      if (d.attribution !== 0) native.setAmbient(outer);
     }
   };
   const schedule = () => {
