@@ -124,6 +124,16 @@ pub struct TimelineBuffers {
 }
 
 impl TimelineBuffers {
+    /// The document is disposed: its buffered entries go. LCP, element timing and layout shift
+    /// entries hold a reference in the document's DOM to the node they name (`NodeRef`), and a
+    /// closed popup's page lingers while its opener keeps a function of its realm: the nodes stay in
+    /// the shared DOM store as long as the entries do.
+    pub(crate) fn release_entries(&self) {
+        let entries = std::mem::take(&mut *self.buffers.borrow_mut());
+        drop(entries);
+        self.paint.borrow_mut().clear();
+    }
+
     /// `natives.watch(queue)` of performance_observer.js: `queue` (or null
     /// to stop) gets the entries `queue_entry` makes for `s`'s realm.
     pub(crate) fn watch(&self, s: &Scope<'_>, queue: Value<'_>) {
