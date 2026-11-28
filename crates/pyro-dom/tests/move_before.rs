@@ -353,3 +353,30 @@ fn manual_assignment_updates_layout_and_signals_slots_removed_with_ancestors() {
     assert_eq!(dom.assigned_nodes(slot, false).unwrap(), [child]);
     assert_eq!(dom.take_signaled_slots(), [slot]);
 }
+
+#[test]
+fn removing_the_focused_element_queues_a_focus_reset_that_a_focus_update_cancels() {
+    let (dom, d) = doc("<div id=a><button id=btn></button><button id=other></button></div>");
+    let mut dom = dom.borrow_mut();
+    let (a, btn, other) = (by_id(&dom, d, "a"), by_id(&dom, d, "btn"), by_id(&dom, d, "other"));
+    // A move keeps focus: nothing to reset. Removing an unfocused element neither.
+    dom.set_focused(d, Some(btn)).unwrap();
+    dom.move_before(a, btn, None).unwrap();
+    assert!(!dom.has_focus_resets(), "a move resets no focus");
+    dom.remove_node(other).unwrap();
+    assert!(!dom.has_focus_resets(), "an unfocused removal resets no focus");
+    // Removing the focused one queues the document once, however many removals follow.
+    dom.remove_node(btn).unwrap();
+    assert!(dom.has_focus_resets());
+    assert_eq!(dom.take_focus_resets(), vec![d]);
+    assert!(!dom.has_focus_resets(), "taken");
+    // An explicit focus update after the removal cancels it.
+    let body = d_body(&dom, d);
+    dom.append_child(body, btn).unwrap();
+    dom.set_focused(d, Some(btn)).unwrap();
+    dom.remove_node(btn).unwrap();
+    assert!(dom.has_focus_resets());
+    dom.append_child(body, other).unwrap();
+    dom.set_focused(d, Some(other)).unwrap();
+    assert!(!dom.has_focus_resets(), "focusing something cancels the pending reset");
+}

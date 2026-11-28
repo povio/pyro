@@ -2440,6 +2440,9 @@ impl Dom {
             dd.focused = new;
             dd.marker_focus = None;
         }
+        // An explicit focus update (focus(), blur(), a click) cancels the `focusreset` the removal
+        // of a focused element queued, in every document: the focus was set deliberately since.
+        self.focus_reset.clear();
         // :focus / :focus-within participate in style matching (the style
         // cache compares the focused elements).
         self.bump();

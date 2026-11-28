@@ -99,6 +99,11 @@ fn live_element(page: &PageDom, doc: NodeId, el: NodeId) -> bool {
 /// `focus()`/`blur()` must be applied by the page that owns it now.
 pub(crate) fn sibling_page_of(page: &Rc<PageDom>, el: NodeId) -> Option<Rc<PageDom>> {
     let doc = page.dom.borrow().node_document(el).ok()?;
+    sibling_page_of_document(page, doc)
+}
+
+/// [`sibling_page_of`] for the document node `doc` itself.
+pub(crate) fn sibling_page_of_document(page: &Rc<PageDom>, doc: NodeId) -> Option<Rc<PageDom>> {
     if doc == page.document() {
         return None;
     }

@@ -342,6 +342,10 @@ pub struct Dom {
     /// Elements to try to upgrade to custom elements (see `crate::upgrade`).
     pub(crate) upgrades: crate::upgrade::UpgradeQueue,
     pub(crate) slot_state: crate::slots::SlotState,
+    /// Documents whose focused element was removed (the focus fixup rule) and that still owe a
+    /// `focusreset` event (whatwg/html#13050): the bindings fire it from the mutation observer
+    /// microtask. Any explicit focus update (`set_focused` changing the focus) cancels all of them.
+    pub(crate) focus_reset: Vec<u32>,
     pub(crate) events: crate::events::ListenerStore,
     pub(crate) resources: crate::script::ResourceQueue,
     pub(crate) iframes: crate::iframe::IframeQueue,
@@ -463,6 +467,7 @@ impl Dom {
             creation_docs: Default::default(),
             upgrades: Default::default(),
             slot_state: Default::default(),
+            focus_reset: Vec::new(),
             events: Default::default(),
             resources: Default::default(),
             iframes: Default::default(),
@@ -3342,7 +3347,12 @@ impl Dom {
             if i == node {
                 break true;
             }
-            i = self.n(i).parent;
+            let p = self.n(i).parent;
+            // The top of a shadow tree continues at its host: removing the host removes the tree.
+            i = match &self.n(i).kind {
+                NodeKind::Fragment(f) if p == NIL && f.shadow.is_some() => f.host,
+                _ => p,
+            };
             if i == NIL {
                 break false;
             }
@@ -3353,7 +3363,23 @@ impl Dom {
         if let NodeKind::Document(d) = &mut self.n_mut(doc).kind {
             d.focused = NIL;
         }
+        // HTML focus fixup rule (whatwg/html#13050): the document is queued for `focusreset`;
+        // several resets before the event coalesce into one.
+        if !self.focus_reset.contains(&doc) {
+            self.focus_reset.push(doc);
+        }
         self.note(Change::Pseudo);
+    }
+
+    /// Whether a document's focused element was removed and its `focusreset` is still to be fired.
+    pub fn has_focus_resets(&self) -> bool {
+        !self.focus_reset.is_empty()
+    }
+
+    /// The documents to fire `focusreset` at, in removal order; cleared.
+    pub fn take_focus_resets(&mut self) -> Vec<NodeId> {
+        let docs = std::mem::take(&mut self.focus_reset);
+        docs.into_iter().map(|d| self.id_of(d)).collect()
     }
 
     /// Changes the node document of `node`'s inclusive descendants (incl.

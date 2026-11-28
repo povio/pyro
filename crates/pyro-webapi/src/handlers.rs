@@ -82,7 +82,7 @@ macro_rules! device_events {
 /// Document-only handlers.
 macro_rules! document_events {
     ($callback:ident!($($args:tt)*)) => {
-        $callback!($($args)* ["readystatechange", "visibilitychange", "pointerlockchange", "pointerlockerror"])
+        $callback!($($args)* ["readystatechange", "visibilitychange", "pointerlockchange", "pointerlockerror", "focusreset"])
     };
 }
 

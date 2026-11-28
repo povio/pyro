@@ -239,9 +239,9 @@ pub fn checkpoint(page: &Rc<PageDom>) {
     if page.is_disposed() {
         return;
     }
-    // Slot changes and selectedcontent updates (HTML queues the latter as
-    // microtasks too) ride the mutation observer microtask.
-    let slots_signaled = page.dom.try_borrow().is_ok_and(|d| d.has_signaled_slots() || d.has_selectedcontent_updates());
+    // Slot changes, selectedcontent updates (HTML queues the latter as
+    // microtasks too) and focus resets ride the mutation observer microtask.
+    let slots_signaled = page.dom.try_borrow().is_ok_and(|d| d.has_signaled_slots() || d.has_selectedcontent_updates() || d.has_focus_resets());
     // No observer, nothing pinned, nothing to drop: nothing to do (this runs
     // after every DOM call from script).
     if page.mutations.observers.borrow().is_empty()
@@ -452,6 +452,20 @@ fn notify(page: &Rc<PageDom>) {
         }
     }
     drop(slot_holds);
+    // HTML focus fixup rule (whatwg/html#13050): the documents whose focused element was removed
+    // and that nothing has explicitly focused since get `focusreset`, after the observer callbacks
+    // and `slotchange` (which may have focused something: the list is taken only now). A handler
+    // that removes another focused element queues its own, for a later microtask.
+    if !page.is_disposed() {
+        let docs = page.dom.borrow_mut().take_focus_resets();
+        for doc in docs {
+            // The document's own page (an iframe's document is its own window's).
+            let target = if doc == page.document() { Some(page.clone()) } else { crate::input::sibling_page_of_document(page, doc) };
+            if let Some(target) = target {
+                crate::input::fire_simple(&target, doc, "focusreset", false, false);
+            }
+        }
+    }
     // Native-only embedders can cause mutations inside a callback without a
     // runtime hook; make sure those also get a subsequent notification.
     checkpoint(page);
@@ -565,7 +579,7 @@ fn hook_pending_slow(page: &PageDom, dom: &pyro_dom::Dom, m: &BindingState) -> b
         || page.render_blocking_pending(dom)
         || dom.has_custom_reactions_for(page.document())
         || dom.has_upgrade_candidates()
-        || ((dom.has_signaled_slots() || dom.has_selectedcontent_updates()) && m.queued.get().is_none())
+        || ((dom.has_signaled_slots() || dom.has_selectedcontent_updates() || dom.has_focus_resets()) && m.queued.get().is_none())
         || !m.pending_drops.borrow().is_empty()
         || dom.has_pending_observers_from(m.rooted.get())
         || (!m.pending_roots.borrow().is_empty() && m.queued.get().is_none())

@@ -2152,6 +2152,21 @@ impl JsClass for Document {
             node_value(s, n.page(), f)
         });
         def.pure_method("hasFocus", 0, |s, n, _a| Ok(s.boolean(n.page().document() == n.id && !n.page().is_detached())));
+        // HTML `setSequentialFocusStartingPoint(node)`: Tab and Shift+Tab continue from `node`
+        // while nothing is focused, without moving focus. The starting point is an element: a
+        // non-element node stands for its parent element (as the text directive's holder does).
+        def.method("setSequentialFocusStartingPoint", 1, |s, n, a| {
+            a.require(1, "Document.setSequentialFocusStartingPoint")?;
+            let node = node_arg(s, a.get(0), "setSequentialFocusStartingPoint")?;
+            if n.page().document() == n.id {
+                let start = {
+                    let dom = n.page().dom.borrow();
+                    if dom.element(node).is_ok() { Some(node) } else { dom.parent_element(node).ok().flatten() }
+                };
+                n.page().sequential_start.set(start);
+            }
+            Ok(s.undefined())
+        });
         def.getter("currentScript", |s, n| node_value(s, n.page(), n.page().current_script_of(n.id)));
         def.getter("implementation", |s, n| Ok(crate::html::dom_implementation(s, n)?.value()));
         def.getter("forms", |s, n| {
