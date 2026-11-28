@@ -1939,6 +1939,7 @@ impl<'a> TElement for BlitzNode<'a> {
         if self.element_data().is_some_and(|element| element.layout_data.is_some()) {
             if let Some(values) = self.primary_styles() {
                 use style::values::specified::ContainerType;
+                entry.vertical = !values.writing_mode.is_horizontal();
                 let kind = values.get_box().slow_clone_container_type();
                 let both = kind.intersects(ContainerType::SIZE);
                 let inline = kind.intersects(ContainerType::INLINE_SIZE);

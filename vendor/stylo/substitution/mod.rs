@@ -165,8 +165,25 @@ impl ArbitraryDeclarationValue {
         } else {
             additional_delimiters | Delimiter::Comma | Delimiter::CurlyBracketBlock
         };
-        let value = Self::parse_internal(input, context, delimiters)?;
-        Ok((value, input.slice_from(start_position)))
+        let mut value = Self::parse_internal(input, context, delimiters)?;
+        let slice = input.slice_from(start_position);
+        // pyro: a fallback ends at its last token: the whitespace (a newline before the closing
+        // parenthesis of a formatted `var(--x,\n  "a"\n)`) is no part of it (CSS Values 5
+        // § 2.2 trims <declaration-value> of a function argument; Chrome does as well; WPT
+        // css-conditional container-queries `custom-property-style-query-multiline-var`). Only
+        // without synthesized closing characters: they sit after the whitespace in `css`.
+        if context.missing_closing_characters.is_empty() {
+            let trimmed = slice.trim_end_matches(|c: char| matches!(c, ' ' | '\t' | '\n' | '\r' | '\x0c'));
+            let cut = slice.len() - trimmed.len();
+            if cut > 0
+                && !trimmed.ends_with('\\')
+                && let Some(end) = num::NonZeroUsize::new(value.end.get().saturating_sub(cut))
+                && end >= value.start
+            {
+                value.end = end;
+            }
+        }
+        Ok((value, slice))
     }
 
     fn is_empty(&self) -> bool {

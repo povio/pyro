@@ -146,13 +146,13 @@ impl BlitzFontMetricsProvider {
         font_size: f32,
         text_char: char,
     ) -> Option<(f32, f32, f32, f32)> {
-        self.extents_and_family_for(font_styles, font_size, text_char).map(|(extents, _)| extents)
+        self.extents_and_family_for(font_styles, font_size, text_char, false).map(|(extents, _)| extents)
     }
 
     /// pyro: the ascent, descent and line gap of [`Self::extents_for`]'s font, and whether its
     /// family is Times, Helvetica or Courier (which Chromium gives a taller ascent).
     fn line_extents_for(&self, font_styles: &FontStyles, font_size: f32, text_char: char) -> Option<(f32, f32, f32, bool)> {
-        self.extents_and_family_for(font_styles, font_size, text_char)
+        self.extents_and_family_for(font_styles, font_size, text_char, true)
             .map(|((ascent, descent, gap, _), adjusted)| (ascent, descent, gap, adjusted))
     }
 
@@ -161,6 +161,7 @@ impl BlitzFontMetricsProvider {
         font_styles: &FontStyles,
         font_size: f32,
         text_char: char,
+        face_overrides: bool,
     ) -> Option<((f32, f32, f32, f32), bool)> {
         use parley::fontique::{QueryFont, QueryStatus};
         use skrifa::instance::{LocationRef, Size};
@@ -191,13 +192,23 @@ impl BlitzFontMetricsProvider {
                 .iter()
                 .map(|v| (skrifa::Tag::from_be_bytes(v.tag.to_bytes()), v.value)),
         );
+        // pyro: at the size the face is used at (`size-adjust`, not where `font-size-adjust` sets
+        // the size) and with the ascent, descent and line gap its `@font-face` rule overrides
+        // (CSS Fonts 5 § 4.6-4.8), as layout's line boxes have them: `lh` and `normal` agree
+        // with the laid-out line (WPT css-conditional container-queries `style-range-dynamic`).
+        let size_adjust = face_overrides && font_styles.font_size_adjust == style::values::computed::font::FontSizeAdjust::None;
+        let font_size = if size_adjust { font_size * font.synthesis.size_adjust() } else { font_size };
+        let face = &if face_overrides { *font.synthesis.face_metrics() } else { Default::default() };
         let metrics = Metrics::new(&font_ref, Size::new(font_size), LocationRef::from(&location));
-        let cap_height = metrics.cap_height.unwrap_or(metrics.ascent);
+        let ascent = face.ascent.map_or(metrics.ascent, |a| a * font_size);
+        let descent = face.descent.map_or(-metrics.descent, |d| d * font_size);
+        let leading = face.line_gap.map_or(metrics.leading, |g| g * font_size);
+        let cap_height = metrics.cap_height.unwrap_or(ascent);
         let adjusted = font_ref
             .localized_strings(skrifa::string::StringId::FAMILY_NAME)
             .english_or_first()
             .is_some_and(|family| ["Times", "Helvetica", "Courier"].iter().any(|name| family.chars().eq(name.chars())));
-        Some(((metrics.ascent, -metrics.descent, metrics.leading, cap_height), adjusted))
+        Some(((ascent, descent, leading, cap_height), adjusted))
     }
 
     /// pyro: the math parameters (MathML Core § 3.1.3) of the first available font of

@@ -30,6 +30,9 @@ fn to_id(key: NodeKey) -> NodeId {
 pub(crate) struct ContainerQuerySize {
     pub axes: euclid::default::Size2D<bool>,
     pub size: euclid::default::Size2D<Option<app_units::Au>>,
+    /// pyro: the container's writing mode was vertical when last refreshed: a change moves its
+    /// logical axes (`inline-size` is the height) under an unchanged physical size.
+    pub vertical: bool,
 }
 
 /// pyro: what the scroll-state features of one query container read at its last layout

@@ -1294,6 +1294,12 @@ impl BaseDocument {
                 both || (inline && values.writing_mode.is_horizontal()),
                 both || (inline && !values.writing_mode.is_horizontal()),
             );
+            // pyro: a writing-mode change swaps what the logical features measure while the
+            // physical size stays: its descendants' queries are evaluated again (WPT
+            // container-queries `size-container-writing-mode-change`).
+            let vertical = !values.writing_mode.is_horizontal();
+            let mode_changed = entry.vertical != vertical;
+            entry.vertical = vertical;
             let display = values.clone_display();
             let mut rendered = node.flags.is_in_document()
                 && node.element_data().is_some_and(|element| element.layout_data.is_some())
@@ -1322,7 +1328,10 @@ impl BaseDocument {
                 ancestor = parent.parent;
             }
             let size = if rendered {
-                let layout = node.final_layout();
+                // pyro: the unrounded box, physical: a container of 100.5px matches
+                // `(width = 100.5px)` (CSS Conditional 5 § 4; Chrome compares the LayoutUnit size,
+                // WPT container-queries `size-feature-fractional`). `final_layout` is pixel-rounded.
+                let layout = self.physical_unrounded_layout(*id);
                 // pyro: less its scrollbar gutters (`Node::container_query_gutters`)
                 let g = node.container_query_gutters();
                 euclid::default::Size2D::new(
@@ -1332,7 +1341,7 @@ impl BaseDocument {
             } else {
                 Default::default()
             };
-            if entry.size != size {
+            if entry.size != size || mode_changed {
                 entry.size = size;
                 changed_ids.push(*id);
             }

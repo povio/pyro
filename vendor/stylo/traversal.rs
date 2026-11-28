@@ -288,7 +288,24 @@ where
             ancestor.and_then(|a| a.borrow_data().map(|data| data.styles.primary().clone()));
     }
 
+    // pyro: the ancestors resolved here have no element data: container queries find them through
+    // this list (`container_rule::set_undisplayed_ancestors`), emptied again below.
+    let mut resolved_ancestors = Vec::new();
+    // (An ancestor found in the cache, and those above it that the cache holds.)
+    if let (Some(cache), Some(mut cached)) = (undisplayed_style_cache.as_deref(), ancestor)
+        && cached.borrow_data().is_none_or(|d| !d.has_styles())
+    {
+        let mut above = Vec::new();
+        loop {
+            let Some(s) = cache.get(&cached.opaque()) else { break };
+            above.push((cached.opaque(), s.clone()));
+            let Some(parent) = cached.traversal_parent() else { break };
+            cached = parent;
+        }
+        resolved_ancestors = above;
+    }
     for ancestor in ancestors_requiring_style_resolution.iter().rev() {
+        crate::stylesheets::container_rule::set_undisplayed_ancestors(resolved_ancestors.clone());
         context.thread_local.bloom_filter.assert_complete(*ancestor);
         context.thread_local.current_dom_depth = context.thread_local.bloom_filter.matching_depth();
 
@@ -312,8 +329,10 @@ where
         if let Some(ref mut cache) = undisplayed_style_cache {
             cache.insert(ancestor.opaque(), style.clone().unwrap());
         }
+        resolved_ancestors.push((ancestor.opaque(), style.clone().unwrap()));
         context.thread_local.bloom_filter.push(*ancestor);
     }
+    crate::stylesheets::container_rule::set_undisplayed_ancestors(resolved_ancestors);
 
     context.thread_local.bloom_filter.assert_complete(element);
     context.thread_local.current_dom_depth = context.thread_local.bloom_filter.matching_depth();
@@ -325,6 +344,7 @@ where
     )
     .resolve_style(style.as_deref(), layout_parent_style.as_deref())
     .into();
+    crate::stylesheets::container_rule::set_undisplayed_ancestors(Vec::new());
 
     if let Some(ref mut cache) = undisplayed_style_cache {
         cache.insert(element.opaque(), styles.primary().clone());

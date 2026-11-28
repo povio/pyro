@@ -186,6 +186,26 @@ enum TraversalResult<T> {
     Done(T),
 }
 
+std::thread_local! {
+    /// pyro: the styles `traversal::resolve_style` has resolved for the ancestors of an element
+    /// in a `display: none` subtree so far (they have no element data to read): a query container
+    /// among them is found, with no size, rather than skipped for one further out (CSS Conditional
+    /// 5 § 3.1; WPT container-queries `display-none`). Filled and emptied inside `resolve_style`,
+    /// which runs on one thread, so it is empty during every parallel traversal.
+    static UNDISPLAYED_ANCESTORS: std::cell::RefCell<Vec<(selectors::OpaqueElement, Arc<ComputedValues>)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// pyro: see [`UNDISPLAYED_ANCESTORS`].
+pub(crate) fn set_undisplayed_ancestors(styles: Vec<(selectors::OpaqueElement, Arc<ComputedValues>)>) {
+    UNDISPLAYED_ANCESTORS.with(|v| *v.borrow_mut() = styles);
+}
+
+fn undisplayed_ancestor_style<E: TElement>(e: E) -> Option<Arc<ComputedValues>> {
+    let key = e.opaque();
+    UNDISPLAYED_ANCESTORS.with(|v| v.borrow().iter().find(|(o, _)| *o == key).map(|(_, s)| s.clone()))
+}
+
 fn traverse_container<E, F, R>(
     mut e: E,
     originating_element_style: Option<&ComputedValues>,
@@ -263,14 +283,21 @@ impl ContainerCondition {
         E: TElement,
     {
         let data;
+        let undisplayed;
         let style = match originating_element_style {
             Some(s) => s,
-            None => {
-                data = match potential_container.borrow_data() {
-                    Some(d) => d,
+            None => match potential_container.borrow_data() {
+                Some(d) => {
+                    data = d;
+                    &**data.styles.primary()
+                },
+                None => match undisplayed_ancestor_style(potential_container) {
+                    Some(s) => {
+                        undisplayed = s;
+                        &*undisplayed
+                    },
                     None => return TraversalResult::InProgress,
-                };
-                &**data.styles.primary()
+                },
             },
         };
         let wm = style.writing_mode;
@@ -850,14 +877,21 @@ impl<'a> ContainerSizeQuery<'a> {
         E: TElement,
     {
         let data;
+        let undisplayed;
         let style = match originating_element_style {
             Some(s) => s,
-            None => {
-                data = match e.borrow_data() {
-                    Some(d) => d,
+            None => match e.borrow_data() {
+                Some(d) => {
+                    data = d;
+                    &**data.styles.primary()
+                },
+                None => match undisplayed_ancestor_style(e) {
+                    Some(s) => {
+                        undisplayed = s;
+                        &*undisplayed
+                    },
                     None => return TraversalResult::InProgress,
-                };
-                &**data.styles.primary()
+                },
             },
         };
         if !style
