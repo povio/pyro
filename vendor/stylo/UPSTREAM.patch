@@ -16769,7 +16769,7 @@ diff -ruN a/values/specified/calc.rs b/values/specified/calc.rs
          context: &ParserContext,
 diff -ruN a/values/specified/color.rs b/values/specified/color.rs
 --- a/values/specified/color.rs	2026-11-11 19:55:57
-+++ b/values/specified/color.rs	2026-11-23 06:58:46
++++ b/values/specified/color.rs	2026-11-28 08:07:40
 @@ -841,6 +841,11 @@
                  ) {
                      $color.components.0 = normalize($color.components.0);
@@ -16799,7 +16799,31 @@ diff -ruN a/values/specified/color.rs b/values/specified/color.rs
              },
              Color::LightDark(ref ld) => ld.compute(context.ok_or(())?),
              Color::ColorMix(ref mix) => {
-@@ -995,9 +1008,20 @@
+@@ -965,13 +978,22 @@
+ /// keyword to the parent color instead of self's color.
+ #[derive(Clone, Debug, MallocSizeOf, PartialEq, SpecifiedValueInfo, ToCss, ToShmem, ToTyped)]
+ pub struct ColorPropertyValue(pub Color);
++
++std::thread_local! {
++    /// pyro: while a highlight pseudo-element is cascaded on a parent style that carries the parent
++    /// element's highlight colours (css-pseudo-4 highlight inheritance), the colour of the
++    /// pseudo-element's originating element: `color: currentcolor` of a highlight resolves against it
++    /// and not against the inherited highlight colour (the parent style's `color`).
++    pub static HIGHLIGHT_ORIGINATING_COLOR: std::cell::Cell<Option<AbsoluteColor>> = const { std::cell::Cell::new(None) };
++}
+ 
+ impl ToComputedValue for ColorPropertyValue {
+     type ComputedValue = AbsoluteColor;
+ 
+     #[inline]
+     fn to_computed_value(&self, context: &Context) -> Self::ComputedValue {
+-        let current_color = context.builder.get_parent_inherited_text().get_color();
++        let originating = HIGHLIGHT_ORIGINATING_COLOR.with(|c| c.get()).filter(|_| context.builder.pseudo.is_some());
++        let current_color = originating.as_ref().unwrap_or_else(|| context.builder.get_parent_inherited_text().get_color());
+         self.0
+             .to_computed_value(context)
+             .resolve_to_absolute(current_color)
+@@ -995,9 +1017,20 @@
  /// caret-color
  pub type CaretColor = GenericCaretColor<Color>;
  
@@ -16821,12 +16845,10 @@ diff -ruN a/values/specified/color.rs b/values/specified/color.rs
      }
  }
  
-@@ -1204,5 +1228,119 @@
-     /// Returns whether forced-colors is active for this page.
-     pub fn is_active(self) -> bool {
+@@ -1206,3 +1239,117 @@
          matches!(self, Self::Active)
-+    }
-+}
+     }
+ }
 +
 +/// The three contributions in a computed dynamic range limit, in CSS serialization order.
 +#[derive(Clone, Copy, Debug, MallocSizeOf, Parse, PartialEq, SpecifiedValueInfo, ToCss, ToShmem, ToTyped)]
@@ -16872,8 +16894,8 @@ diff -ruN a/values/specified/color.rs b/values/specified/color.rs
 +            })?;
 +            Ok(Self::Mix(items.into_boxed_slice()))
 +        })
-     }
- }
++    }
++}
 +
 +impl ToCss for DynamicRangeLimit {
 +    fn to_css<W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
