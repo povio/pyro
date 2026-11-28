@@ -295,11 +295,11 @@ impl Dom {
             }
         }
         let pos = items.iter().position(|&n| n == current)?;
-        let target = |n: NodeId| n != current && self.tab_index(n).is_ok_and(|t| t >= 0);
+        let target = |n: NodeId| n != current && self.focusgroup_tabbable(n);
         // Home and End go to the first and last sequentially focusable item, which is `current`
         // itself on the first (last) item: focus stays (WPT focusgroup `home-end-keys.optional`).
         // A focused tabindex=-1 item is not one of them.
-        let edge = |n: NodeId| self.tab_index(n).is_ok_and(|t| t >= 0);
+        let edge = |n: NodeId| self.focusgroup_tabbable(n);
         let found = match mv {
             FocusgroupMove::First => items.iter().copied().find(|&n| edge(n)),
             FocusgroupMove::Last => items.iter().rev().copied().find(|&n| edge(n)),
@@ -328,6 +328,19 @@ impl Dom {
         found.filter(|&n| n != current)
     }
 
+    /// Whether directional input may move focus to `n`: a non-negative `tabindex`. A focusable
+    /// `<video controls>` or `<audio controls>` is one too though its `tabIndex` reads -1 here (it is
+    /// a tab stop, as in Chrome).
+    fn focusgroup_tabbable(&self, n: NodeId) -> bool {
+        if self.tab_index(n).is_ok_and(|t| t >= 0) {
+            return true;
+        }
+        let Ok(i) = self.check(n) else { return false };
+        matches!(self.html_local(i).map(|l| &**l), Some("video" | "audio"))
+            && self.tabindex_attr(i).is_none()
+            && self.is_focusable(n).unwrap_or(false)
+    }
+
     /// Whether `el` lays out as a table (`<table>` or `display: table`), the only element a
     /// grid focusgroup can be on.
     fn focusgroup_is_table(&self, layout: &crate::layout::Layout, el: NodeId) -> bool {
@@ -351,9 +364,10 @@ impl Dom {
             match d.as_str() {
                 "table-row" => {
                     // Consecutive loose rows share the implicit row group.
-                    match bodies.last_mut().filter(|_| last_loose) {
-                        Some(g) => g.push(c),
-                        None => bodies.push(vec![c]),
+                    if last_loose && !bodies.is_empty() {
+                        bodies.last_mut().map(|g| g.push(c));
+                    } else {
+                        bodies.push(vec![c]);
                     }
                     last_loose = true;
                     continue;
@@ -371,6 +385,7 @@ impl Dom {
             let end = rows.len() + group.len();
             rows.extend(group.into_iter().map(|r| (r, end)));
         }
+        let mut budget: usize = 1 << 22;
         let mut cells: Vec<GridCell> = Vec::new();
         let mut slots: Vec<Vec<Option<usize>>> = vec![Vec::new(); rows.len()];
         for (r, &(row, group_end)) in rows.iter().enumerate() {
@@ -400,10 +415,17 @@ impl Dom {
                 cells.push(GridCell { el: cell, row: r, col, rows: rowspan, cols });
                 for rr in r..r + rowspan {
                     if slots[rr].len() < col + cols {
+                        // A table of huge spans builds no grid (the key does nothing) rather than a huge one.
+                        budget = match budget.checked_sub(col + cols - slots[rr].len()) {
+                            Some(b) => b,
+                            None => return (Vec::new(), Vec::new()),
+                        };
                         slots[rr].resize(col + cols, None);
                     }
                     for s in &mut slots[rr][col..col + cols] {
-                        s.get_or_insert(idx);
+                        if s.is_none() {
+                            *s = Some(idx);
+                        }
                     }
                 }
                 col += cols;
@@ -446,7 +468,7 @@ impl Dom {
         // Each cell's first sequentially focusable item in tree order.
         let mut cell_item: Vec<Option<NodeId>> = vec![None; cells.len()];
         for &n in items {
-            if self.tab_index(n).is_ok_and(|t| t >= 0) {
+            if self.focusgroup_tabbable(n) {
                 if let Some(c) = cell_of(n) {
                     cell_item[c].get_or_insert(n);
                 }
