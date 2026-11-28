@@ -522,6 +522,7 @@ impl ResourceHandler<NestedStylesheetHandler> {
             &self.data.lock.read(),
             self.data.loader.abort_signal.as_ref(),
             None,
+            None,
         );
 
         let import_rule = self.data.import_rule.clone();
@@ -626,6 +627,7 @@ pub(crate) fn fetch_font_face(
     read_guard: &SharedRwLockReadGuard,
     abort_signal: Option<&AbortSignal>,
     device: Option<&style::device::Device>,
+    pending: Option<&mut Vec<PendingFont>>,
 ) {
     fetch_font_face_rules(
         sheet.contents(read_guard).rules(read_guard).iter(),
@@ -637,7 +639,59 @@ pub(crate) fn fetch_font_face(
         read_guard,
         abort_signal,
         device,
+        pending,
     )
+}
+
+/// pyro: a face of an `@font-face` rule with a `unicode-range`, whose fetch waits until some text of
+/// the document has a code point in the range (CSS Fonts 4 § 4.5: "the user agent must not download
+/// or use the font for code points outside this set"; Chromium starts a face's load when text needs it).
+/// [`BaseDocument::start_pending_fonts`](crate::BaseDocument) starts it.
+pub(crate) struct PendingFont {
+    url: Url,
+    format: FontFaceSourceFormatKeyword,
+    pub(crate) overrides: FontFaceOverrides,
+    pub(crate) node_id: Option<NodeId>,
+}
+
+impl PendingFont {
+    /// Whether one of `code_points` is in the face's `unicode-range`.
+    pub(crate) fn needed_by(&self, code_points: &[u32]) -> bool {
+        self.overrides.unicode_range.as_ref().is_none_or(|range| code_points.iter().any(|c| range.contains(*c)))
+    }
+
+    /// Starts the face's fetch.
+    pub(crate) fn fetch(
+        self,
+        tx: Sender<DocumentEvent>,
+        doc_id: usize,
+        network_provider: &Arc<dyn NetProvider>,
+        shell_provider: &Arc<dyn ShellProvider>,
+        abort_signal: Option<&AbortSignal>,
+    ) {
+        fetch_font(self.url, self.format, self.overrides, tx, doc_id, self.node_id, network_provider, shell_provider, abort_signal);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fetch_font(
+    url: Url,
+    format: FontFaceSourceFormatKeyword,
+    overrides: FontFaceOverrides,
+    tx: Sender<DocumentEvent>,
+    doc_id: usize,
+    node_id: Option<NodeId>,
+    network_provider: &Arc<dyn NetProvider>,
+    shell_provider: &Arc<dyn ShellProvider>,
+    abort_signal: Option<&AbortSignal>,
+) {
+    let mut request = stamped_request(url, abort_signal);
+    request.options.destination = blitz_traits::net::Destination::Font;
+    network_provider.fetch(
+        doc_id,
+        request,
+        ResourceHandler::boxed(tx, doc_id, node_id, shell_provider.clone(), FontFaceHandler { format, overrides }),
+    );
 }
 
 /// Fetch the fonts of the `@font-face` rules among `rules`
@@ -652,6 +706,7 @@ pub(crate) fn fetch_font_face_rules<'a>(
     read_guard: &'a SharedRwLockReadGuard,
     abort_signal: Option<&AbortSignal>,
     device: Option<&style::device::Device>,
+    mut pending: Option<&mut Vec<PendingFont>>,
 ) {
     // pyro: `@font-face` rules nested in conditional group rules (`@media`, `@supports`) and
     // `@layer` blocks count too (css-conditional at-media-content-002 / at-supports-content-002).
@@ -765,19 +820,15 @@ pub(crate) fn fetch_font_face_rules<'a>(
         })
         .for_each(|(source_list, overrides)| {
             if let Some((url, format)) = preferred_font_source(source_list) {
-                let mut request = stamped_request(url, abort_signal);
-                request.options.destination = blitz_traits::net::Destination::Font;
-                network_provider.fetch(
-                    doc_id,
-                    request,
-                    ResourceHandler::boxed(
-                        tx.clone(),
-                        doc_id,
-                        node_id,
-                        shell_provider.clone(),
-                        FontFaceHandler { format, overrides },
-                    ),
-                );
+                // pyro: a face of a `unicode-range` is fetched once text needs it, where the caller
+                // keeps the pending faces (`BaseDocument::start_pending_fonts`); else at once.
+                if overrides.unicode_range.is_some() {
+                    if let Some(pending) = pending.as_mut() {
+                        pending.push(PendingFont { url, format, overrides, node_id });
+                        return;
+                    }
+                }
+                fetch_font(url, format, overrides, tx.clone(), doc_id, node_id, network_provider, shell_provider, abort_signal);
             }
         })
 }

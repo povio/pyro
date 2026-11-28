@@ -126,6 +126,9 @@ impl BaseDocument {
     pub fn resolve(&mut self, current_time_for_animations: f64) {
         self.anchor_flush_choices.clear();
         self.resolve_in_flush(current_time_for_animations);
+        // pyro: the `unicode-range` faces some text of the document now needs (its generated content
+        // boxes are made by now).
+        self.start_pending_fonts();
         // pyro: a rendering update's ResizeObserver step that found the layout stale
         // (`request_remembered_sizes`) remembers the sizes on this one.
         if self.remembered_pending {

@@ -567,6 +567,9 @@ pub struct BaseDocument {
     /// added, replaced or removed), so that CSSOM wrappers can detect that
     /// their cached rule data is stale.
     pub(crate) stylesheet_generation: u64,
+    /// pyro: the `@font-face` faces with a `unicode-range` whose fetch waits for text in the range
+    /// ([`Self::start_pending_fonts`]).
+    pub(crate) pending_fonts: Vec<crate::net::PendingFont>,
     /// pyro: [`BaseDocument::inherited_highlight_style`] results by (node, highlight pseudo), with the
     /// stylesheet generation they were computed under; cleared whenever styles are resolved.
     pub(crate) highlight_style_cache: RefCell<HashMap<(NodeId, style::selector_parser::PseudoElement), (u64, Option<ServoArc<ComputedValues>>)>>,
@@ -1030,6 +1033,7 @@ impl BaseDocument {
             shadow_sheet_hosts: HashMap::new(),
             linked_page_css: BTreeMap::new(),
             stylesheet_generation: 0,
+            pending_fonts: Vec::new(),
             highlight_style_cache: RefCell::new(HashMap::new()),
             font_ctx,
             font_face_families: HashMap::new(),
@@ -2555,6 +2559,8 @@ impl BaseDocument {
     pub fn add_stylesheet_for_node(&mut self, stylesheet: DocumentStyleSheet, node_id: NodeId) {
         // pyro: the sheet of an element of a shadow tree is that shadow root's (`crate::shadow`).
         let host = self.nodes.get(node_id).and_then(|node| node.containing_shadow_host_id());
+        // pyro: the faces the sheet this one replaces left waiting are not this sheet's.
+        self.pending_fonts.retain(|face| face.node_id != Some(node_id));
         if let Some(old) = self.nodes_to_stylesheet.remove(&node_id) {
             self.stylist.remove_stylesheet(old, &self.guard.read());
             self.stylesheet_generation += 1;
@@ -2571,6 +2577,7 @@ impl BaseDocument {
                 &self.guard.read(),
                 self.abort_signal.as_ref(),
                 Some(self.stylist.device()),
+                Some(&mut self.pending_fonts),
             );
             let element = &mut self.nodes[node_id].element_data_mut().unwrap();
             element.special_data = SpecialElementData::Stylesheet(stylesheet.clone());
@@ -2595,6 +2602,7 @@ impl BaseDocument {
             &self.guard.read(),
             self.abort_signal.as_ref(),
             Some(self.stylist.device()),
+            Some(&mut self.pending_fonts),
         );
 
         // Store data on element
@@ -2955,6 +2963,56 @@ impl BaseDocument {
             self.nodes[id].insert_damage(ALL_DAMAGE);
             self.nodes[id].clear_layout_cache();
             current = self.nodes[id].parent;
+        }
+    }
+
+    /// pyro: starts the fetch of each pending `unicode-range` face ([`crate::net::PendingFont`]) some
+    /// text of the document has a code point in: a face no character of the document falls in is
+    /// never downloaded (CSS Fonts 4 § 4.5), and one whose text arrives later is fetched then. The
+    /// text is that of the document's text nodes, those of its generated content boxes included, less
+    /// the sources of `<style>`, `<script>` and `<title>`, and the values of text fields; a node
+    /// removed from the tree and not yet dropped counts too (a face is then fetched that need not be).
+    pub fn start_pending_fonts(&mut self) {
+        if self.pending_fonts.is_empty() {
+            return;
+        }
+        let mut seen = std::collections::HashSet::<u32>::new();
+        let mut fresh: Vec<u32> = Vec::new();
+        let note = |text: &str, seen: &mut std::collections::HashSet<u32>, fresh: &mut Vec<u32>| {
+            for c in text.chars() {
+                if !c.is_whitespace() && seen.insert(c as u32) {
+                    fresh.push(c as u32);
+                }
+            }
+        };
+        for (_, node) in self.nodes.iter() {
+            if let Some(text) = node.text_data() {
+                let source = node.parent.is_some_and(|parent| {
+                    self.nodes.get(parent).is_some_and(|parent| {
+                        parent.element_data().is_some_and(|e| matches!(&*e.name.local, "style" | "script" | "title"))
+                    })
+                });
+                if !source {
+                    note(&text.content, &mut seen, &mut fresh);
+                }
+            } else if let Some(element) = node.element_data() {
+                if matches!(&*element.name.local, "input" | "textarea" | "option") {
+                    for name in ["value", "placeholder", "label"] {
+                        if let Some(value) = element.attr(LocalName::from(name)) {
+                            note(value, &mut seen, &mut fresh);
+                        }
+                    }
+                }
+            }
+        }
+        if fresh.is_empty() {
+            return;
+        }
+        let pending = std::mem::take(&mut self.pending_fonts);
+        let (needed, waiting): (Vec<_>, Vec<_>) = pending.into_iter().partition(|face| face.needed_by(&fresh));
+        self.pending_fonts = waiting;
+        for face in needed {
+            face.fetch(self.tx.clone(), self.id, &self.net_provider, &self.shell_provider, self.abort_signal.as_ref());
         }
     }
 
