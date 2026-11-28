@@ -1569,8 +1569,10 @@ impl StyleEngine {
         let e = dom.n(idx).element().expect("element");
         let mut c = derive_computed(style, e, above);
         // A drop-down select's children (its options) keep their computed
-        // `display` but generate no box, as in Chromium's menu list.
-        if parent.is_some_and(|p| dom.element(p).is_ok_and(is_menu_list)) {
+        // `display` but generate no box, as in Chromium's menu list; those of a customizable
+        // select whose picker is open are rendered (laid out in the picker: the renderer's
+        // `element_displayed` agrees), so they are focusable areas (`option.focus()`).
+        if parent.is_some_and(|p| dom.element(p).is_ok_and(is_menu_list) && !dom.is_select_picker_open(p)) {
             c.in_display_none = true;
         }
         // A modal dialog blocks its document: the root is inert and the
