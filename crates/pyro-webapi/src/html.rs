@@ -3605,6 +3605,8 @@ simple_class!(HtmlIFrameElement, "HTMLIFrameElement", HtmlElement, |def| {
     reflect_str!(def, "allow", "allow");
     // CSP Embedded Enforcement: the policy the frame's documents must accept.
     reflect_str!(def, "csp", "csp");
+    // Connection-Allowlist embedded enforcement: the allowlist the frame's documents must deliver (`pyro-browser` ca_embedded).
+    reflect_str!(def, "connectionAllowlist", "connectionallowlist");
     reflect_str!(def, "width", "width");
     reflect_str!(def, "height", "height");
     reflect_enum!(def, "loading", "loading", LOADING);

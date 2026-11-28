@@ -396,6 +396,7 @@ impl Browser {
             accept_signature: None,
             csp: None,
             required_csp: None,
+            required_connection_allowlist: None,
             purpose: Some(Purpose::Prefetch { cross_site, initiator_site: pyro_net::cookies::partition_key(&document_url), tags, cookies, head }),
             parser_priority: false,
             credentials: None,

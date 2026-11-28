@@ -224,7 +224,7 @@ fn document_policies(header_csp: Option<&str>) -> Vec<Policy> {
 
 /// `Allow-CSP-From` (its values joined by `, `; `Some("")` for one that was not ASCII) is `*` or
 /// `parent_origin`. A value that is neither (empty, non-ASCII, not a URL) allows nothing.
-fn allows_csp_from(value: Option<&str>, parent_origin: &str) -> bool {
+pub(crate) fn allows_csp_from(value: Option<&str>, parent_origin: &str) -> bool {
     let Some(value) = value else { return false };
     let value = value.trim_matches(|c: char| c.is_ascii_whitespace());
     if value == "*" {
@@ -1269,6 +1269,7 @@ mod tests {
             link_fetches: Vec::new(),
             integrity_headers: None,
             x_frame_options: None,
+            allow_connection_allowlist_from: None,
             dictionary_links: Vec::new(),
             speculation_rules: Vec::new(),
             no_vary_search: None,

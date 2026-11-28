@@ -10,6 +10,7 @@ mod bindings;
 mod bounce;
 pub mod clock;
 mod coop_report;
+mod ca_embedded;
 mod csp_embedded;
 mod focus;
 mod frames;
@@ -161,6 +162,7 @@ fn subresource_request_with(
     FetchRequest {
         csp: None,
         required_csp: None,
+        required_connection_allowlist: None,
         purpose: None,
         parser_priority: false,
         credentials: None,

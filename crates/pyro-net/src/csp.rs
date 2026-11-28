@@ -445,6 +445,14 @@ impl PolicyList {
         self.allowlist.is_some()
     }
 
+    /// Whether the `Connection-Allowlist` (not the CSP policies) refuses `request`. No violation is
+    /// produced: for a request whose initiator checked and reported it already.
+    pub fn allowlist_refuses(&self, request: &CspRequest) -> bool {
+        self.allowlist.as_ref().is_some_and(|allowlist| {
+            allowlist.check(&request.url, &request.original_url, request.redirected).blocked
+        })
+    }
+
     /// Adds the policies of a header value: a comma-separated list of serialized policies
     /// (several header fields joined by `,` are one value). Empty policies are dropped.
     pub fn add_header(&mut self, value: &str, disposition: Disposition) {

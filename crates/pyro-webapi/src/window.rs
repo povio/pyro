@@ -1165,7 +1165,8 @@ pub(crate) fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Ar
         let existing =
             page.popups.borrow().iter().find(|(n, p)| *n == target && !p.is_closed()).map(|(_, p)| p.clone());
         if let Some(popup) = existing {
-            if url_given {
+            // Connection-Allowlist: a refused URL leaves the popup where it is.
+            if url_given && !crate::csp::allowlist_refuses_navigation(page, &url) {
                 page.popup_command(popup.clone(), crate::popup::PopupCommand::OpenNamed {
                     url,
                     referrer: page.client_referrer().map(Into::into),

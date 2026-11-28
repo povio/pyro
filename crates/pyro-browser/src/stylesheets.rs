@@ -255,6 +255,7 @@ impl Browser {
         let mut request = FetchRequest {
             csp: None,
             required_csp: None,
+            required_connection_allowlist: None,
             purpose: None,
             parser_priority: blocker.is_some(),
             credentials: None,
@@ -628,6 +629,7 @@ impl Browser {
         let request = FetchRequest {
             csp: None,
             required_csp: None,
+            required_connection_allowlist: None,
             purpose: None,
             parser_priority: self.stylesheets_block_scripts(page),
             credentials: None,

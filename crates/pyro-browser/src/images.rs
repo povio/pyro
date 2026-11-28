@@ -228,6 +228,13 @@ impl Browser {
                 if !of_element { return None; }
                 let list = pyro_webapi::csp::policy_list(&page)?;
                 let check = pyro_net::csp::CspRequest::new(url::Url::parse(&request.url).ok()?, pyro_net::csp::RequestDest::Image);
+                // The element's own check ran with ITS destination: an `<embed src>`'s request here
+                // (the layout engine draws its `src` as an image) is one the element's Connection-
+                // Allowlist check refused, which must not be sent by this one (the allowlist does
+                // not depend on the destination; the CSP directives do, and stay the element's).
+                if list.allowlist_refuses(&check) {
+                    return Some(pyro_net::csp::RequestCsp::blocked(list, check));
+                }
                 Some(pyro_net::csp::RequestCsp::new(list, check))
             });
             request.csp = guard;
@@ -803,6 +810,7 @@ impl Browser {
                     link_fetches: Vec::new(),
                     integrity_headers: None,
                     x_frame_options: None,
+                    allow_connection_allowlist_from: None,
                     dictionary_links: Vec::new(),
                     speculation_rules: Vec::new(),
                     no_vary_search: None,
@@ -828,6 +836,7 @@ impl Browser {
         let request = FetchRequest {
             csp,
             required_csp: None,
+            required_connection_allowlist: None,
             purpose: None,
             parser_priority: false,
             credentials: None,
@@ -1466,7 +1475,7 @@ impl Browser {
         if url.starts_with("blob:") || about {
             let ok = about || bindings.blob_url(&url).is_some();
             self.scheduler().post(TaskSource::Networking, move |b| {
-                finish(b, if ok { Ok(Resource { url: String::new(), status: 200, mime: String::new(), charset: None, body: Default::default(), immutable_local: false, content_disposition: None, header_csp: None, allow_csp_from: None, refresh: None, content_language: None, last_modified: None, reporting_endpoints: None, permissions_policy: None, dictionary_links: Vec::new(), speculation_rules: Vec::new(), no_vary_search: None, referrer_policy: None, sent_referrer: None, origin_agent_cluster: false, force_load_at_top: false, isolation_policy: 0, ephemeral_jar: false, embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone, embedder_reporting: Default::default(), coop: Vec::new(), timing: None, partial: None, nosniff: false, opaque: false, connection_allowlist: None, link_fetches: Vec::new(), integrity_headers: None, x_frame_options: None }) } else { Err("revoked or unknown blob URL".into()) })
+                finish(b, if ok { Ok(Resource { url: String::new(), status: 200, mime: String::new(), charset: None, body: Default::default(), immutable_local: false, content_disposition: None, header_csp: None, allow_csp_from: None, refresh: None, content_language: None, last_modified: None, reporting_endpoints: None, permissions_policy: None, dictionary_links: Vec::new(), speculation_rules: Vec::new(), no_vary_search: None, referrer_policy: None, sent_referrer: None, origin_agent_cluster: false, force_load_at_top: false, isolation_policy: 0, ephemeral_jar: false, embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone, embedder_reporting: Default::default(), coop: Vec::new(), timing: None, partial: None, nosniff: false, opaque: false, connection_allowlist: None, link_fetches: Vec::new(), integrity_headers: None, x_frame_options: None, allow_connection_allowlist_from: None }) } else { Err("revoked or unknown blob URL".into()) })
             });
             return;
         }
@@ -1478,6 +1487,7 @@ impl Browser {
         let request = FetchRequest {
             csp: None,
             required_csp: None,
+            required_connection_allowlist: None,
             purpose: None,
             parser_priority: false,
             credentials: None,

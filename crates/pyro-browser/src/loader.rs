@@ -205,6 +205,10 @@ pub struct FetchRequest {
     /// `Sec-Required-CSP` (on every hop of its redirects). The commit checks the response against
     /// the same snapshot.
     pub required_csp: Option<String>,
+    /// Connection-Allowlist embedded enforcement: the allowlist a child frame's navigation requires
+    /// (`ca_embedded::requirement`, its container's `connectionallowlist` attribute), which the
+    /// network loader sends as `Sec-Required-Connection-Allowlist` (on every hop of its redirects).
+    pub required_connection_allowlist: Option<String>,
     /// `Some`: the request says what it is for in `Sec-Purpose` (see [`Purpose`]).
     pub purpose: Option<Purpose>,
 }
@@ -261,6 +265,9 @@ pub struct Resource {
     /// A navigation's `Allow-CSP-From` response header (its values joined by `, `; empty when one
     /// was not ASCII), which lets an embedder's required policy apply (CSP Embedded Enforcement).
     pub allow_csp_from: Option<String>,
+    /// A navigation's `Allow-Connection-Allowlist-From` response header (its values joined by `, `;
+    /// empty when one was not ASCII): the opt-in to an embedder's required Connection-Allowlist.
+    pub allow_connection_allowlist_from: Option<String>,
     /// The `Refresh` response header (HTML declarative refresh), if any.
     pub refresh: Option<String>,
     /// A document's `Content-Language` response header, if any (its
@@ -707,6 +714,12 @@ impl ResourceLoader for NetLoader {
                 req.headers.insert(pyro_net::http::HeaderName::from_static("sec-required-csp"), value);
             }
         }
+        // Connection-Allowlist embedded enforcement: the same, `Sec-Required-Connection-Allowlist`.
+        if let Some(required) = request.required_connection_allowlist.as_deref().filter(|_| request.kind == ResourceKind::Iframe) {
+            if let Ok(value) = pyro_net::http::HeaderValue::from_str(required) {
+                req.headers.insert(pyro_net::http::HeaderName::from_static("sec-required-connection-allowlist"), value);
+            }
+        }
         if request.kind == ResourceKind::Iframe {
             // The embedder whose policy the navigation's response is checked for (a nested
             // navigation has no `origin`).
@@ -806,6 +819,7 @@ impl ResourceLoader for NetLoader {
                 link_fetches: Vec::new(),
                 integrity_headers: None,
                 x_frame_options: None,
+                allow_connection_allowlist_from: None,
                 dictionary_links: Vec::new(),
                 speculation_rules: Vec::new(),
                 no_vary_search: None,
@@ -899,6 +913,7 @@ impl ResourceLoader for NetLoader {
                         link_fetches: Vec::new(),
                         integrity_headers: None,
                         x_frame_options: None,
+                        allow_connection_allowlist_from: None,
                         dictionary_links: Vec::new(),
                         speculation_rules: Vec::new(),
                         no_vary_search: None,
@@ -949,6 +964,7 @@ impl ResourceLoader for NetLoader {
                     link_fetches: Vec::new(),
                     integrity_headers: None,
                     x_frame_options: None,
+                    allow_connection_allowlist_from: None,
                     dictionary_links: Vec::new(),
                     speculation_rules: Vec::new(),
                     no_vary_search: None,
@@ -993,6 +1009,7 @@ impl ResourceLoader for NetLoader {
                 let result = match finished {
                     Some(h) => Ok(Resource {
                         allow_csp_from: document.then(|| allow_csp_from_header(&h.headers)).flatten(),
+                        allow_connection_allowlist_from: document.then(|| allow_from_header(&h.headers, "allow-connection-allowlist-from")).flatten(),
                         timing: timing(&h),
                         partial: None,
                         opaque: h.kind == pyro_net::ResponseKind::Opaque,
@@ -2025,6 +2042,7 @@ impl ResourceLoader for StaticLoader {
                         link_fetches: Vec::new(),
                         integrity_headers: None,
                         x_frame_options: None,
+                        allow_connection_allowlist_from: None,
                         dictionary_links: Vec::new(),
                         speculation_rules: Vec::new(),
                         no_vary_search: None,
@@ -2471,8 +2489,14 @@ fn frame_options(value: &str) -> FrameOptions {
 /// A response's `Allow-CSP-From` values joined by `, ` (`None`: absent); a value that is not
 /// ASCII makes it empty, which allows nothing.
 fn allow_csp_from_header(headers: &http::HeaderMap) -> Option<String> {
+    allow_from_header(headers, "allow-csp-from")
+}
+
+/// The values of an embedded-enforcement opt-in header (`Allow-CSP-From`,
+/// `Allow-Connection-Allowlist-From`) joined by `, `, as [`allow_csp_from_header`] reads them.
+fn allow_from_header(headers: &http::HeaderMap, name: &str) -> Option<String> {
     let mut values = Vec::new();
-    for value in headers.get_all("allow-csp-from") {
+    for value in headers.get_all(name) {
         let Ok(value) = value.to_str() else { return Some(String::new()) };
         values.push(value);
     }
@@ -2822,6 +2846,8 @@ impl Browser {
         // sends it; the response is judged against it at commit (whatever loader answered), and
         // the committed document keeps it to bound its own frames' requirements.
         let requirement = crate::csp_embedded::requirement(self, page, &opts.url);
+        // Connection-Allowlist embedded enforcement: a child frame's required allowlist, likewise.
+        let required_allowlist = crate::ca_embedded::requirement(self, page);
         // Connection-Allowlist: a top-level navigation a script, a link or a form started is a
         // connection of the document that started it (the frame's current one). It carries the
         // guard, which fails it unsent when the allowlist refuses it and checks its redirects;
@@ -2837,6 +2863,7 @@ impl Browser {
         let req = FetchRequest {
             csp: nav_guard.as_ref().map(|(_, guard)| guard.clone()),
             required_csp: requirement.as_ref().map(|r| r.policy.clone()),
+            required_connection_allowlist: required_allowlist.clone(),
             purpose: None,
             parser_priority: false,
             credentials: None,
@@ -2891,7 +2918,9 @@ impl Browser {
                 }
                 // A response that neither accepts nor subsumes the required policy fails with
                 // net::ERR_BLOCKED_BY_CSP; one that accepts it enforces it (`enforce`).
-                let judged = res.and_then(|r| crate::csp_embedded::judge(b, page, requirement.as_ref(), r));
+                let judged = res
+                    .and_then(|r| crate::csp_embedded::judge(b, page, requirement.as_ref(), r))
+                    .and_then(|(r, enforce)| Ok((crate::ca_embedded::judge(b, page, required_allowlist.as_deref(), r)?, enforce)));
                 let (res, enforce) = match judged {
                     Ok((resource, enforce)) => (Ok(resource), enforce),
                     Err(e) => (Err(e), None),
@@ -3316,6 +3345,7 @@ impl Browser {
             link_fetches: Vec::new(),
             integrity_headers: None,
             x_frame_options: None,
+            allow_connection_allowlist_from: None,
             dictionary_links: Vec::new(),
             speculation_rules: Vec::new(),
             no_vary_search: None,
@@ -4403,6 +4433,7 @@ impl Browser {
         let req = FetchRequest {
             csp: csp_guard.clone(),
             required_csp: None,
+            required_connection_allowlist: None,
             purpose: None,
             parser_priority,
             post: None,
@@ -4980,6 +5011,7 @@ impl Browser {
                 let req = FetchRequest {
                     csp: None,
                     required_csp: None,
+                    required_connection_allowlist: None,
                     purpose: None,
                     parser_priority: false,
                     credentials: None,
@@ -6209,6 +6241,7 @@ mod disposition_tests {
             link_fetches: Vec::new(),
             integrity_headers: None,
             x_frame_options: None,
+            allow_connection_allowlist_from: None,
             dictionary_links: Vec::new(),
             speculation_rules: Vec::new(),
             no_vary_search: None,

@@ -570,6 +570,7 @@ impl Browser {
         let mut request = FetchRequest {
             csp: None,
             required_csp: None,
+            required_connection_allowlist: None,
             purpose: None,
             parser_priority: false,
             credentials: None,
@@ -618,6 +619,7 @@ fn dictionary_request(
     FetchRequest {
         csp: None,
         required_csp: None,
+        required_connection_allowlist: None,
         purpose: None,
         parser_priority: false,
         credentials: None,
@@ -775,6 +777,7 @@ impl Browser {
             purpose: None,
             csp: None,
             required_csp: None,
+            required_connection_allowlist: None,
             parser_priority: false,
             credentials: None,
             post: None,
@@ -1033,6 +1036,7 @@ impl Browser {
         let mut request = FetchRequest {
             csp: None,
             required_csp: None,
+            required_connection_allowlist: None,
             purpose: None,
             // Low priority: never ahead of the parser's requests.
             parser_priority: false,

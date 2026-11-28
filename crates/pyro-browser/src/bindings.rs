@@ -1313,12 +1313,24 @@ fn run_navigation(b: &mut Browser, task: NavigationTask, stops: Option<u64>, mut
         }
         // Cross-Origin-Opener-Policy: a window made opener-less because of it has no name either.
         let coop_unnamed = b.page(page.page).is_some_and(|p| p.frames.coop_forces_noopener(page));
+        // Connection-Allowlist: a new window's navigation is a connection of the document that
+        // asked for it (`window.open`, a link with a target), not of the new window, whose empty
+        // document has no allowlist the popup's own load would be checked against
+        // (`Browser::navigate_frame_with_handling` guards a navigation by its frame's document).
+        // A refused one still opens the window, but on about:blank: the violation is reported to
+        // the initiator and the URL is never requested. (A redirect of an allowed popup
+        // navigation is not checked: the popup has no guard to follow it.)
+        let refused = b
+            .doc(page)
+            .and_then(|p| p.main_frame.page_dom.clone())
+            .is_some_and(|dom| pyro_webapi::csp::allowlist_refuses_navigation(&dom, &request.url));
+        let url = if refused { "about:blank".to_owned() } else { request.url };
         if let Some((frame_id, false)) = frame {
             b.emit(
                 page.page,
                 crate::PageEvent::PopupRequested {
                     frame_id,
-                    url: request.url,
+                    url,
                     opener: request.opener,
                     ticket: request.popup,
                     window_features: request.window_features,

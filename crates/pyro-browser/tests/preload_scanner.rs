@@ -82,6 +82,7 @@ impl ManualLoader {
             link_fetches: Vec::new(),
             integrity_headers: None,
             x_frame_options: None,
+            allow_connection_allowlist_from: None,
             dictionary_links: Vec::new(),
             speculation_rules: Vec::new(),
             no_vary_search: None,

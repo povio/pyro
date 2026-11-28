@@ -672,6 +672,11 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
 pub fn navigate_named_popup(page: &Rc<PageDom>, name: &str, url: &str) -> bool {
     let popup = page.popups.borrow().iter().find(|(n, p)| n.as_str() == name && !p.is_closed()).map(|(_, p)| p.clone());
     let Some(popup) = popup else { return false };
+    // Connection-Allowlist: the link's navigation is a connection of this document; a refused one
+    // leaves the popup where it is (and opens no other window).
+    if crate::csp::allowlist_refuses_navigation(page, url) {
+        return true;
+    }
     page.popup_command(
         popup,
         PopupCommand::OpenNamed {

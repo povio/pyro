@@ -54,6 +54,10 @@ impl Matcher {
 /// One parsed header: the enforced or the report-only one.
 pub struct ConnectionAllowlist {
     matchers: Vec<Matcher>,
+    /// What each matcher was made from (`o` for `response-origin`, `p` and the pattern string),
+    /// which [`ConnectionAllowlist::subsumed_by`] compares: a pattern's own text is all there is to
+    /// compare two patterns by.
+    entries: Vec<(char, String)>,
     allow_redirects: bool,
     report_to: Option<String>,
     disposition: Disposition,
@@ -206,16 +210,23 @@ impl ConnectionAllowlist {
     pub fn parse(value: &str, disposition: Disposition, response_url: &Url) -> Option<ConnectionAllowlist> {
         let (items, params) = parse_inner_list(value)?;
         let mut matchers = Vec::new();
+        let mut entries: Vec<(char, String)> = Vec::new();
         for item in items {
             match item {
                 Item::Token(token) if token == "response-origin" => {
                     if let url::Origin::Tuple(scheme, host, port) = response_url.origin() {
                         matchers.push(Matcher::Origin { scheme, host: host.to_string(), port });
+                        entries.push(('o', String::new()));
                     }
                 }
                 Item::Token(_) => {}
                 // A pattern that does not parse allows nothing.
-                Item::Str(pattern) => matchers.extend(compile(&pattern)),
+                Item::Str(pattern) => {
+                    if let Some(matcher) = compile(&pattern) {
+                        matchers.push(matcher);
+                        entries.push(('p', pattern));
+                    }
+                }
             }
         }
         let mut allow_redirects = false;
@@ -227,7 +238,16 @@ impl ConnectionAllowlist {
                 _ => {}
             }
         }
-        Some(ConnectionAllowlist { matchers, allow_redirects, report_to, disposition, text: value.trim().to_owned() })
+        Some(ConnectionAllowlist { matchers, entries, allow_redirects, report_to, disposition, text: value.trim().to_owned() })
+    }
+
+    /// Whether this list allows nothing `required` does not: each of its entries is one of
+    /// `required`'s (`response-origin` is the origin of the response either was parsed for, which
+    /// is the same document's for a list a framed document delivers against the one its embedder
+    /// requires; a pattern is compared by its text, so a narrower pattern is never taken for a
+    /// subset: it errs towards refusing), and it follows redirects only where `required` does.
+    pub fn subsumed_by(&self, required: &ConnectionAllowlist) -> bool {
+        (!self.allow_redirects || required.allow_redirects) && self.entries.iter().all(|e| required.entries.contains(e))
     }
 
     /// Whether a request for `url` may be made. `redirected`: `url` is a redirect's target.
@@ -282,6 +302,34 @@ impl ConnectionPolicy {
         (enforce.is_some() || report_only.is_some()).then(|| Arc::new(ConnectionPolicy { enforce, report_only }))
     }
 
+    /// Whether the enforced list of this policy is at least as strict as `required`, a value of the
+    /// embedding `iframe`'s `connectionallowlist` attribute read against `response_url` (Embedded
+    /// Enforcement: a framed document delivers a list that subsumes it). No enforced list, or a
+    /// `required` that is not a valid value: not subsumed.
+    pub fn subsumes(&self, required: &str, response_url: &Url) -> bool {
+        let Some(required) = ConnectionAllowlist::parse(required, Disposition::Enforce, response_url) else { return false };
+        self.enforce.as_ref().is_some_and(|own| own.subsumed_by(&required))
+    }
+
+    /// This policy with the enforced list replaced by `required` (the policy of a framed document
+    /// that opted in to its embedder's requirement and delivered no list as strict): its
+    /// report-only list is kept. `None` when `required` is not a valid value.
+    pub fn with_required(this: Option<&Arc<ConnectionPolicy>>, required: &str, response_url: &Url) -> Option<Arc<ConnectionPolicy>> {
+        let enforce = ConnectionAllowlist::parse(required, Disposition::Enforce, response_url)?;
+        let report_only = this.and_then(|p| p.report_only.as_ref()).and_then(|r| {
+            // `ConnectionAllowlist` is not `Clone`: the report-only list is parsed again from its text.
+            ConnectionAllowlist::parse(&r.text, Disposition::Report, response_url)
+        });
+        Some(Arc::new(ConnectionPolicy { enforce: Some(enforce), report_only }))
+    }
+
+    /// Whether `value` is a Structured Field inner list `Connection-Allowlist` reads (an iframe's
+    /// `connectionallowlist` attribute is held to the same grammar: CR, LF and anything else that is
+    /// not one list never become a request header).
+    pub fn is_valid_value(value: &str) -> bool {
+        parse_inner_list(value).is_some()
+    }
+
     /// The check of a request for `url`, which started as one for `original_url` (a redirect's
     /// violation names the URL before its redirects). Blocked when the enforced list refuses it.
     pub fn check(&self, url: &Url, original_url: &Url, redirected: bool) -> CheckOutcome {
@@ -324,6 +372,30 @@ mod tests {
         // WebSocket schemes count as HTTP ones.
         assert!(allowed("(response-origin \"http://a.test:9000\")", "ws://a.test:9000/echo"));
         assert!(allowed("(response-origin)", "ws://a.test:8000/echo"));
+    }
+
+    #[test]
+    fn embedded_enforcement_subsumption() {
+        let url = Url::parse("http://a.test:8000/page").unwrap();
+        // A framed document's delivered list subsumes the embedder's requirement when it allows
+        // nothing the requirement does not (WPT connection-allowlist iframe-connectionallowlist-embedded-enforcement).
+        assert!(policy("(response-origin)").subsumes("(response-origin)", &url));
+        assert!(policy("()").subsumes("(response-origin)", &url));
+        assert!(!policy("(response-origin \"https://extra.test/\")").subsumes("(response-origin)", &url));
+        assert!(policy("(response-origin \"https://extra.test/\")").subsumes("(response-origin \"https://extra.test/\")", &url));
+        assert!(!policy("(response-origin);redirects=allow").subsumes("(response-origin)", &url));
+        assert!(policy("(response-origin)").subsumes("(response-origin);redirects=allow", &url));
+        // No enforced list, or a requirement that is not a list: nothing is subsumed.
+        let report_only = ConnectionPolicy::from_headers(None, Some("(response-origin)"), &url).unwrap();
+        assert!(!report_only.subsumes("(response-origin)", &url));
+        assert!(!policy("(response-origin)").subsumes("not a list", &url));
+        assert!(ConnectionPolicy::is_valid_value("(\"https://example.test/\")"));
+        assert!(!ConnectionPolicy::is_valid_value("(\"https://example.test/\")\nX-Injected: evil"));
+        // An opted-in document enforces the requirement.
+        let enforced = ConnectionPolicy::with_required(None, "(response-origin)", &url).unwrap();
+        let blocked = Url::parse("http://www.a.test:8000/").unwrap();
+        assert!(enforced.check(&blocked, &blocked, false).blocked);
+        assert!(enforced.check(&url, &url, false).allowed());
     }
 
     #[test]

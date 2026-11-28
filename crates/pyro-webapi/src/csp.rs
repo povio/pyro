@@ -240,6 +240,16 @@ pub fn allowlist_guard(page: &Rc<PageDom>, url: &url::Url) -> Option<Arc<Request
     Some(if outcome.blocked { RequestCsp::blocked(list, request) } else { RequestCsp::new(list, request) })
 }
 
+/// Whether the Connection-Allowlist of document `page` refuses a navigation of ANOTHER browsing
+/// context it asks for (`window.open`, a link or form with a target): that is a connection of
+/// `page`, though the window it opens, or reuses by name, has no allowlist of its own to check
+/// the load against. The violation is reported to `page`. False without an allowlist, or for a URL
+/// that does not parse (the navigation fails on its own).
+pub fn allowlist_refuses_navigation(page: &Rc<PageDom>, url: &str) -> bool {
+    let Ok(url) = url::Url::parse(url) else { return false };
+    allowlist_guard(page, &url).is_some_and(|guard| guard.blocks_request())
+}
+
 /// CSP3 "Should element's inline type behavior be blocked?" for `page`: an inline `<script>`
 /// (its `nonce`), an event handler attribute, a `javascript:` URL (`source`: the text whose
 /// hash may be listed). Violations at `target`, else the document. Whether it may run.
