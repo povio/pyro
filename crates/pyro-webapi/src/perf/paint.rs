@@ -53,8 +53,16 @@ pub fn register(_engine: &pyro_js::Engine) {}
 
 /// Whether the document still needs frames for its paint entries
 /// (`first-contentful-paint` not reported): the caller (`Browser::note_first_paint`) asks for one.
+///
+/// Only while a scan could find something the last one did not ([`scan::stale`]): a document
+/// that never paints anything contentful (blank, style-only, hidden) is scanned once per change,
+/// not once per frame, or each frame's task would ask for the next and the event loop would
+/// never go idle (`run_until_idle`, `fetch --wait`, lifecycle events). A hidden document's
+/// frames scan nothing ([`on_frame`]), so it must not ask either.
 pub fn wants_frame(page: &PageDom) -> bool {
-    !page.timeline().paint_records().iter().any(|r| r.name == "first-contentful-paint")
+    !page.is_hidden()
+        && !page.timeline().paint_records().iter().any(|r| r.name == "first-contentful-paint")
+        && scan::stale(page)
 }
 
 /// The end of a rendering update of `page`'s document; called when ENABLED.
