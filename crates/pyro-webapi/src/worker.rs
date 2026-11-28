@@ -471,12 +471,28 @@ impl WorkerInner {
                 let ev = EventCore::trusted(&page, EventInterface::ErrorEvent, "error", false, true);
                 {
                     let mut fields = ev.fields.borrow_mut();
-                    fields.message = message;
-                    fields.filename = filename;
+                    fields.message = message.clone();
+                    fields.filename = filename.clone();
                     fields.lineno = line;
                     fields.colno = column;
                 }
-                fire(&page, self.target.key, &ev);
+                // HTML "run a worker" step "onerror": an error the Worker object's listeners did
+                // not cancel is "not handled" and is reported at the owner's global, so
+                // `window.onerror` sees it (message, location; the error value does not cross
+                // the thread, so it is null as in Chrome).
+                if fire(&page, self.target.key, &ev) {
+                    if let Some(window) = page.window_target() {
+                        let ev = EventCore::trusted(&page, EventInterface::ErrorEvent, "error", false, true);
+                        {
+                            let mut fields = ev.fields.borrow_mut();
+                            fields.message = message;
+                            fields.filename = filename;
+                            fields.lineno = line;
+                            fields.colno = column;
+                        }
+                        fire(&page, window, &ev);
+                    }
+                }
             }
             Up::LoadFailed => self.fail_to_load(),
             Up::Closed => self.finish(),

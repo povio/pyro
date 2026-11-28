@@ -26,7 +26,8 @@
 //! reported on the owner's page and do not count toward its network idle.
 //!
 //! An uncaught exception fires `error` at the global and, if not canceled,
-//! `error` at the `Worker`; it does not continue to the owner's window.
+//! `error` at the `Worker`; one the `Worker`'s listeners do not cancel is reported at the
+//! owner's global too (`worker.rs`, `Up::Error`).
 use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
@@ -334,6 +335,10 @@ pub struct WorkerEvents {
     inspector: RefCell<Option<Rc<dyn EngineHooks>>>,
     state: RefCell<Option<Rc<dyn Any>>>,
     sched: Scheduler<WorkerLoop>,
+    shared: Arc<Shared>,
+    /// Uncaught exceptions of the task that called `close()`: the loop stops before the task that
+    /// would report them to the owner can run, `run` reports them after it.
+    late: RefCell<Vec<JsException>>,
 }
 
 impl WorkerEvents {
@@ -385,6 +390,12 @@ impl EngineHooks for WorkerEvents {
             None => self.push(BufferedEvent::Exception { exception: exception.clone(), timestamp: epoch_ms() }),
         }
         let exception = exception.clone();
+        // HTML "close a worker" discards the queued tasks, but the script that closed the worker
+        // runs to its end and its error still reaches the owner's `Worker` object.
+        if self.shared.closing.load(Ordering::Acquire) {
+            self.late.borrow_mut().push(exception);
+            return;
+        }
         self.sched.post(TaskSource::DomManipulation, move |state| state.dispatch_error(exception));
     }
 
@@ -551,9 +562,6 @@ impl WorkerLoop {
     }
 
     fn dispatch_error(&mut self, exception: JsException) {
-        if self.shared.closing.load(Ordering::Acquire) {
-            return;
-        }
         let message = format!("Uncaught {}", exception.text());
         let filename = exception.url.clone().unwrap_or_default();
         let (line, column) = (exception.line.unwrap_or(0), exception.column.unwrap_or(0));
@@ -671,6 +679,7 @@ fn run(mut start: WorkerStart, ready: mpsc::SyncSender<LoopHandle<WorkerLoop>>) 
     // A module shared worker's graph is fetched and linked before it runs:
     // a failure there is a failure to load, not an exception of the worker.
     let phased = module && start.shared_worker;
+    let classic_shared = !module && start.shared_worker;
     let service = start.service.as_ref().map(|s| s.version);
     // A service worker's version learns whether its script ran.
     let evaluated = |ok: bool| {
@@ -683,10 +692,33 @@ fn run(mut start: WorkerStart, ready: mpsc::SyncSender<LoopHandle<WorkerLoop>>) 
     match set_up(&event_loop, start) {
         Ok((mut state, script)) => {
             if let Some(script) = script {
-                let ok = !shared.closing.load(Ordering::Acquire)
+                // A classic shared worker's script that does not parse (a syntax error, a static
+                // `import`) is a failure to load, as in Chrome: a plain `error` Event at its
+                // SharedWorker objects and the worker ends, not an exception it reports.
+                let unparsable = classic_shared
+                    && state.realm.scope().is_ok_and(|s| s.check_syntax(&script.0, Some(&script.1)).is_err());
+                if unparsable {
+                    load_failed(&poster, id);
+                }
+                let ok = !unparsable
+                    && !shared.closing.load(Ordering::Acquire)
                     && if phased { start_module_graph(&state, &script) } else { run_script(&state, &script, module) };
                 evaluated(ok);
                 run_collecting_when_quiet(&mut event_loop, &mut state, &shared);
+                // HTML "close a worker": `close()` only sets the closing flag; the task that
+                // called it runs on, and what it posted to the owner is still delivered. The
+                // owner learns the worker is gone after that, through the same queue (so after
+                // every message the script posted). When `terminate()` or the page's end set
+                // the flag instead the owner has already finished with this worker, and the
+                // late `Closed` finds nothing to end.
+                if service.is_none() && shared.closing.load(Ordering::Acquire) {
+                    // Errors of the closing task first, then `Closed`: the same queue keeps the order.
+                    let late = std::mem::take(&mut *state.events.late.borrow_mut());
+                    for exception in late {
+                        state.dispatch_error(exception);
+                    }
+                    poster(Box::new(move || deliver_up(id, Up::Closed)));
+                }
             } else {
                 evaluated(false);
             }
@@ -772,6 +804,8 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         inspector: RefCell::new(None),
         state: RefCell::new(None),
         sched: event_loop.scheduler(),
+        shared: start.shared.clone(),
+        late: RefCell::new(Vec::new()),
     });
     engine.set_hooks(Some(events.clone()));
     let dom: DomRef = Rc::new(RefCell::new(Dom::new()));
@@ -1909,11 +1943,13 @@ impl JsClass for DedicatedWorkerGlobalScope {
             let size = message.size();
             // The page is behind: wait for it. One message may exceed the budget alone.
             loop {
-                if g.shared.closing.load(Ordering::Acquire) {
-                    return Ok(s.undefined());
-                }
+                // A closing worker still posts to its owner (the message port to the owner
+                // is not a task of the worker's loop); it just no longer waits for the page.
                 let queued = g.shared.up_bytes.load(Ordering::Acquire);
-                if queued == 0 || queued.saturating_add(size) <= MAX_QUEUED_BYTES {
+                if g.shared.closing.load(Ordering::Acquire)
+                    || queued == 0
+                    || queued.saturating_add(size) <= MAX_QUEUED_BYTES
+                {
                     break;
                 }
                 std::thread::sleep(Duration::from_millis(1));
@@ -1924,9 +1960,8 @@ impl JsClass for DedicatedWorkerGlobalScope {
             Ok(s.undefined())
         });
         def.method("close", 0, |s, g, _a| {
+            // Only the flag: `run` tells the owner after the current task, behind its messages.
             g.shared.closing.store(true, Ordering::Release);
-            let id = g.id;
-            (g.poster)(Box::new(move || deliver_up(id, Up::Closed)));
             Ok(s.undefined())
         });
         def.accessor(
@@ -1957,9 +1992,8 @@ impl JsClass for SharedWorkerGlobalScope {
             |s, g, value| crate::window::replace_window_attribute(s, &g.target.page, "name", value),
         );
         def.method("close", 0, |s, g, _a| {
+            // Only the flag: `run` tells the owner after the current task, behind its messages.
             g.shared.closing.store(true, Ordering::Release);
-            let id = g.id;
-            (g.poster)(Box::new(move || deliver_up(id, Up::Closed)));
             Ok(s.undefined())
         });
         def.accessor(
@@ -2244,6 +2278,48 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>, global: &str) -> JsResult<()> {
         Some("pyro://internal/worker-scope.js"),
         1,
     )?;
+    // AnimationFrameProvider (`[Exposed=(Window,DedicatedWorker)]`): a dedicated worker owns no
+    // rendering opportunity of its own, so its callbacks run in a task of its loop one frame
+    // interval after the request, with the worker's own `performance.now()` as the time (HTML
+    // "run the animation frame callbacks"). Nothing is scheduled while no callback is pending
+    // (an idle worker sleeps); a callback requested during the run waits for the next frame, and
+    // one canceled during it does not run.
+    if s.global_data::<DedicatedWorkerGlobalScope>().is_some() {
+        s.eval(
+            "(() => {
+               const g = self, callbacks = new Map(), timeout = g.setTimeout, call = Function.prototype.call;
+               let last = 0, timer = 0;
+               const frame = () => {
+                 timer = 0;
+                 const time = g.performance.now();
+                 for (const [id, callback] of [...callbacks]) {
+                   if (!callbacks.delete(id)) continue;
+                   try { call.call(callback, g, time); } catch (e) { g.reportError(e); }
+                 }
+                 if (callbacks.size && !timer) timer = timeout.call(g, frame, 16);
+               };
+               const methods = {
+                 requestAnimationFrame(callback) {
+                   if (arguments.length < 1) throw new TypeError(\"Failed to execute 'requestAnimationFrame' on 'DedicatedWorkerGlobalScope': 1 argument required, but only 0 present.\");
+                   if (typeof callback !== 'function') throw new TypeError(\"Failed to execute 'requestAnimationFrame' on 'DedicatedWorkerGlobalScope': The callback provided as parameter 1 is not a function.\");
+                   const id = ++last;
+                   callbacks.set(id, callback);
+                   if (!timer) timer = timeout.call(g, frame, 16);
+                   return id;
+                 },
+                 cancelAnimationFrame(handle) {
+                   if (arguments.length < 1) throw new TypeError(\"Failed to execute 'cancelAnimationFrame' on 'DedicatedWorkerGlobalScope': 1 argument required, but only 0 present.\");
+                   callbacks.delete(Number(handle) >>> 0);
+                 },
+               };
+               for (const name of Object.keys(methods)) {
+                 Object.defineProperty(g, name, { value: methods[name], writable: true, enumerable: true, configurable: true });
+               }
+             })()",
+            Some("pyro://internal/worker-scope.js"),
+            1,
+        )?;
+    }
     // `origin` is WorkerGlobalScope's (not [Global]), so it is inherited, not
     // the global's own: assignment shadows it ([Replaceable]) and deleting
     // the shadow shows it again. The global's chain lacks the interface
