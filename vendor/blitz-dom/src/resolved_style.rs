@@ -829,7 +829,14 @@ impl BaseDocument {
                             // The rendered `position-try-fallbacks` option replaces the box's own
                             // declarations (css-anchor-position-1 § 5: getComputedStyle reports the
                             // fallback style in use).
-                            let try_style = self.anchor_rendered_options.get(&node_id).and_then(|&index| {
+                            // pyro: the option the latest layout chose, also before a frame commits it (Chrome's
+                            // getComputedStyle flushes layout and reports the fallback it used).
+                            let rendered = if self.anchor_pending_options.contains(&node_id) {
+                                self.anchor_last_option.get(&node_id).map(|(index, _)| *index)
+                            } else {
+                                self.anchor_rendered_options.get(&node_id).copied()
+                            };
+                            let try_style = rendered.and_then(|index| {
                                 let list = &styles.get_position().position_try_fallbacks;
                                 let item = list.value.0.get(index)?;
                                 let guard = self.guard.read();
