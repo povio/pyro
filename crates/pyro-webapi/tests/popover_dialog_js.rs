@@ -751,3 +751,31 @@ fn hiding_popovers_until_an_endpoint_ends_whatever_focus_handlers_do() {
     assert_eq!(e.eval("opened"), "2", "focus was restored once per hide-all-until");
     assert_eq!(e.eval("parent.matches(':popover-open')"), "false");
 }
+
+#[test]
+fn details_without_a_summary_is_a_tab_stop_that_enter_and_space_toggle() {
+    // Chrome gives such a details a UA default summary: Tab stops on it (it shows as the details),
+    // while its tabIndex stays -1 and focus() does nothing (WPT popovers/popover-focus-5).
+    let e = env(
+        "<button id=a>a</button><details id=d>text</details><details id=s><summary>s</summary>x</details><button id=b>b</button>",
+    );
+    assert_eq!(e.eval("[d.tabIndex, (d.focus(), document.activeElement.id)].join()"), "-1,");
+    assert_eq!(e.eval("a.focus(); document.activeElement.id"), "a");
+    e.key("Tab");
+    assert_eq!(e.eval("document.activeElement.id"), "d");
+    e.key("Enter");
+    assert_eq!(e.eval("d.open"), "true");
+    e.key(" ");
+    assert_eq!(e.eval("d.open"), "false");
+    e.key("Tab");
+    assert_eq!(e.eval("document.activeElement.tagName"), "SUMMARY");
+    e.key("Tab");
+    assert_eq!(e.eval("document.activeElement.id"), "b");
+    input::dispatch_key(
+        &e.page,
+        input::KeyKind::RawKeyDown,
+        &input::KeyInput { key: "Tab".into(), code: "Tab".into(), modifiers: input::Modifiers { shift: true, ..Default::default() }, ..Default::default() },
+    );
+    assert_eq!(e.eval("document.activeElement.tagName"), "SUMMARY");
+    e.page.dispose();
+}

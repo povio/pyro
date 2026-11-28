@@ -206,7 +206,7 @@ fn focused(page: &PageDom) -> Option<NodeId> {
 
 /// Focuses `el` even when it is not a focusable area (the dialog focusing
 /// steps' fallback to the dialog itself).
-fn focus_forced(page: &Rc<PageDom>, el: NodeId) {
+pub(crate) fn focus_forced(page: &Rc<PageDom>, el: NodeId) {
     focus_forced_with(page, el, false);
 }
 

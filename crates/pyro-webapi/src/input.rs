@@ -454,6 +454,17 @@ pub(crate) fn is_focusable_area(layout: &pyro_dom::layout::Layout, dom: &Dom, el
     layout.check_visibility(dom, el, opts)
 }
 
+/// A `<details>` with no `<summary>` child, rendered and not inert: Chrome's UA-made default
+/// summary is a stop of sequential navigation although the details is no focusable area for
+/// `focus()` (its `tabIndex` is -1; [`Dom::is_summaryless_details`]). Tab focuses it with the
+/// forced-focus path ([`focus_next`]).
+fn default_summary_stop(layout: &pyro_dom::layout::Layout, dom: &Dom, el: NodeId) -> bool {
+    dom.is_summaryless_details(el)
+        && dom.is_connected(el).unwrap_or(false)
+        && !layout.style().is_inert(dom, el)
+        && layout.check_visibility(dom, el, pyro_dom::style::CheckVisibilityOptions { check_visibility: true, check_opacity: false })
+}
+
 /// Blurs the focused element when it is not a focusable area any more:
 /// disconnected, disabled, inert, or not being rendered.
 pub fn run_focus_fixup(page: &Rc<PageDom>) {
@@ -464,9 +475,10 @@ pub fn run_focus_fixup(page: &Rc<PageDom>) {
         let layout = page.layout();
         let dom = page.dom.borrow();
         let Some(f) = dom.focused(page.document()).ok().flatten() else { return };
-        let focusable = (node_focusable(&layout, &dom, f) || is_keyboard_focusable_scroller(&layout, &dom, f))
+        let focusable = ((node_focusable(&layout, &dom, f) || is_keyboard_focusable_scroller(&layout, &dom, f))
             && !layout.style().is_inert(&dom, f)
-            && layout.is_visible(&dom, f);
+            && layout.is_visible(&dom, f))
+            || default_summary_stop(&layout, &dom, f);
         (!focusable).then_some(f)
     };
     if let Some(f) = lost {
@@ -1145,6 +1157,8 @@ fn space_clickable(dom: &Dom, el: NodeId) -> bool {
     match local(dom, el).as_deref() {
         Some("button") => true,
         Some("summary") => dom.is_details_summary(el),
+        // The default summary of a details with none (`default_summary_stop`).
+        Some("details") => dom.is_summaryless_details(el),
         Some("input") => matches!(
             dom.input_type(el),
             Ok(InputType::Checkbox
@@ -1167,7 +1181,13 @@ fn keyboard_click(page: &Rc<PageDom>, el: NodeId) {
     let ev = EventCore::trusted(page, EventInterface::PointerEvent, "click", true, true);
     ev.state.borrow_mut().composed = true;
     ev.fields.borrow_mut().pointer_id = -1;
-    dispatch_with_activation(page, el, &ev);
+    let not_canceled = dispatch_with_activation(page, el, &ev);
+    // A details with no `<summary>`: the key press clicks its UA default summary, whose
+    // activation behavior toggles `open` (a click elsewhere inside the details does not, so this
+    // is not an activation behavior of the details itself). pyro-dom queues the `toggle` event.
+    if not_canceled && page.dom.borrow().is_summaryless_details(el) {
+        let _ = page.dom.borrow_mut().toggle_attribute(el, "open", None);
+    }
     page.end_click(el);
 }
 
@@ -2870,7 +2890,7 @@ fn enter_key(page: &Rc<PageDom>, target: NodeId) {
             }
         }
         Some("a") | Some("button") => element_click(page, target),
-        Some("summary") => keyboard_click(page, target),
+        Some("summary" | "details") => keyboard_click(page, target),
         _ => {}
     }
 }
@@ -3018,7 +3038,7 @@ fn focus_next(page: &Rc<PageDom>, _from: NodeId, backward: bool) {
         let layout = page.layout();
         let dom = page.dom.borrow();
         let doc = page.document();
-        let area = |n: NodeId| is_focusable_area(&layout, &dom, n);
+        let area = |n: NodeId| is_focusable_area(&layout, &dom, n) || default_summary_stop(&layout, &dom, n);
         let step = |cur: Option<NodeId>| dom.sequential_focus_target_with_layout(doc, cur, backward, &area, &layout);
         // HTML "sequential focus navigation starting point": with nothing focused, the node a
         // text directive scrolled to (still in the document) is where the Tab starts from.
@@ -3074,7 +3094,20 @@ fn focus_next(page: &Rc<PageDom>, _from: NodeId, backward: bool) {
         }
     };
     match next {
-        Some(n) => focus_element(page, n),
+        Some(n) => {
+            // The stop on a default summary is no focusable area for `focus()`: Tab focuses the
+            // details through the forced path, as the dialog focusing steps do.
+            let default_stop = {
+                let layout = page.layout();
+                let dom = page.dom.borrow();
+                !is_focusable_area(&layout, &dom, n) && default_summary_stop(&layout, &dom, n)
+            };
+            if default_stop {
+                crate::popover::focus_forced(page, n);
+            } else {
+                focus_element(page, n);
+            }
+        }
         // Past the last (or first) focusable area focus moves to the
         // browser's UI (the page keeps its focused element): a Space held
         // on the control no longer activates it, as when it blurs.

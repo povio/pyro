@@ -62,6 +62,17 @@ impl Dom {
             }) == Some(el)
     }
 
+    /// An HTML `<details>` with no `<summary>` child. Chrome renders such a details with a UA-made
+    /// default summary in its shadow tree: sequential navigation stops on it (the stop shows as the
+    /// details itself, retargeted) and Enter/Space toggle it, while its `tabIndex` stays -1 and
+    /// `focus()` does nothing (WPT html/semantics/popovers/popover-focus-5).
+    pub fn is_summaryless_details(&self, el: NodeId) -> bool {
+        self.element(el).is_ok_and(|e| e.is_html() && e.name.local == local_name!("details"))
+            && !self.element_children(el).is_ok_and(|mut children| {
+                children.any(|child| self.element(child).is_ok_and(|e| e.is_html() && e.name.local == local_name!("summary")))
+            })
+    }
+
     fn delegates_focus_idx(&self, i: u32) -> bool {
         let sr = self.n(i).element().map_or(NIL, |e| e.shadow_root);
         sr != NIL && matches!(&self.n(sr).kind, NodeKind::Fragment(f) if f.flags & shadow_flags::DELEGATES_FOCUS != 0)
