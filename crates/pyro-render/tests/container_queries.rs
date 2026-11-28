@@ -474,3 +474,25 @@ i {display:block;width:1px;height:1px}
     assert_eq!(size(&doc, "#a"), (30.0, 20.0));
     assert_eq!(size(&doc, "#b"), (40.0, 20.0));
 }
+
+/// pyro: a size feature reads the container's unrounded size, and a writing-mode change of the
+/// container evaluates the logical features of its descendants again (WPT css-conditional
+/// container-queries `size-feature-fractional`, `size-container-writing-mode-change`).
+#[test]
+fn size_features_read_fractional_sizes_and_follow_the_writing_mode() {
+    const FRACTIONAL: &str = r#"<!doctype html><style>
+body {margin:0}
+#c {container-type:size;width:100.5px;height:50.5px}
+i {display:block;width:1px;height:1px}
+@container (width = 100.5px) {i {width:7px}}
+@container (inline-size = 50.5px) {i {height:9px}}
+</style><div id=c><i id=a></i></div>"#;
+    let mut doc = HtmlDocument::from_html(FRACTIONAL, DocumentConfig::default());
+    doc.viewport_mut().window_size = (800, 600);
+    doc.resolve(0.0);
+    assert_eq!(size(&doc, "#a"), (7.0, 1.0));
+    let container = doc.query_selector("#c").unwrap().unwrap();
+    doc.set_style_property(container, "writing-mode", "vertical-lr");
+    doc.resolve(0.0);
+    assert_eq!(size(&doc, "#a"), (1.0, 9.0));
+}
