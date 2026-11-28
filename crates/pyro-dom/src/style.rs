@@ -1498,10 +1498,22 @@ impl StyleEngine {
             return None;
         };
         let mut text = String::new();
-        for item in chosen {
-            match item {
-                ContentItem::String(s) => text.push_str(s),
+        if !alt.is_empty() && alt.iter().any(|i| matches!(i, ContentItem::Counter(..) | ContentItem::Counters(..))) {
+            // CSS Content 3 § 2.1: the alternative text may read counters, which the layout
+            // engine's counter walk evaluated at the pseudo-element (the style holds the items).
+            let before = match pseudo {
+                Some(PseudoElement::Before) => true,
+                Some(PseudoElement::After) => false,
                 _ => return None,
+            };
+            let external = self.external.borrow();
+            text = external.as_ref()?.0.generated_alt_text(crate::snapshot::render_key(el), before)?;
+        } else {
+            for item in chosen {
+                match item {
+                    ContentItem::String(s) => text.push_str(s),
+                    _ => return None,
+                }
             }
         }
         Some(if pseudo.is_some() && b.display.without_ruby() != D::Inline { format!(" {text} ") } else { text })

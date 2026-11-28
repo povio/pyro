@@ -1130,6 +1130,12 @@ pub trait GeometrySource {
     ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
         None
     }
+    /// The alternative text (after the `/` of `content`) of `key`'s `::before`
+    /// (`before`) or `::after` when it reads a counter, which the style's
+    /// strings cannot hold: `None` when there is none.
+    fn generated_alt_text(&self, _key: u64, _before: bool) -> Option<String> {
+        None
+    }
     /// `false` when [`Self::element_pseudo_style`] with `generated_only`
     /// answers `None` for `::before` / `::after` of every element as of the
     /// last sync (no element is styled with a generated one).

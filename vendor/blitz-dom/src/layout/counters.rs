@@ -147,6 +147,10 @@ struct Walk {
     /// pyro: the text of each list item's `::marker` content that reads counters
     /// (`BaseDocument::marker_texts`).
     marker_texts: HashMap<NodeId, String>,
+    /// pyro: the alternative text (`content: ... / counter(x)`, CSS Content 3 § 2.1) of each
+    /// `::before` (true) and `::after` (false) whose alternative text reads a counter, by
+    /// originating element (`BaseDocument::generated_alt_text`).
+    alts: HashMap<(NodeId, bool), String>,
     /// pyro: for each enclosing element of style containment (innermost last), how many
     /// instances of each counter there were when its subtree began: an increment or set in the
     /// subtree of a counter made outside it makes a new counter instead (CSS Contain 2 § 3.3).
@@ -249,6 +253,43 @@ impl Walk {
         }
     }
 
+    /// pyro: the alternative text after the `/` of a pseudo-element's `content` when it reads a
+    /// counter, evaluated at the counter state of the pseudo-element (CSS Content 3 § 2.1: the
+    /// alternative text is what assistive technology gets in place of the content, accname's
+    /// "name from content" step 2F.ii). `None` when there is none, when it reads no counter (the
+    /// computed style's strings are then the whole text) or when it has a quote or image (not
+    /// valid there).
+    fn alt_content(&mut self, style: &ComputedValues, owner: NodeId) -> Option<String> {
+        let Content::Items(items) = &style.get_counters().content else {
+            return None;
+        };
+        let alt = items.items.get(items.alt_start..)?;
+        if !alt.iter().any(|item| matches!(item, ContentItem::Counter(..) | ContentItem::Counters(..))) {
+            return None;
+        }
+        let mut text = String::new();
+        for item in alt {
+            match item {
+                ContentItem::String(string) => text.push_str(string),
+                ContentItem::Counter(name, counter_style) => {
+                    let value = self.read(&name.0, owner, pseudo_scope()).value;
+                    text.push_str(&format(value, counter_style));
+                }
+                ContentItem::Counters(name, separator, counter_style) => {
+                    self.read(&name.0, owner, pseudo_scope());
+                    for (index, instance) in self.counters[&name.0].iter().enumerate() {
+                        if index > 0 {
+                            text.push_str(separator);
+                        }
+                        text.push_str(&format(instance.value, counter_style));
+                    }
+                }
+                _ => return None,
+            }
+        }
+        Some(text)
+    }
+
     /// The content of a pseudo-element whose originating element is `owner`: its text (strings,
     /// counters and quotes, joined) and images, in order.
     fn content(&mut self, style: &ComputedValues, owner: NodeId) -> Option<Vec<Piece>> {
@@ -349,6 +390,12 @@ fn auto_quotes(lang: &str) -> [char; 4] {
 }
 
 impl BaseDocument {
+    /// pyro: the alternative text of `node`'s `::before` (`before`) or `::after` when it reads a
+    /// counter, as of the last evaluation (`Walk::alt_content`).
+    pub fn generated_alt_text(&self, node: NodeId, before: bool) -> Option<String> {
+        self.generated_alt_text.get(&(node, before)).cloned()
+    }
+
     /// Brings generated content up to date after a style traversal, before damage propagates: a
     /// `::first-letter` style that changed restyles the letter's inline layout
     /// (`first_letter::style_changed`), and counters and quotes are evaluated (see the module).
@@ -371,6 +418,8 @@ impl BaseDocument {
         let mut walk = Walk::default();
         walk_element(self, root_id, document_id, &mut walk);
         let texts = walk.texts;
+        // pyro: alternative texts are read on demand by the accessible name; no box depends on them.
+        self.generated_alt_text = walk.alts;
         // pyro: an item whose marker text changed has its marker built again (by its parent).
         let marker_texts = walk.marker_texts;
         let mut remarked: Vec<NodeId> = marker_texts
@@ -549,6 +598,9 @@ fn walk_element(doc: &BaseDocument, node_id: NodeId, parent: NodeId, walk: &mut 
         }
         walk.quote_lang = quote_language(doc, node_id);
         texts[1] = walk.content(before, scope);
+        if let Some(alt) = walk.alt_content(before, scope) {
+            walk.alts.insert((node_id, true), alt);
+        }
         walk.leave(pseudo_scope());
     }
     for &child_id in node.children.iter() {
@@ -564,6 +616,9 @@ fn walk_element(doc: &BaseDocument, node_id: NodeId, parent: NodeId, walk: &mut 
         }
         walk.quote_lang = quote_language(doc, node_id);
         texts[0] = walk.content(after, scope);
+        if let Some(alt) = walk.alt_content(after, scope) {
+            walk.alts.insert((node_id, false), alt);
+        }
         walk.leave(pseudo_scope());
     }
     if let Some((group, false)) = group {

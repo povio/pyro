@@ -1478,6 +1478,10 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_pseudo_style(self.page, key, pseudo, generated_only))
     }
 
+    fn generated_alt_text(&self, key: u64, before: bool) -> Option<String> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.generated_alt_text(self.page, key, before))
+    }
+
     fn may_have_generated_before_after(&self) -> bool {
         RENDERER.with(|r| {
             r.try_borrow()

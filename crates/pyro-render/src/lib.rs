@@ -2826,6 +2826,13 @@ impl Renderer {
         m.doc.pseudo_element_style(origin, pseudo, generated_only)
     }
 
+    /// The alternative text of `key`'s `::before` (`before`) or `::after` when it reads a
+    /// counter (`content: "" / counter(x)`), as of the last sync.
+    pub fn generated_alt_text(&self, page: u64, key: u64, before: bool) -> Option<String> {
+        let m = self.mirrors.get(&page)?;
+        m.doc.generated_alt_text(m.node(key)?, before)
+    }
+
     /// `false` while no element of `page`'s persistent document has been
     /// styled with a generated `::before` / `::after`: then
     /// [`Renderer::element_pseudo_style`] with `generated_only` answers

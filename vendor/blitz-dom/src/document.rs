@@ -832,6 +832,9 @@ pub struct BaseDocument {
     /// pyro: the text of each list item's `::marker` `content` that reads counters, evaluated in
     /// tree order (`layout::counters`).
     pub(crate) marker_texts: HashMap<NodeId, String>,
+    /// pyro: the alternative text of `::before` (true) and `::after` content that reads a
+    /// counter, by originating element (`layout::counters`, `generated_alt_text`).
+    pub(crate) generated_alt_text: HashMap<(NodeId, bool), String>,
     /// pyro: the number of each list item's marker, its `list-item` counter value
     /// (`layout::counters`): elements, and `::before` (true) / `::after` list items by their
     /// originating element.
@@ -1162,6 +1165,7 @@ impl BaseDocument {
             marker_counters_pending: false,
             container_float_floors: Default::default(),
             marker_texts: HashMap::new(),
+            generated_alt_text: HashMap::new(),
             list_item_numbers: Default::default(),
             top_layer: Default::default(),
             pending_critical_resources: HashSet::new(),
