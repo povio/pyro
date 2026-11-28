@@ -353,6 +353,7 @@ impl Browser {
                     eagerness: Eagerness::Immediate,
                     referrer_policy: rule.referrer_policy.or(link.referrer_policy),
                     tag: document_rule.tag.clone(),
+                    set_tag: document_rule.set_tag.clone(),
                     requires: rule.requires.clone(),
                     expects_no_vary_search: rule.expects_no_vary_search.clone(),
                     target_hint: rule.target_hint,

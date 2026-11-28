@@ -605,9 +605,25 @@ pub struct Candidate {
     pub referrer_policy: Option<ReferrerPolicy>,
     /// The rule's `tag`, else the set's.
     pub tag: Option<String>,
+    /// The set's own `tag`: it names the request too when the rule has a tag of its own
+    /// (`Sec-Speculation-Tags` lists the rule's and the rule set's tags; see [`Candidate::tags`]).
+    pub set_tag: Option<String>,
     pub requires: Vec<Requirement>,
     pub expects_no_vary_search: Option<String>,
     pub target_hint: Option<TargetHint>,
+}
+
+impl Candidate {
+    /// The tags this candidate puts on its request: the rule's and the rule set's, `None` (the
+    /// header's `null`) only when it has neither. Chrome sends the set's tag next to a rule's
+    /// (WPT `speculation-tags/deduped-and-sorted-tags` "removed ruleset").
+    pub fn tags(&self) -> Vec<Option<String>> {
+        let mut tags = vec![self.tag.clone()];
+        if self.set_tag.is_some() && self.set_tag != self.tag {
+            tags.push(self.set_tag.clone());
+        }
+        tags
+    }
 }
 
 /// A `source: "document"` rule with its action and set. `tag` is the effective one.
@@ -617,6 +633,8 @@ pub struct DocumentRule {
     pub action: Action,
     pub rule: Rule,
     pub tag: Option<String>,
+    /// The set's own `tag` (see [`Candidate::set_tag`]).
+    pub set_tag: Option<String>,
 }
 
 /// The per-document registry (`DocumentState::speculation`).
@@ -664,6 +682,7 @@ fn candidates_of(entries: &[RuleSetEntry]) -> Vec<Candidate> {
                         eagerness: rule.eagerness,
                         referrer_policy: rule.referrer_policy,
                         tag: tag.clone(),
+                        set_tag: entry.set.tag.clone(),
                         requires: rule.requires.clone(),
                         expects_no_vary_search: rule.expects_no_vary_search.clone(),
                         target_hint: rule.target_hint,
@@ -694,6 +713,7 @@ impl Browser {
                             action,
                             rule: rule.clone(),
                             tag: rule.tag.clone().or_else(|| entry.set.tag.clone()),
+                            set_tag: entry.set.tag.clone(),
                         });
                     }
                 }
@@ -973,5 +993,15 @@ mod tests {
         assert_eq!(candidates.len(), 2);
         assert_eq!(candidates[0].tag.as_deref(), Some("r"));
         assert_eq!(candidates[1].tag.as_deref(), Some("s"));
+    }
+
+    #[test]
+    fn a_candidate_names_its_rules_and_its_sets_tag() {
+        let set = parse_str(r#"{"tag":"s","prefetch":[{"urls":["a"],"tag":"r"},{"urls":["b"]}]}"#).unwrap();
+        let mut registry = SpeculationRules::default();
+        registry.add(RuleSetSource::Header("https://example.com/r".into()), set);
+        let candidates = candidates_of(registry.entries());
+        assert_eq!(candidates[0].tags(), vec![Some("r".to_owned()), Some("s".to_owned())]);
+        assert_eq!(candidates[1].tags(), vec![Some("s".to_owned())]);
     }
 }

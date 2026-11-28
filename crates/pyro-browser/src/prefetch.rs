@@ -297,8 +297,11 @@ impl Browser {
         }
         for candidate in &candidates {
             // The tags of every rule that produced the URL (the first request carries them all).
-            let tags: Vec<Option<String>> =
-                candidates.iter().filter(|c| without_fragment(c.url.clone()) == without_fragment(candidate.url.clone())).map(|c| c.tag.clone()).collect();
+            let tags: Vec<Option<String>> = candidates
+                .iter()
+                .filter(|c| without_fragment(c.url.clone()) == without_fragment(candidate.url.clone()))
+                .flat_map(Candidate::tags)
+                .collect();
             self.start_prefetch_of(page, candidate, tag_header(&tags));
         }
     }
