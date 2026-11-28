@@ -1845,8 +1845,21 @@ impl LayoutPassState<'_> {
                     let svg_image = matches!(&element_data.special_data, SpecialElementData::Image(d) if matches!(&**d, ImageData::Svg(_)));
                     #[cfg(not(feature = "svg"))]
                     let svg_image = false;
+                    // The token also carries the default object size's 300 or 150 for the dimension the SVG
+                    // leaves out, and the SVG's ratio exists only with a `viewBox` or both dimensions: so a
+                    // loaded SVG takes the token's value only for a dimension its own intrinsic size has,
+                    // and keeps its own ratio (`<svg width=200>` with no `viewBox` has no ratio: an `<img
+                    // width=100>` of it is 150 tall, not 75; WPT html/rendering svg-embedded-sizing).
                     let (intrinsic_sizes, default_object_size) = match pyro_natural_size(element_data) {
-                        Some((width, height)) if is_video || (is_image && (!loaded || raster || svg_image)) => (
+                        Some((width, height)) if svg_image && is_image && loaded && !raster => (
+                            IntrinsicSizes {
+                                width: intrinsic_sizes.width.map(|_| width),
+                                height: intrinsic_sizes.height.map(|_| height),
+                                ratio: intrinsic_sizes.ratio,
+                            },
+                            default_object_size,
+                        ),
+                        Some((width, height)) if is_video || (is_image && (!loaded || raster)) => (
                             IntrinsicSizes {
                                 width: Some(width),
                                 height: Some(height),
