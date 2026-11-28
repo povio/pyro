@@ -179,7 +179,11 @@ impl PageDom {
             .ok()
             .and_then(|d| pyro_net::Url::parse(&d.url.to_string()).ok())
             .map(|u| u.scheme().to_owned());
-        self.hooks_secure_context() == Some(true) && scheme.is_some_and(|s| matches!(s.as_str(), "https" | "data" | "blob"))
+        // Mixed Content § 4.3 / Chrome: an opaque-origin document is restricted when its frame
+        // chain is a secure context, or when any ancestor document is trustworthy (a `data:`
+        // frame under an `https:` frame under an `http:` top page).
+        let secure = self.hooks_secure_context() == Some(true) || self.hooks_embedder_trustworthy() == Some(true);
+        secure && scheme.is_some_and(|s| matches!(s.as_str(), "https" | "data" | "blob"))
     }
     pub(crate) fn apply_request_defaults(&self, request: &mut Request) {
         request.top_level_site = self.cookie_partition_key();

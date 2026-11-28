@@ -862,6 +862,13 @@ pub trait PageHooks {
     fn is_secure_context(&self) -> Option<bool> {
         None
     }
+    /// Mixed Content § 4.3 for a document of an opaque origin (a `data:` frame): whether any of
+    /// its ancestor documents has a potentially trustworthy origin, as Chrome walks the frames
+    /// (a `data:` frame in an `https:` frame is mixed-content-restricted although the top page
+    /// is `http:`, which makes the chain no secure context); `None` when it cannot tell.
+    fn embedder_trustworthy(&self) -> Option<bool> {
+        None
+    }
     /// Observation-only (no JS): this document still belongs to a live owner
     /// frame/loader. Unlike is_focused, unselected frames also return true.
     /// Checked before a request can cancel a shared transition token.
@@ -3067,6 +3074,10 @@ impl PageDom {
     }
     pub fn hooks_secure_context(&self) -> Option<bool> {
         self.hooks().and_then(|h| h.is_secure_context())
+    }
+    /// [`PageHooks::embedder_trustworthy`].
+    pub(crate) fn hooks_embedder_trustworthy(&self) -> Option<bool> {
+        self.hooks().and_then(|h| h.embedder_trustworthy())
     }
     /// The document's performance timeline (`perf/timeline.rs`).
     pub fn timeline(&self) -> &crate::perf::timeline::TimelineBuffers {

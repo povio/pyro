@@ -192,6 +192,11 @@ impl PageHooks for Hooks {
         Some(crate::window::frame_chain_secure(&host, self.page, &url))
     }
 
+    fn embedder_trustworthy(&self) -> Option<bool> {
+        let host = self.frames.upgrade()?;
+        Some(crate::window::ancestor_trustworthy(&host, self.page))
+    }
+
     fn frame_tree(&self) -> Vec<Rc<pyro_webapi::PageDom>> {
         let Some(host) = self.frames.upgrade() else { return Vec::new() };
         if !host.matches(self.page, &self.loader) {

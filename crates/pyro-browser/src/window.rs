@@ -640,6 +640,27 @@ pub(crate) fn frame_chain_secure(host: &crate::frames::FrameHost, mut key: crate
     }
 }
 
+/// Whether any ancestor frame's document of frame `key` is potentially trustworthy (Mixed Content
+/// § 4.3 for a document of an opaque origin, `PageHooks::embedder_trustworthy`).
+pub(crate) fn ancestor_trustworthy(host: &crate::frames::FrameHost, mut key: crate::frames::FrameKey) -> bool {
+    while key.child.is_some() {
+        let parent = host.parent_key(key);
+        if parent == key {
+            return false;
+        }
+        key = parent;
+        // The ancestor's tuple origin only: an opaque one (a `data:` ancestor) is not trustworthy.
+        let origin = host
+            .with_frame(key, |f| pyro_net::Url::parse(&f.origin).ok().map(|u| u.origin()))
+            .flatten()
+            .filter(|o| o.is_tuple());
+        if origin.is_some_and(|o| pyro_net::is_potentially_trustworthy_origin(&o)) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Whether the document of frame `key` at `url` is potentially trustworthy: by its tuple origin
 /// (HTML "secure context" asks of the environment's origin), which an about:blank document inherits
 /// from its creator (a popup's initial document from an http page is not trustworthy, though
