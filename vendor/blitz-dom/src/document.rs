@@ -2339,13 +2339,17 @@ impl BaseDocument {
         self.referenced_images_with(true)
     }
 
-    /// pyro: [`Self::referenced_images`] without those of `<img>` elements (`elements`: false),
-    /// whose loads the document's own image loader tracks (and delays `load` for unless the image
-    /// is lazy): what the document's `load` waits for on the renderer's side.
+    /// pyro: [`Self::referenced_images`] without those of `loading=lazy` `<img>` elements
+    /// (`elements`: false): what the document's `load` waits for on the renderer's side. A lazy
+    /// image never delays `load` (HTML "lazy loading attributes"), whatever the renderer's request;
+    /// an eager one does, and the renderer must have it before `load` fires: a script that reads
+    /// the image's box in a `load` handler sees the loaded image's size, not a box without it.
     pub fn referenced_images_with(&self, elements: bool) -> Vec<(String, blitz_traits::net::FetchOptions)> {
         let mut out = Vec::new();
         for element in self.image_owners() {
-            if elements || element.name.local != local_name!("img") {
+            let lazy_img = element.name.local == local_name!("img")
+                && element.attr(LocalName::from("loading")).is_some_and(|value| value.trim().eq_ignore_ascii_case("lazy"));
+            if elements || !lazy_img {
                 out.extend(element.source_image_request.as_deref().cloned());
             }
             if element.name.ns == markup5ever::ns!(svg) && matches!(&*element.name.local, "image" | "feImage" | "use") {
