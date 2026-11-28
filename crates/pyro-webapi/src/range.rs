@@ -1064,13 +1064,36 @@ fn node_or_null<'s>(s: &Scope<'s>, page: &Rc<PageDom>, n: Option<NodeId>) -> JsR
 }
 
 /// The legacy anchor/focus endpoints "shadow-adjusted" against the document tree (Chrome's
-/// `DOMSelection`): a boundary inside a shadow tree is reported as the position of its outermost
-/// host in the host's parent, so the API never leaks nodes of a shadow tree.
+/// `DOMSelection`): a boundary inside a tree that script cannot reach (a closed shadow root, or a
+/// shadow tree inside one) is reported as the position of the outermost such host in its parent,
+/// so the API never leaks nodes of a closed shadow tree. A boundary in an open shadow tree is
+/// reported as it is (`host.shadowRoot` reaches it anyway); a selection across trees is collapsed
+/// by the selection itself (`editing::legacy_endpoints`).
 fn adjusted_endpoints(page: &Rc<PageDom>) -> JsResult<Option<(Point, Point)>> {
     let Some((a, f)) = crate::editing::legacy_endpoints(page) else { return Ok(None) };
     let dom = page.dom.borrow();
     let backward = composed_order(&dom, a, f)? > 0;
-    Ok(Some((rescope_point(&dom, a, backward, &[])?, rescope_point(&dom, f, !backward, &[])?)))
+    Ok(Some((hide_closed_shadow(&dom, a, backward)?, hide_closed_shadow(&dom, f, !backward)?)))
+}
+
+/// `point` moved out of every closed shadow tree it is in (outward to the host's position in the
+/// host's parent; `end` puts it after the host), leaving open shadow trees alone.
+fn hide_closed_shadow(dom: &Dom, mut point: Point, end: bool) -> JsResult<Point> {
+    loop {
+        // The host of the innermost closed shadow root enclosing the point, if any.
+        let mut root = dom.root_node(point.0, false).js()?;
+        let mut closed_host = None;
+        while let Some(host) = dom.fragment_host(root).js()? {
+            if dom.shadow_root_mode(root).js()? == Some(pyro_dom::ShadowRootMode::Closed) {
+                closed_host = Some(host);
+                break;
+            }
+            root = dom.root_node(host, false).js()?;
+        }
+        let Some(host) = closed_host else { return Ok(point) };
+        let parent = dom.parent(host).js()?.ok_or_else(wrong_document)?;
+        point = (parent, dom.index_in_parent(host).js()? + u32::from(end));
+    }
 }
 
 pub struct Selection;
