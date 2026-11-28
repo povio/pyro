@@ -64,16 +64,34 @@ fn lacks_key(sample: &pyro_media::mse::Sample, keys: Option<&crate::eme::SharedK
 }
 
 fn index_at(track: &TrackBuffer, t: f64) -> Option<usize> {
-    track
-        .samples()
+    let samples = track.samples();
+    let spanning = samples
         .iter()
         .enumerate()
         .filter(|(_, b)| b.sample.pts <= t && t < b.sample.pts + b.sample.duration)
         .max_by(|(_, a), (_, b)| a.sample.pts.total_cmp(&b.sample.pts))
-        .map(|(i, _)| i)
+        .map(|(i, _)| i);
+    // No frame spans `t`: the first one starting within the track's fudge room after it stands in
+    // (Chrome's `SourceBufferRange::CanSeekTo`: a position a little before buffered data plays it).
+    spanning.or_else(|| {
+        samples
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| b.sample.pts > t && b.sample.pts - t <= track.fudge_room())
+            .min_by(|(_, a), (_, b)| a.sample.pts.total_cmp(&b.sample.pts))
+            .map(|(i, _)| i)
+    })
 }
 
 impl Presentation {
+    /// How far before a buffered range the position may be and still play it: the largest fudge room
+    /// of the tracks, so a seek to the 3.298333 s of a test manifest reaches a segment whose first
+    /// frame is at 3.2983333 s, and data that starts a frame after a truncated duration is reached.
+    pub(super) fn seek_fudge(&self) -> f64 {
+        let buffers = self.video_buffer.iter().chain(self.audio_buffer.iter());
+        buffers.flat_map(|b| b.borrow().track_buffers().iter().map(|t| t.fudge_room()).collect::<Vec<_>>()).fold(0., f64::max)
+    }
+
     pub(super) fn set_keys(&mut self, keys: Option<crate::eme::SharedKeys>) {
         self.keys = keys;
         // What was decoded with the previous keys is stale.
@@ -387,7 +405,8 @@ pub(super) fn refresh(p: &Rc<PageDom>, node: NodeId) {
         // offset) does not stall playback in HAVE_METADATA.
         const START_FUDGE: f64 = 1.0;
         let first_start = m.buffered.first().map(|r| r.0);
-        let covered = m.buffered.iter().any(|&(a, b)| a <= position && (position < b || m.ended && b == st.duration && position == b))
+        let fudge = m.presentation.seek_fudge();
+        let covered = m.buffered.iter().any(|&(a, b)| a - fudge <= position && (position < b || m.ended && b == st.duration && position == b))
             || first_start.is_some_and(|a| position <= a && a < START_FUDGE && m.buffered[0].1 > a);
         // EME: data is there but its key is not (a protected sample at the position): the element
         // stays at HAVE_METADATA and fires `waitingforkey` until a session provides the key.

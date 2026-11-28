@@ -48,7 +48,14 @@ pub(super) fn parse(data: &[u8], moof: u64, payload: u64, tracks: &BTreeMap<u32,
             Some(1) => u64at(tfdt, 4)?,
             _ => return Err(Error::Unsupported),
         };
-        let scale = f64::from(info.track.timescale);
+        // Chrome's MP4 parser holds every timestamp as whole microseconds (a TimeDelta truncated
+        // towards zero from ticks / timescale), so the buffered range of a frame at 296850/90000 s
+        // starts at 3.298333, the 6-digit position WPT's manifests give and seeks use. Exact
+        // seconds would start it 0.3 us later and leave that seek outside the range.
+        let scale = i128::from(info.track.timescale);
+        let edit = (info.edit * 1e6).round() as i128;
+        let micros = |ticks: i128| ((ticks * 1_000_000 / scale) + edit) as f64 / 1e6;
+        let duration_micros = |ticks: u32| (i128::from(ticks) * 1_000_000 / scale).max(1) as f64 / 1e6;
         let first = spans.len();
         let mut offset = base;
         let mut last_delta: Option<u32> = None;
@@ -94,9 +101,9 @@ pub(super) fn parse(data: &[u8], moof: u64, payload: u64, tracks: &BTreeMap<u32,
                 }
                 let sample = Sample {
                     track_id: id,
-                    dts: time as f64 / scale + info.edit,
-                    pts: (i128::from(time) + i128::from(cto)) as f64 / scale + info.edit,
-                    duration: f64::from(delta) / scale,
+                    dts: micros(i128::from(time)),
+                    pts: micros(i128::from(time) + i128::from(cto)),
+                    duration: duration_micros(delta),
                     key: sf & 0x10000 == 0,
                     data: Bytes::new(),
                     enc: None,

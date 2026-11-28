@@ -106,6 +106,9 @@ pub struct TrackBuffer {
     group_highest: Option<f64>,
     end: f64,
     sample_bytes: usize,
+    /// The longest frame this track has held: Chrome's fudge room around buffered data is twice
+    /// the largest interbuffer distance seen (it never shrinks when frames are removed).
+    max_duration: f64,
 }
 
 impl TrackBuffer {
@@ -118,7 +121,14 @@ impl TrackBuffer {
             group_highest: None,
             end: 0.,
             sample_bytes: 0,
+            max_duration: 0.,
         }
+    }
+
+    /// Twice the longest frame held so far: how far from buffered data a position still counts as
+    /// inside it (`SourceBufferRange::CanSeekTo`).
+    pub fn fudge_room(&self) -> f64 {
+        2. * self.max_duration
     }
 
     pub fn track(&self) -> &Track {
@@ -179,6 +189,17 @@ impl TrackBuffer {
         if start < self.end - TIME_EPSILON && self.group_highest.is_none_or(|last| last <= sample.pts + TIME_EPSILON) {
             let first = self.last_decode.is_none();
             let video = self.config.width > 0;
+            // An audio frame that straddles the start of the new data keeps playing up to it (Chrome
+            // splices the two): trimmed to end there, so `buffered` stays one range across the seam
+            // instead of losing the whole frame (a 12 ms hole at every append of the config-change
+            // tests). A frame that starts a rounding error before it is replaced.
+            if first && !video {
+                for old in self.samples.iter_mut().map(|s| &mut s.sample) {
+                    if old.pts < sample.pts - 1e-6 && old.pts + old.duration > sample.pts + TIME_EPSILON {
+                        old.duration = sample.pts - old.pts;
+                    }
+                }
+            }
             self.remove_matching(|old| {
                 (old.pts + TIME_EPSILON >= start && old.pts + TIME_EPSILON < end)
                     || (first
@@ -190,6 +211,7 @@ impl TrackBuffer {
         self.last_decode = Some((sample.dts, sample.duration));
         self.group_highest = Some(self.group_highest.unwrap_or(end).max(end));
         self.end = self.end.max(end);
+        self.max_duration = self.max_duration.max(sample.duration);
         self.sample_bytes += sample.data.len();
         let index = self.samples.partition_point(|v| v.sample.dts <= sample.dts);
         self.samples.insert(index, BufferedSample { sample, config: self.config.clone() });
@@ -551,6 +573,31 @@ mod tests {
             b.process_sample(sample(time, key, 1)).unwrap();
         }
         assert_eq!(b.ranges(false), vec![(0., 3.002), (4.5, 5.5)]);
+    }
+
+    #[test]
+    fn an_audio_frame_straddling_replacement_data_is_trimmed_not_dropped() {
+        let mut b = CodedBuffer::new(MediaType { video: false, audio: true });
+        b.tracks.push(TrackBuffer::new(Track {
+            id: 1,
+            codec: "mp4a.40.2".into(),
+            description: Bytes::new(),
+            timescale: 1000,
+            width: 0,
+            height: 0,
+            sample_rate: 44100,
+            channels: 1,
+            protection: None,
+        }));
+        for time in 0..3 {
+            b.process_sample(sample(time as f64, true, time)).unwrap();
+        }
+        // New data starts inside the frame [1, 2): that frame keeps [1, 1.5) and no hole opens.
+        b.reset_parser();
+        b.process_sample(sample(1.5, true, 9)).unwrap();
+        assert_eq!(b.ranges(false), [(0., 2.5)]);
+        let kept = b.tracks[0].samples().iter().map(|s| (s.sample.pts, s.sample.duration)).collect::<Vec<_>>();
+        assert_eq!(kept, [(0., 1.), (1., 0.5), (1.5, 1.)]);
     }
 
     #[test]
