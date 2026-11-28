@@ -2649,7 +2649,7 @@ impl Names<'_> {
         if !any {
             return String::new();
         }
-        self.layout.pseudo_name_content(self.dom, id, pseudo)
+        self.layout.pseudo_name_content(self.dom, id, pseudo, self.chrome)
     }
 
     fn alternative(&self, id: NodeId, opts: NameOpts) -> String {

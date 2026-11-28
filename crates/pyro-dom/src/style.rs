@@ -1477,6 +1477,14 @@ impl StyleEngine {
     /// them). A `::before` / `::after` that is not `display: inline` is
     /// padded with a space on each side.
     pub fn css_content(&self, dom: &Dom, el: NodeId, pseudo: Option<PseudoElement>) -> Option<String> {
+        self.css_content_in(dom, el, pseudo, false)
+    }
+
+    /// [`Self::css_content`]; `chrome_alt`: the alternative text of a pseudo-element is padded
+    /// with a space on each side whatever its `display`, as Chrome's accessible name has it
+    /// (`::before { content: "" / "S" }` names a button "S label", also when the text has no
+    /// space of its own), where Playwright's does not.
+    pub fn css_content_in(&self, dom: &Dom, el: NodeId, pseudo: Option<PseudoElement>, chrome_alt: bool) -> Option<String> {
         use style::values::generics::counters::{Content, ContentItem};
         use style::values::specified::box_::Display as D;
         let style = match pseudo {
@@ -1516,7 +1524,8 @@ impl StyleEngine {
                 }
             }
         }
-        Some(if pseudo.is_some() && b.display.without_ruby() != D::Inline { format!(" {text} ") } else { text })
+        let padded = pseudo.is_some() && (b.display.without_ruby() != D::Inline || (chrome_alt && !alt.is_empty()));
+        Some(if padded { format!(" {text} ") } else { text })
     }
 
     /// [`ComputedStyle`] from Stylo's computed values, memoized per style

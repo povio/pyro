@@ -6225,14 +6225,14 @@ impl Layout {
     /// The text a generated `::before` / `::after` of `el` adds to its
     /// accessible name (Playwright's `getPseudoContent`): see
     /// [`crate::style::StyleEngine::css_content`]; "" when there is none.
-    pub fn pseudo_name_content(&self, dom: &Dom, el: NodeId, pseudo: &style::selector_parser::PseudoElement) -> String {
+    pub fn pseudo_name_content(&self, dom: &Dom, el: NodeId, pseudo: &style::selector_parser::PseudoElement, chrome: bool) -> String {
         // Playwright's `getCSSContent`: alternative text after `/` wins.
         let pseudo = match pseudo {
             style::selector_parser::PseudoElement::Before => crate::style::PseudoElement::Before,
             style::selector_parser::PseudoElement::After => crate::style::PseudoElement::After,
             _ => return String::new(),
         };
-        self.style.css_content(dom, el, Some(pseudo)).unwrap_or_default()
+        self.style.css_content_in(dom, el, Some(pseudo), chrome).unwrap_or_default()
     }
 
     /// `getComputedStyle(el, pseudo).getPropertyValue(name)`: the computed

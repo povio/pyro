@@ -178,16 +178,16 @@ impl Parse for Content {
                     ));
                 },
                 Token::Function(ref name) => {
-                    // FIXME(emilio): counter() / counters() should be valid per spec past
-                    // the alt marker, but it's likely non-trivial to support and other
-                    // browsers don't support it either, so restricting it for now.
+                    // pyro: counter() / counters() are valid past the alt marker too (CSS Content 3
+                    // § 2.1: the alternative text is a list of strings, attr() and counters), as
+                    // Chrome has them; blitz-dom evaluates them for the accessible name.
                     let result = match_ignore_ascii_case! { &name,
-                        "counter" if alt_start.is_none() => input.parse_nested_block(|input| {
+                        "counter" => input.parse_nested_block(|input| {
                             let name = CustomIdent::parse(input, &[])?;
                             let style = Content::parse_counter_style(context, input);
                             Ok(generics::ContentItem::Counter(name, style))
                         }),
-                        "counters" if alt_start.is_none() => input.parse_nested_block(|input| {
+                        "counters" => input.parse_nested_block(|input| {
                             let name = CustomIdent::parse(input, &[])?;
                             input.expect_comma()?;
                             let separator = input.expect_string()?.as_ref().to_owned().into();

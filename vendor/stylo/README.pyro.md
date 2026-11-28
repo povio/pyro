@@ -16,6 +16,11 @@ crate (`diff -ruN`).
 
 - Gap decoration inset offsets are signed length-percentages or `overlap-join`. Row and column cap and junction offsets participate in the cascade and animation. The inset shorthands expand into those same eight longhands. This is style-system support, not gap-decoration painting.
 
+- `values/specified/counters.rs`: `counter()` and `counters()` parse after the `/` of `content` (the
+  alternative text, CSS Content 3 § 2.1), as in Chrome. Upstream dropped the whole declaration
+  (`content: "" / counter(x)` computed to `none`, so no box and no alternative text). blitz-dom
+  evaluates them next to the content (`layout::counters::Walk::alt_content`) for the accessible name.
+
 - `rule_cache.rs`, `properties/helpers.mako.rs`: a style that inherits a reset property explicitly
   (`inherit` on a non-inherited property) stays in the rule cache when the property is one of
   `box-sizing`, `baseline-shift`, `baseline-source` and `alignment-baseline`: the parent's value is
