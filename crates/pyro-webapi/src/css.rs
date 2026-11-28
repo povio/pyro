@@ -1842,8 +1842,40 @@ fn rule_media_list<'s>(s: &Scope<'s>, rule: &RuleData) -> JsResult<Value<'s>> {
     }
     Ok(s.wrap::<MediaList>(rule.media_owner()?, Some(key))?.value())
 }
-rule_class!(CssMediaRule, "CSSMediaRule", CssConditionRule, |def| define_rule_media(def));
-rule_class!(CssSupportsRule, "CSSSupportsRule", CssConditionRule);
+/// The page whose viewport and style engine a rule's conditions are evaluated against: the one
+/// its sheet belongs to (a constructed sheet's: its constructor document's).
+fn rule_page(r: &RuleData) -> Option<Rc<PageDom>> {
+    match &r.owner {
+        SheetOwner::Node(h, _) => Some(h.page.clone()),
+        SheetOwner::Constructed(c) => c.page.upgrade(),
+    }
+}
+
+/// `CSSConditionRule.matches` of an `@media` or `@supports` rule (CSS Conditional 5
+/// § CSSConditionRule): whether its own condition holds now. An enclosing rule's condition does
+/// not count; the answer follows the viewport (an iframe resized), as `matchMedia` does.
+fn condition_matches(r: &RuleData) -> JsResult<bool> {
+    let node = r.node()?;
+    let RuleKind::Group { name, condition, .. } = &node.kind else { return Ok(false) };
+    let condition = condition.borrow();
+    Ok(match name.as_str() {
+        "media" => {
+            let Some(page) = rule_page(r) else { return Ok(false) };
+            let list = pyro_dom::cssom::MediaQueryList::parse(&condition);
+            let matches = page.layout().style().matches_media_list(&list);
+            matches
+        }
+        _ => pyro_dom::stylo::supports_condition(&condition),
+    })
+}
+
+rule_class!(CssMediaRule, "CSSMediaRule", CssConditionRule, |def| {
+    define_rule_media(def);
+    def.getter("matches", |s, r| Ok(s.boolean(condition_matches(r)?)));
+});
+rule_class!(CssSupportsRule, "CSSSupportsRule", CssConditionRule, |def| {
+    def.getter("matches", |s, r| Ok(s.boolean(condition_matches(r)?)));
+});
 /// The conditions of an `@container` rule (style engine serialization).
 fn container_conditions(r: &RuleData) -> Vec<(String, String)> {
     let Ok(node) = r.node() else { return Vec::new() };

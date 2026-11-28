@@ -322,7 +322,14 @@ impl AtRuleType {
     ///
     /// https://drafts.csswg.org/css-conditional-5/#support-definition-at-rules
     pub fn is_supported(name: &str, context: &ParserContext) -> bool {
+        // pyro: the at-rules that only parse nested in another (the @font-feature-values blocks),
+        // and `@page`, are at-rules the engine supports whatever its parser build does with them:
+        // `at-rule(@swash)` is true (WPT css-conditional `js/supports-at-rule`).
+        const NESTED: [&str; 7] =
+            ["stylistic", "historical-forms", "styleset", "character-variant", "swash", "ornaments", "annotation"];
         AtRuleType::from_name(name, context).is_some()
+            || name.eq_ignore_ascii_case("page")
+            || NESTED.iter().any(|n| name.eq_ignore_ascii_case(n))
     }
 }
 

@@ -509,6 +509,39 @@ fn stylo_namespaces(namespaces: &Namespaces) -> style::stylesheets::Namespaces {
     result
 }
 
+/// A `<supports-condition>` with each `at-rule(@name)` serialized as CSSOM does (CSS Conditional 5
+/// § 2.2): the at-keyword alone between the parentheses, its name as an identifier (whitespace
+/// around it gone, escapes normalised). Anything else of the text is kept as it is; an `at-rule(`
+/// whose argument is no at-keyword is left too (it never parses as the condition).
+fn serialize_at_rule_conditions(text: &str) -> String {
+    let lower = text.to_ascii_lowercase();
+    let mut out = String::with_capacity(text.len());
+    let mut rest = 0;
+    while let Some(found) = lower[rest..].find("at-rule(") {
+        let open = rest + found + "at-rule(".len();
+        out.push_str(&text[rest..open]);
+        let mut parser = Parser::new(&text[open..]);
+        let keyword = match parser.next() {
+            Ok(cssparser::Token::AtKeyword(name)) => Some(name.to_string()),
+            _ => None,
+        };
+        let closes = keyword.is_some() && matches!(parser.next(), Ok(cssparser::Token::CloseParenthesis) | Err(_));
+        match (keyword, closes) {
+            (Some(name), true) => {
+                // (The close parenthesis stays: the text after the argument is copied as it is.)
+                let mut serialized = String::from("@");
+                let _ = cssparser::serialize_identifier(&name, &mut serialized);
+                out.push_str(&serialized);
+                let end = open + text[open..].find(')').map_or(text.len() - open, |i| i);
+                rest = end;
+            }
+            _ => rest = open,
+        }
+    }
+    out.push_str(&text[rest..]);
+    out
+}
+
 fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces, relative: ParseRelative) -> Option<ParsedRule> {
     let lower = name.to_ascii_lowercase();
     let start = p.position();
@@ -519,7 +552,7 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces, re
     if matches!(lower.as_str(), "media" | "supports") {
         let mut inner = namespaces.clone();
         let (condition, rules) = parse_prelude_and_block(p, start, |n| parse_list(n, &mut inner, false, relative));
-        let condition = if lower == "media" { serialize_media_list(&condition) } else { collapse(&condition) };
+        let condition = if lower == "media" { serialize_media_list(&condition) } else { serialize_at_rule_conditions(&collapse(&condition)) };
         return Some(ParsedRule::Group { name: lower, condition, rules: rules? });
     }
     let (prelude, block) = parse_prelude_and_block(p, start, raw_block);
