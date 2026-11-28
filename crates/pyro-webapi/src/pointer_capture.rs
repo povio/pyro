@@ -106,6 +106,13 @@ fn capture_connected(page: &PageDom, el: NodeId) -> bool {
 /// its capture target. Without capture (nearly always) this is one read.
 pub(crate) fn capture_target(page: &Rc<PageDom>, m: &MouseInput) -> Option<NodeId> {
     process_pending_capture(page, m);
+    // A `gotpointercapture` listener that removed its own target: the capture is lost before any
+    // other pointer event, `lostpointercapture` at the document (Pointer Events §4.1.3.2 "when the
+    // pointer capture target override is no longer connected"; WPT
+    // pointerevent_lostpointercapture_for_disconnected_node).
+    if page.mouse_capture.get().current.is_some_and(|cur| !capture_connected(page, cur)) {
+        process_pending_capture(page, m);
+    }
     page.mouse_capture.get().current
 }
 

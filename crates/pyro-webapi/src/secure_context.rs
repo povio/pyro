@@ -88,8 +88,9 @@ pub(crate) fn hide_if_insecure(s: &Scope<'_>, page: &PageDom) -> JsResult<()> {
         global.delete(name)?;
     }
     // `caches` is a Window attribute: also off the interface prototype, wherever it is installed. So are the
-    // `[SecureContext]` device event handlers (`ondevicemotion`, ...).
-    for name in ["ondevicemotion", "ondeviceorientation", "ondeviceorientationabsolute"] {
+    // `[SecureContext]` device event handlers (`ondevicemotion`, ...) and `onpointerrawupdate`: the Window's
+    // handlers are on the global object itself (WPT pointerevents/pointerevent_pointerrawupdate.html).
+    for name in ["ondevicemotion", "ondeviceorientation", "ondeviceorientationabsolute", "onpointerrawupdate"] {
         global.delete(name)?;
     }
     if let Some(window) = global.get_atom("Window")?.as_object() {

@@ -12,19 +12,27 @@ use crate::node::{wrap_node, NodeData};
 use crate::page::PageDom;
 use crate::util::*;
 
+/// The page whose document `n` belongs to now: an element created by one document and adopted by
+/// another (a frame's, or the page's) keeps the wrapper of the page it was created in, whose layout
+/// does not hold it, so its geometry reads (`getBoundingClientRect`, `offsetWidth`, ...) are the
+/// current owner's (WPT pointerevents/pointerevent_pointerrawupdate_after_adoption_from_child).
+fn owner_page(n: &NodeData) -> Rc<PageDom> {
+    crate::input::sibling_page_of(n.page(), n.id).unwrap_or_else(|| n.page().clone())
+}
+
 pub(crate) fn bounding_rect<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
-    let page = n.page();
-    crate::animation_events::layout_flush(page, n.id);
-    let r = page.layout().bounding_client_rect(&page.dom.borrow(), n.id);
+    let (page, owner) = (n.page(), &owner_page(n));
+    crate::animation_events::layout_flush(owner, n.id);
+    let r = owner.layout().bounding_client_rect(&owner.dom.borrow(), n.id);
     // HTML-in-Canvas: a drawable element's canvas transform places it (none: as laid out).
-    let r = crate::html_in_canvas::transformed_rect(page, n.id, r);
+    let r = crate::html_in_canvas::transformed_rect(owner, n.id, r);
     crate::canvas::rect_value(s, page, false, r.layout_units())
 }
 
 pub(crate) fn client_rects<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
-    let page = n.page();
-    crate::animation_events::layout_flush(page, n.id);
-    let rects = page.layout().client_rects(&page.dom.borrow(), n.id);
+    let (page, owner) = (n.page(), &owner_page(n));
+    crate::animation_events::layout_flush(owner, n.id);
+    let rects = owner.layout().client_rects(&owner.dom.borrow(), n.id);
     let mut vals = pyro_js::RootedVec::new();
     for r in rects {
         vals.push(s, crate::canvas::rect_value(s, page, false, r.layout_units())?);
@@ -1110,7 +1118,7 @@ pub(crate) fn check_visibility<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> 
         opts.check_opacity = check_opacity || opacity_property;
         opts.check_visibility = check_visibility_css || visibility_property;
     }
-    let page = n.page();
+    let page = &owner_page(n);
     let v = page.layout().check_visibility(&page.dom.borrow(), n.id, opts);
     Ok(s.boolean(v))
 }
@@ -1216,7 +1224,7 @@ pub(crate) fn scroll_set(_s: &Scope<'_>, n: &NodeData, v: Value<'_>, top: bool) 
 }
 
 pub(crate) fn metric<'s>(s: &Scope<'s>, n: &NodeData, which: &str) -> JsResult<Value<'s>> {
-    let page = n.page();
+    let page = &owner_page(n);
     crate::animation_events::layout_flush(page, n.id);
     let dom = page.dom.borrow();
     let l = page.layout();
@@ -1237,16 +1245,16 @@ pub(crate) fn metric<'s>(s: &Scope<'s>, n: &NodeData, which: &str) -> JsResult<V
 
 /// `Element.currentCSSZoom` (CSSOM View): the element's effective `zoom`, 1 where it is not rendered.
 pub(crate) fn current_css_zoom<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
-    let page = n.page();
+    let page = &owner_page(n);
     crate::animation_events::layout_flush(page, n.id);
     let zoom = page.layout().effective_zoom(&page.dom.borrow(), n.id);
     Ok(s.number(zoom))
 }
 
 pub(crate) fn offset_parent<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
-    let page = n.page();
-    let p = page.layout().offset_parent(&page.dom.borrow(), n.id);
-    opt_node(s, page, p)
+    let owner = &owner_page(n);
+    let p = owner.layout().offset_parent(&owner.dom.borrow(), n.id);
+    opt_node(s, n.page(), p)
 }
 
 pub(crate) fn inner_text<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
@@ -1303,6 +1311,20 @@ pub(crate) fn element_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -
     } else {
         hit_test(page, x, y)
     };
+    // CSSOM View "elementFromPoint": a point in the viewport that no box takes (the root and every
+    // box `pointer-events: none`) is the root element's; only a point outside the viewport is null
+    // (WPT pointerevents/pointerevent_root_hit_test).
+    let hit = hit.or_else(|| {
+        let (vw, vh) = {
+            let layout = page.layout();
+            (layout.viewport().width as f64, layout.viewport().height as f64)
+        };
+        if x >= 0.0 && y >= 0.0 && x < vw && y < vh {
+            page.dom.borrow().document_element(page.document()).ok().flatten()
+        } else {
+            None
+        }
+    });
     let hit = hit.and_then(|h| page.dom.borrow().retarget_node(h, n.id));
     opt_node(s, page, hit)
 }
