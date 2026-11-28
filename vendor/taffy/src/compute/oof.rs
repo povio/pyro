@@ -372,17 +372,19 @@ pub fn compute_oof_layout(tree: &mut impl LayoutContainingBlock, node_id: NodeId
     let style = tree.get_core_container_style(node_id);
     let direction = style.direction();
     let claims = style.is_containing_block();
-    // pyro: a scroll container's scrollable overflow size (its in-flow overflow plus the end padding),
-    // the extent of the scrollable containing block of an anchor-positioned box (css-position-4).
+    // pyro: a scroll container's scrollable overflow size, the extent of the scrollable containing
+    // block of an anchor-positioned box (css-position-4). The in-flow overflow rect already ends at the
+    // container's end padding (`compute_scrollable_overflow_contribution` adds it for a scroll
+    // container parent), so it is not added again: a 100px padding box over 180px of content with 10px
+    // of padding is 200px wide, not 210px.
     #[cfg(feature = "content_size")]
     let scrollable = {
         let overflow = style.overflow();
-        let padding = style.padding().resolve_or_zero(Some(area.size.width), |val, basis| tree.calc(val, basis));
         let reversed = output.scrollable_overflow_rect.is_reversed();
         let rect = output.scrollable_overflow_rect.rect();
         (overflow.x.is_scroll_container() || overflow.y.is_scroll_container()).then(|| Size {
-            width: if reversed.x { area.size.width } else { f32_max(area.size.width, rect.right + padding.right) },
-            height: if reversed.y { area.size.height } else { f32_max(area.size.height, rect.bottom + padding.bottom) },
+            width: if reversed.x { area.size.width } else { f32_max(area.size.width, rect.right) },
+            height: if reversed.y { area.size.height } else { f32_max(area.size.height, rect.bottom) },
         })
     };
     #[cfg(not(feature = "content_size"))]
