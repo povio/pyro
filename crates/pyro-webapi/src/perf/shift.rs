@@ -219,7 +219,13 @@ impl Walk<'_> {
         if !self.layout.is_root_container(self.dom, el) {
             let axes = self.layout.style().overflow_clip_axes(self.dom, el);
             if let (true, Some(current)) = (axes.x || axes.y, clip) {
-                let mut b = self.layout.bounding_client_rect(self.dom, el);
+                // (What is laid out: asking a box inside skipped `content-visibility: auto` contents
+                // renders them; nothing in it paints.)
+                let mut b = self.layout.laid_out_client_rect(self.dom, el);
+                if !(b.width > 0.0 || b.height > 0.0) {
+                    self.clips.insert(el, None);
+                    return None;
+                }
                 let (width, height) = (self.layout.client_width(self.dom, el), self.layout.client_height(self.dom, el));
                 if width > 0.0 && height > 0.0 {
                     b = Rect { x: b.x + self.layout.client_left(self.dom, el), y: b.y + self.layout.client_top(self.dom, el), width, height };
@@ -291,7 +297,7 @@ fn collect(page: &Rc<PageDom>) -> (FxHashMap<NodeId, Item>, (f64, f64)) {
                 if !replaced && !paints_own_box(&layout, &dom, id) {
                     continue;
                 }
-                (id, layout.bounding_client_rect(&dom, id))
+                (id, layout.laid_out_client_rect(&dom, id))
             }
             Ok(NodeType::Text) => {
                 if !dom.char_data(id).is_ok_and(|d| !d.trim().is_empty()) {

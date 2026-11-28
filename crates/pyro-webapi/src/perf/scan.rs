@@ -592,7 +592,12 @@ fn visible_rect_from(dom: &Dom, layout: &pyro_dom::layout::Layout, start: Option
         if !layout.is_root_container(dom, node) {
             let axes = layout.style().overflow_clip_axes(dom, node);
             if axes.x || axes.y {
-                let mut b = layout.bounding_client_rect(dom, node);
+                // (What is laid out: a clip container inside contents `content-visibility: auto` skips has
+                // no box, and asking its rect would render them; nothing in it paints.)
+                let mut b = layout.laid_out_client_rect(dom, node);
+                if !(b.width > 0.0 || b.height > 0.0) {
+                    return None;
+                }
                 // The clip is at the padding box: inside the borders (not under a transform, where the
                 // client sizes are not the painted ones; there the border box stays).
                 if !layout.style().computed(dom, node).is_some_and(|s| s.transformed) {
