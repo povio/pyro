@@ -415,10 +415,14 @@ impl StyleData {
     }
 
     /// Whether the property attribute `name` exists on this declaration object: a `@page` block keeps every
-    /// declaration (as Chrome's CSSOM does) but `CSSPageDescriptors` only has the descriptors of its IDL
-    /// (css-page-3: `margin*`, `size`, `page-orientation`), so `style.cssFloat` is `undefined` there.
+    /// declaration (as Chrome's CSSOM does) and exposes the properties of the page box (css-page-3: the
+    /// `size`, `page-orientation`, `marks` and `bleed` descriptors and the margin, padding, border, outline
+    /// and background properties, `pagerule.style.paddingLeft` in css/css-page/parsing/margin-rules-002),
+    /// not the rest (`style.cssFloat` is `undefined` there, css/cssom/page-descriptors).
     fn exposes(&self, name: &str) -> bool {
-        !self.is_page_rule() || matches!(name, "margin" | "margin-top" | "margin-right" | "margin-bottom" | "margin-left" | "size" | "page-orientation")
+        !self.is_page_rule()
+            || matches!(name, "size" | "page-orientation" | "marks" | "bleed")
+            || ["margin", "padding", "border", "outline", "background"].iter().any(|group| name.strip_prefix(group).is_some_and(|rest| rest.is_empty() || rest.starts_with('-')))
     }
 
     fn allows(&self, name: &str) -> bool {
