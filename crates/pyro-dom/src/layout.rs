@@ -811,6 +811,22 @@ impl Layout {
         self.external.as_ref().is_some_and(|s| s.fonts_pending())
     }
 
+    /// pyro: how many times the geometry engine laid the document out. Layout also changes when a
+    /// sub-resource it loads itself arrives (an SVG image's size comes from its own bytes), which
+    /// moves boxes without moving `observation_stamp`, and any query may be the one that lays out:
+    /// an observer of geometry compares this count with the one it saw.
+    pub fn sync_count(&self) -> u64 {
+        self.syncs.get()
+    }
+
+    /// pyro: whether the geometry engine's layout is out of date with what reached it (a
+    /// sub-resource it loads itself arrived, such as an SVG image whose size comes from its own
+    /// bytes) although neither the document nor its style changed: the next geometry query lays
+    /// out again and may move boxes, which `observation_stamp` does not say.
+    pub fn geometry_stale(&self) -> bool {
+        self.external.as_ref().is_some_and(|s| s.active() && s.layout_stale())
+    }
+
     /// pyro: whether the CSS images the last completed layout asked for are still loading
     /// (`GeometrySource::images_pending`), never running layout.
     pub fn images_pending_as_laid_out(&self) -> bool {

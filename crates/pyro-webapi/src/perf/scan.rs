@@ -161,6 +161,9 @@ type Stamp = ((u64, u64, u32, u32), u64);
 pub(crate) struct ScanState {
     last: Option<Rc<FrameScan>>,
     stamp: Option<Stamp>,
+    /// `Layout::sync_count` after the last walk: layout laid out again since (a load of its own
+    /// finished: an SVG image's size) although the stamp did not move.
+    synced: u64,
     /// The canvases the last walk saw with nothing drawn on them: rescan once one has.
     undrawn: Vec<NodeId>,
     /// The last walk skipped a poster or background image whose load Resource Timing
@@ -246,7 +249,17 @@ pub fn stale(page: &PageDom) -> bool {
         return true;
     }
     let (Ok(layout), Ok(dom)) = (page.layout.try_borrow(), page.dom.try_borrow()) else { return true };
+    // Layout's own loads (an SVG `<img>`'s size) arrive without moving the stamp.
+    if layout.geometry_stale() || layout.sync_count() != state.synced {
+        return true;
+    }
     state.stamp != Some(layout.observation_stamp(&dom))
+}
+
+/// Whether layout laid out again, or is out of date with what reached it, since the last walk.
+fn layout_moved(page: &PageDom, state: &ScanState) -> bool {
+    let layout = page.layout();
+    layout.geometry_stale() || layout.sync_count() != state.synced
 }
 
 /// The painted candidates of `page`'s document in `frame`. See the module docs.
@@ -255,12 +268,14 @@ pub fn painted_candidates(page: &Rc<PageDom>, frame: &FrameInfo) -> Rc<FrameScan
     let (stamp, force) = {
         let state = page.timeline().scan.borrow();
         if let Some(last) = &state.last {
-            if last.presented == frame.presented {
+            // (Unless something reached the document since that walk: two rendering updates may
+            // share a `presented`, and the second must see what arrived between them.)
+            if last.presented == frame.presented && !state.dirty && !layout_moved(page, &state) {
                 return last.clone();
             }
         }
         let waiting = state.waiting && state.wait_walks < MAX_WAIT_WALKS;
-        (state.stamp, state.dirty || waiting || state.undrawn.iter().any(|&canvas| canvas_drawn(page, canvas)))
+        (state.stamp, state.dirty || waiting || layout_moved(page, &state) || state.undrawn.iter().any(|&canvas| canvas_drawn(page, canvas)))
     };
     let now_stamp = page.layout().observation_stamp(&page.dom.borrow());
     if !force && stamp == Some(now_stamp) {
@@ -274,6 +289,7 @@ pub fn painted_candidates(page: &Rc<PageDom>, frame: &FrameInfo) -> Rc<FrameScan
     let changed = stamp != Some(now_stamp) || state.dirty;
     state.wait_walks = if state.waiting && !changed { state.wait_walks + 1 } else { 0 };
     state.stamp = Some(now_stamp);
+    state.synced = page.layout().sync_count();
     state.dirty = false;
     state.walks += 1;
     state.last = Some(scan.clone());
@@ -362,6 +378,9 @@ fn walk(page: &Rc<PageDom>, frame: &FrameInfo) -> FrameScan {
     // Pass 3: geometry.
     let dom = page.dom.borrow();
     let layout = page.layout();
+    // Lay out now: what arrived for layout since the last walk is then seen by this one, and
+    // `Layout::geometry_stale` is false until something else arrives.
+    layout.synced_geometry_source(&dom);
     let viewport = (f64::from(layout.inner_width()), f64::from(layout.inner_height()));
     let view = Rect { x: 0.0, y: 0.0, width: viewport.0, height: viewport.1 };
     let shown = CheckVisibilityOptions { check_visibility: true, check_opacity: true };
