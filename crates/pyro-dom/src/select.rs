@@ -966,6 +966,8 @@ impl Dom {
                     || (e.is_html()
                         && e.name.local == local_name!("option")
                         && e.attr_local(&local_name!("selected")).is_some())
+                    // A form's default button (HTML: "the form's default button").
+                    || (e.is_html() && matches!(&*e.name.local, "button" | "input") && self.is_default_button_idx(idx))
             }
             Empty => false,
             InRange | OutOfRange => self.range_state_idx(idx).is_some_and(|in_range| in_range == (*pc == InRange)),

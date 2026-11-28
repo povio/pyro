@@ -281,15 +281,7 @@ select[size]:not([size="0"], [size="1"], [size=""]) {
         display: contents;
     }
 
-    option {
-        display: flex;
-        align-items: center;
-        gap: 0.5em;
-        padding-block: 0;
-        padding-inline: 0.5em;
-        min-inline-size: 24px;
-        min-block-size: max(24px, 1lh);
-    }
+    /* (The base appearance of `option` is below the generic `option` rule it must follow.) */
 }
 
 textarea {
@@ -491,6 +483,31 @@ option {
     min-block-size: 1.2em;
     /* Chromium: not the bolder weight of an enclosing optgroup. */
     font-weight: normal;
+}
+
+/* pyro: the base appearance of an option (html.css, `appearance: base-select`). It follows the
+   generic `option` rule above on purpose: both have the same specificity, so the later one wins
+   (that rule's `display: block` and `min-block-size: 1.2em` used to override these). The hover
+   and disabled colors are Chromium's (WPT html/semantics/forms/the-select-element
+   customizable-select/select-option-hover-styles). */
+@appearance-base {
+    option {
+        display: flex;
+        align-items: center;
+        gap: 0.5em;
+        padding-block: 0;
+        padding-inline: 0.5em;
+        min-inline-size: 24px;
+        min-block-size: max(24px, 1lh);
+    }
+
+    option:hover:not(:disabled) {
+        background-color: color-mix(in oklab, currentcolor 10%, transparent);
+    }
+
+    option:disabled {
+        color: color-mix(in oklab, currentcolor 50%, transparent);
+    }
 }
 
 optgroup {

@@ -791,6 +791,35 @@ impl Dom {
         self.check(id).is_ok_and(|i| self.button_type_is_submit_idx(i))
     }
 
+    /// HTML `:default` for a submit button: `idx` is its form's default button, the first submit
+    /// button in tree order whose form owner is that form (a `<button>` that is a select's button
+    /// does not count, as it only opens the picker). Stops at the first submit button owned by
+    /// the form; non-buttons cost one local-name check.
+    pub(crate) fn is_default_button_idx(&self, idx: u32) -> bool {
+        let submit = |i: u32| match self.html_local(i).map(|l| &**l) {
+            Some("button") => self.button_type_is_submit_idx(i) && !self.is_select_button_idx(i),
+            Some("input") => matches!(self.input_type_idx(i), InputType::Submit | InputType::Image),
+            _ => false,
+        };
+        if !submit(idx) {
+            return false;
+        }
+        let form = self.form_owner_idx(idx);
+        if form == NIL {
+            return false;
+        }
+        let root = self.reference_scope_idx(form);
+        let cross_scope = root != self.root_idx(form);
+        let mut node = root;
+        while node != NIL {
+            if submit(node) && self.form_owner_idx(node) == form {
+                return node == idx;
+            }
+            node = if cross_scope { self.next_shadow_including(node, root) } else { self.following_in(node, root) };
+        }
+        false
+    }
+
     pub(crate) fn is_form_control_idx(&self, idx: u32) -> bool {
         matches!(
             self.html_local(idx).map(|l| &**l),

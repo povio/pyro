@@ -188,3 +188,25 @@ fn class_matching_tracks_mutations_and_documents() {
     let dom = r.borrow();
     assert!(m(&dom, s, ".x") && !m(&dom, a, ".q"));
 }
+
+#[test]
+fn default_matches_the_forms_default_button() {
+    // WPT html/semantics/selectors/pseudo-classes/default.html and
+    // customizable-select/select-button-behaviors: the first submit button of a form is its
+    // default button; a select's own button never is.
+    let (dom, d) = doc(
+        r#"<form><button id=b1 type=button></button><button id=b2 type=submit></button><button id=b3></button></form>
+        <form><button id=b4 type=reset></button><button id=b5></button></form>
+        <button id=b6 type=submit></button>
+        <form><input id=i1 type=submit><input id=i2 type=submit></form>
+        <form><input id=i3 type=image><input id=i4 type=image></form>
+        <form><select><button id=sb>x</button><option>o</option></select><button id=b7>y</button></form>
+        <form><button id=b8 type=invalid></button><button id=b9></button></form>"#,
+    );
+    let q = |dom: &Dom, s: &str| ids(dom, &dom.query_selector_all(d, &parse_selectors(s).unwrap()).unwrap());
+    assert_eq!(q(&dom.borrow(), ":default"), ["b2", "b5", "i1", "i3", "b7", "b8"]);
+    // The type of the first button changes the form's default button.
+    let b1 = dom.borrow().get_element_by_id(d, "b1").unwrap().unwrap();
+    dom.borrow_mut().set_attribute(b1, "type", "submit").unwrap();
+    assert_eq!(q(&dom.borrow(), ":default"), ["b1", "b5", "i1", "i3", "b7", "b8"]);
+}
