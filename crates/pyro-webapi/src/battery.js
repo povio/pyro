@@ -35,12 +35,14 @@
   }
   // Event handler attributes: the first non-null assignment registers the one listener for the type.
   for (const type of ['chargingchange', 'chargingtimechange', 'dischargingtimechange', 'levelchange']) {
-    defineProperty(BatteryManager.prototype, 'on' + type, {
-      get() {
-        return slotOf(this, 'on' + type).handlers[type] ?? null;
+    const name = 'on' + type;
+    // Accessor functions named `get on<type>` / `set on<type>`, as WebIDL gives them.
+    defineProperty(BatteryManager.prototype, name, O.getOwnPropertyDescriptor({
+      get [name]() {
+        return slotOf(this, name).handlers[type] ?? null;
       },
-      set(v) {
-        const st = slotOf(this, 'on' + type);
+      set [name](v) {
+        const st = slotOf(this, name);
         st.handlers[type] = typeof v === 'function' || (v !== null && typeof v === 'object') ? v : null;
         if (st.handlers[type] !== null && !st.installed[type]) {
           st.installed[type] = true;
@@ -50,9 +52,7 @@
           });
         }
       },
-      enumerable: true,
-      configurable: true,
-    });
+    }, name));
   }
   defineProperty(BatteryManager.prototype, Symbol.toStringTag, { value: 'BatteryManager', configurable: true });
   defineProperty(BatteryManager, 'length', { value: 0, configurable: true });

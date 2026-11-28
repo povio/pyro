@@ -89,11 +89,12 @@
     defineProperty(WakeLockSentinel.prototype, name, d);
   }
   // onrelease: the first non-null assignment registers the one listener, as an event handler attribute does.
-  defineProperty(WakeLockSentinel.prototype, 'onrelease', {
-    get() {
+  // (Accessor functions named `get onrelease` / `set onrelease`, as WebIDL gives them.)
+  defineProperty(WakeLockSentinel.prototype, 'onrelease', O.getOwnPropertyDescriptor({
+    get onrelease() {
       return slotOf(states, this, 'onrelease').handler;
     },
-    set(v) {
+    set onrelease(v) {
       const st = slotOf(states, this, 'onrelease');
       st.handler = typeof v === 'function' || (v !== null && typeof v === 'object') ? v : null;
       if (st.handler !== null && !st.installed) {
@@ -104,9 +105,7 @@
         });
       }
     },
-    enumerable: true,
-    configurable: true,
-  });
+  }, 'onrelease'));
   enumerable(WakeLockSentinel, 'release');
   tag(WakeLockSentinel, 'WakeLockSentinel');
 
