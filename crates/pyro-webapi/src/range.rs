@@ -903,11 +903,55 @@ pub(crate) fn range_value<'s>(s: &Scope<'s>, page: &Rc<PageDom>, start: Point, e
     Ok(s.wrap::<Range>(RangeData::from_owner(RangeOwner::new(page, start, end)?), None)?.value())
 }
 
-/// The markup of a copy of [start, end)'s contents (copying a selection).
+/// The markup of a copy of [start, end)'s contents (copying a selection). The copy leaves
+/// `opacity` out of the inline styles, as Chrome's does (w3c/clipboard-apis#246; WPT clipboard-apis
+/// clipboard-copy-selection-style-opacity): pasted elsewhere, content that faded in its source
+/// would stay faded.
 pub(crate) fn html_between(page: &PageDom, start: Point, end: Point) -> Option<String> {
     let mut dom = page.dom.borrow_mut();
     let frag = contents(&mut dom, start, end, false).ok()?;
+    let restyled: Vec<(NodeId, String)> = dom
+        .descendants(frag)
+        .ok()?
+        .filter(|&n| dom.node_type(n).ok() == Some(NodeType::Element))
+        .filter_map(|n| Some((n, without_opacity(dom.get_attribute(n, "style").ok()??)?)))
+        .collect();
+    for (n, style) in restyled {
+        let _ = if style.is_empty() { dom.remove_attribute(n, "style").map(|_| ()) } else { dom.set_attribute(n, "style", &style) };
+    }
     dom.inner_html(frag).ok()
+}
+
+/// The declarations of a `style` attribute without the `opacity` ones; `None` when it has none.
+/// Declarations split at the `;`s outside strings and parentheses.
+fn without_opacity(style: &str) -> Option<String> {
+    let (mut parts, mut start, mut depth) = (Vec::new(), 0, 0usize);
+    let (mut quote, mut escaped) = (None::<char>, false);
+    for (i, c) in style.char_indices() {
+        if let Some(q) = quote {
+            quote = (escaped || c != q).then_some(q);
+            escaped = c == '\\' && !escaped;
+            continue;
+        }
+        match c {
+            '"' | '\'' => quote = Some(c),
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            ';' if depth == 0 => {
+                parts.push(&style[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&style[start..]);
+    let is_opacity = |part: &str| part.split(':').next().is_some_and(|name| name.trim().eq_ignore_ascii_case("opacity"));
+    if !parts.iter().any(|part| is_opacity(part)) {
+        return None;
+    }
+    let kept: Vec<&str> =
+        parts.iter().copied().filter(|part| !is_opacity(part)).map(str::trim).filter(|part| !part.is_empty()).collect();
+    Some(if kept.is_empty() { String::new() } else { format!("{};", kept.join("; ")) })
 }
 
 // ----- Selection ------------------------------------------------------------------

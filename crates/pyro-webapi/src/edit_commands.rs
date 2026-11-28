@@ -363,8 +363,12 @@ impl Flat {
                         continue;
                     }
                     let preserved = data.contains('\n') && newlines_significant_in(page, dom, child);
+                    // CSS Text 3: a carriage return in preserved white space is a character that
+                    // stays (copying gives it back: WPT clipboard-apis
+                    // clipboard-copy-selection-line-break); elsewhere it collapses as a space.
+                    let keeps_cr = data.contains('\r') && carriage_returns_significant_in(page, dom, child);
                     let line_start = self.units.last().is_none_or(|&u| u == PARA || u == LINE);
-                    if !preserved && line_start && data.chars().all(char::is_whitespace) {
+                    if !preserved && !keeps_cr && line_start && data.chars().all(char::is_whitespace) {
                         continue;
                     }
                     let start = self.units.len() as u32;
@@ -372,10 +376,10 @@ impl Flat {
                         PARA if preserved => LINE,
                         PARA => 0x20,
                         // A carriage return is collapsible white space too.
-                        0x0D if !preserved => 0x20,
+                        0x0D if !preserved && !keeps_cr => 0x20,
                         u => u,
                     }));
-                    if !preserved {
+                    if !preserved && !keeps_cr {
                         self.collapsible.push((start, self.units.len() as u32));
                     }
                     self.texts.push((child, start, self.units.len() as u32 - start));
@@ -498,6 +502,19 @@ pub(crate) fn newlines_significant_in(page: &PageDom, dom: &Dom, node: NodeId) -
     }
     let ws = layout.computed_style_value(dom, el, "white-space");
     ws.starts_with("pre") || ws == "break-spaces"
+}
+
+/// Whether carriage returns in `node`'s text stay characters: white space is preserved
+/// (`white-space` pre, pre-wrap, break-spaces), not just its segment breaks (pre-line).
+fn carriage_returns_significant_in(page: &PageDom, dom: &Dom, node: NodeId) -> bool {
+    let el = if editing::is_text(dom, node) { dom.parent_element(node).ok().flatten() } else { Some(node) };
+    let Some(el) = el else { return false };
+    let layout = page.layout();
+    let collapse = layout.computed_style_value(dom, el, "white-space-collapse");
+    if !collapse.is_empty() {
+        return matches!(collapse.as_str(), "preserve" | "break-spaces");
+    }
+    matches!(layout.computed_style_value(dom, el, "white-space").as_str(), "pre" | "pre-wrap" | "break-spaces")
 }
 
 pub(crate) fn newlines_significant(page: &PageDom, node: NodeId) -> bool {
