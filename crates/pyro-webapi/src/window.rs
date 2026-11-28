@@ -637,7 +637,26 @@ impl JsClass for Navigator {
         for name in ["registerProtocolHandler", "unregisterProtocolHandler"] {
             def.method(name, 2, protocol_handler);
         }
-        def.method("vibrate", 0, |s, _p, _a| Ok(s.boolean(false)));
+        // Vibration API: `boolean vibrate(VibratePattern pattern)`, (unsigned long or sequence<unsigned long>), required.
+        // A desktop has no vibration motor, so the pattern is validated and then silently ignored ("perform
+        // vibration" with no hardware). Chrome answers true only once the frame has had a user activation (sticky;
+        // false before any gesture, measured on Chrome 158), which is what vibration/silent-ignore.html expects
+        // after its click.
+        def.method("vibrate", 1, |s, p, a| {
+            if a.len() == 0 {
+                return Err(JsError::Type("Failed to execute 'vibrate' on 'Navigator': 1 argument required, but only 0 present.".into()));
+            }
+            let pattern = a.get(0);
+            if pattern.is_array() {
+                let items = s.sequence(pattern, "vibrate")?;
+                for i in 0..items.get_atom("length")?.to_number()? as u32 {
+                    items.get_index(i)?.to_number()?;
+                }
+            } else {
+                pattern.to_number()?;
+            }
+            Ok(s.boolean(p.has_sticky_activation()))
+        });
         def.method("requestMediaKeySystemAccess", 2, |s, p, a| crate::eme::request_access(s, p, a.len(), a.get(0), a.get(1)));
     }
 }
@@ -844,8 +863,20 @@ impl JsClass for ScreenOrientation {
         def.upcast(|d: &ViewportTargetData| &d.target);
         def.getter("type", |s, d| Ok(s.string(&screen_orientation(d.page()).0)));
         def.getter("angle", |s, d| Ok(s.number(screen_orientation(d.page()).1)));
-        // Headless Chromium resolves lock() without rotating.
-        def.method("lock", 1, |s, _d, _a| {
+        // Headless Chromium resolves lock() without rotating. `lock(OrientationLockType orientation)` is a
+        // promise operation (a bad receiver or argument rejects with a TypeError instead of throwing): the
+        // argument is required and must be one of the enum's values.
+        def.promise_method("lock", 1, |s, _d, a| {
+            if a.len() == 0 {
+                return Err(JsError::Type("Failed to execute 'lock' on 'ScreenOrientation': 1 argument required, but only 0 present.".into()));
+            }
+            let orientation = dom_string(a.get(0))?;
+            if !matches!(
+                orientation.as_str(),
+                "any" | "natural" | "landscape" | "portrait" | "portrait-primary" | "portrait-secondary" | "landscape-primary" | "landscape-secondary"
+            ) {
+                return Err(JsError::Type(format!("Failed to execute 'lock' on 'ScreenOrientation': The provided value '{orientation}' is not a valid enum value of type OrientationLockType.").into()));
+            }
             let deferred = s.deferred()?;
             deferred.resolve(s, s.undefined())?;
             Ok(deferred.promise.get(s))
