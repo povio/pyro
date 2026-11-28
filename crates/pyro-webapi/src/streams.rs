@@ -146,6 +146,11 @@ pub(crate) fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'
     };
     natives.set_atom("origin", origin)?;
     natives.set_atom("fetchSettled", crate::fetch::settled_fetch_function(s)?)?;
+    // The realm's own structuredClone (never the page-reassignable global): what an owning stream queues.
+    let clone = s.function("streamsStructuredClone", |s, _this, args| {
+        crate::structured_clone::clone_value(s, args.get(0), args.get(1))
+    })?;
+    natives.set_atom("structuredClone", clone.value())?;
     let natives = pyro_js::Persistent::new(s, natives.value());
     let factory = s.eval(include_str!("streams.js"), Some("pyro://internal/streams.js"), 1)?;
     let module = factory.as_object().ok_or_else(unavailable)?.call(None, &[natives.get(s)])?;

@@ -830,6 +830,9 @@
 
   function rsTee(st, cloneForBranch2) {
     if (st.controller.byte) return rsByteTee(st);
+    // An owning stream's second branch gets a copy without any transfer, so a value that can only be
+    // transferred (a MessagePort) errors it with DataCloneError.
+    if (st.owning && !cloneForBranch2) cloneForBranch2 = (value) => ownCloneFn(value, undefined);
     const rd = newReader(st);
     let reading = false;
     let readAgain = false;
@@ -896,6 +899,7 @@
     const b2 = makeStream(false, noop, pull, cancel(false), 1, () => 1);
     c1 = b1.controller;
     c2 = b2.controller;
+    b1.owning = b2.owning = st.owning;
     then(rd.closed.promise, undefined, (e) => {
       rcError(c1, e);
       rcError(c2, e);
@@ -1019,7 +1023,7 @@
       const start = callback(d, 'start', 'ReadableStream');
       const typeRaw = d.type;
       const type = typeRaw === undefined ? undefined : `${typeRaw}`;
-      if (type !== undefined && type !== 'bytes') {
+      if (type !== undefined && type !== 'bytes' && type !== 'owning') {
         throw new TypeErrorC(`Failed to construct 'ReadableStream': The provided value '${type}' is not a valid enum value of type ReadableStreamType.`);
       }
       const byte = type === 'bytes';
@@ -1028,6 +1032,9 @@
       const hwm = highWaterMark(strat, byte ? 0 : 1);
       const st = rsNew();
       st.wrapper = this;
+      // Owning streams (whatwg/streams#1186): a default stream whose controller structured-clones what is
+      // enqueued, so the source hands over (transfers) its objects. Set before start() can enqueue.
+      st.owning = type === 'owning';
       ReadableStream$s.set(this, st);
       const startAlg = (w) => (start ? apply(start, d, [w]) : undefined);
       rcSetup(
@@ -1200,6 +1207,26 @@
     [Symbol.toStringTag]: { value: 'ReadableStream AsyncIterator', configurable: true },
   });
 
+  // The realm's own structuredClone (streams.rs), which owning streams clone with.
+  const ownCloneFn = (value, options) => {
+    if (typeof natives.structuredClone !== 'function') throw new TypeErrorC('Owning streams need structured clone');
+    return natives.structuredClone(value, options);
+  };
+  // Web IDL for `ReadableStreamDefaultControllerEnqueueOptions { sequence<object> transfer = []; }`.
+  const enqueueTransferList = (options) => {
+    const d = dictionary(options, 'enqueue');
+    const transfer = d.transfer;
+    const list = [];
+    if (transfer === undefined) return list;
+    if (!isObject(transfer) || typeof transfer[iterator] !== 'function') {
+      throw new TypeErrorC("Failed to execute 'enqueue' on 'ReadableStreamDefaultController': The provided value cannot be converted to a sequence.");
+    }
+    for (const entry of transfer) {
+      if (!isObject(entry)) throw new TypeErrorC("Failed to execute 'enqueue' on 'ReadableStreamDefaultController': The provided value is not of type 'object'.");
+      list[list.length] = entry;
+    }
+    return list;
+  };
   const ReadableStreamDefaultController$c = slot('ReadableStreamDefaultController.c');
   class ReadableStreamDefaultController {
     constructor(t, c) {
@@ -1213,9 +1240,26 @@
       if (!rcCanClose(ReadableStreamDefaultController$c.get(this))) throw new TypeErrorC('Cannot close a readable stream that is closed, errored or already closing');
       rcClose(ReadableStreamDefaultController$c.get(this));
     }
-    enqueue(chunk = undefined) {
-      if (!rcCanClose(ReadableStreamDefaultController$c.get(this))) throw new TypeErrorC('Cannot enqueue a chunk into a readable stream that is closed, errored or closing');
-      rcEnqueue(ReadableStreamDefaultController$c.get(this), chunk);
+    enqueue(chunk = undefined, options = undefined) {
+      const c = ReadableStreamDefaultController$c.get(this);
+      // The options dictionary is converted first (its `transfer` getter runs once, whatever the stream).
+      const transferList = enqueueTransferList(options);
+      if (!rcCanClose(c)) throw new TypeErrorC('Cannot enqueue a chunk into a readable stream that is closed, errored or closing');
+      if (!c.stream.owning) {
+        if (transferList.length > 0) throw new TypeErrorC("Failed to execute 'enqueue' on 'ReadableStreamDefaultController': transfer list is not empty");
+        rcEnqueue(c, chunk);
+        return;
+      }
+      // An owning stream queues StructuredSerializeWithTransfer's copy: a transferred buffer is detached here. A
+      // chunk that cannot be cloned errors the stream and throws its DataCloneError.
+      let copy;
+      try {
+        copy = ownCloneFn(chunk, { transfer: transferList });
+      } catch (e) {
+        rcError(c, e);
+        throw e;
+      }
+      rcEnqueue(c, copy);
     }
     error(e = undefined) {
       rcError(ReadableStreamDefaultController$c.get(this), e);
