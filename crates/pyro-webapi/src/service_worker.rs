@@ -289,6 +289,20 @@ impl crate::navigator_extras::ContextServices {
         self.service_workers.close(true);
     }
 
+    /// Bounce Tracking Mitigations: unregisters the registrations of the origins at `site`, as
+    /// `ServiceWorkerRegistration.unregister()` does. Returns how many there were.
+    pub fn unregister_site_service_workers(&self, site: &str) -> usize {
+        let doomed: Vec<Rc<Registration>> = self
+            .service_workers
+            .registrations
+            .borrow()
+            .iter()
+            .filter(|r| crate::bounce_tracking::site_of_url(&r.origin).as_deref() == Some(site))
+            .cloned()
+            .collect();
+        doomed.iter().filter(|r| unregister(r)).count()
+    }
+
     /// Playwright's `serviceWorkers: 'block'` for this context
     /// (`Target.createBrowserContext` `serviceWorkers`): while set,
     /// `navigator.serviceWorker.register()` (the prototype's method too)

@@ -1847,6 +1847,8 @@ impl PageDom {
         let now = Some(std::time::Instant::now());
         self.sticky_activation.set(true);
         self.input_activation.set(now);
+        // Bounce Tracking Mitigations: the top-level site now has the user's interaction.
+        crate::bounce_tracking::input_activated(self);
         // History-action activation of the close watcher manager (`close_watcher.rs`).
         self.popover.watchers.activate();
         for peer in self.hooks().map(|h| h.activation_peers()).unwrap_or_default() {

@@ -20,6 +20,7 @@ pub mod abort;
 mod animation_events;
 mod animation_frame;
 mod animations;
+pub mod bounce_tracking;
 mod cache_storage;
 pub mod coep_report;
 mod cookie_store;

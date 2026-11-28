@@ -257,6 +257,23 @@ impl Namespace {
         }
     }
 
+    /// Bounce Tracking Mitigations: empties the file systems of the origins at `site` (a handle script
+    /// still holds then finds nothing). Returns whether any file system existed.
+    pub(crate) fn clear_site(&self, site: &str) -> bool {
+        let doomed: Vec<_> = {
+            let mut origins = lock(&self.origins);
+            let keys: Vec<String> = origins.keys().filter(|o| crate::bounce_tracking::site_of_url(o).as_deref() == Some(site)).cloned().collect();
+            keys.into_iter().filter_map(|key| origins.remove(&key)).collect()
+        };
+        for tree in &doomed {
+            let mut tree = lock(tree);
+            tree.entries.clear();
+            tree.reserved.clear();
+            tree.used = 0;
+        }
+        !doomed.is_empty()
+    }
+
     pub(crate) fn root(&self, origin: &str) -> Handle {
         let tree = lock(&self.origins)
             .entry(origin.to_owned())

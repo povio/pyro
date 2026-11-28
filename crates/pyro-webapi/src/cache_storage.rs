@@ -48,6 +48,24 @@ impl Namespace {
         caches.iter().map(|(_, cache)| lock(&cache.entries).iter().map(entry_size).sum::<u64>()).sum()
     }
 
+    /// Bounce Tracking Mitigations: removes the caches of the origins at `site`, and the entries of
+    /// the ones a `Cache` object still holds. Returns whether any existed.
+    pub(crate) fn clear_site(&self, site: &str) -> bool {
+        let mut directory = lock(&self.directory);
+        let mut cleared = false;
+        directory.origins.retain(|origin, caches| {
+            if crate::bounce_tracking::site_of_url(origin).as_deref() != Some(site) {
+                return true;
+            }
+            for (_, cache) in caches.iter() {
+                *lock(&cache.entries) = Vec::new();
+            }
+            cleared |= !caches.is_empty();
+            false
+        });
+        cleared
+    }
+
     /// Revoke every cache of this generation, including caches that were
     /// removed by name but still have a live Cache object.
     pub(crate) fn retire(&self) {

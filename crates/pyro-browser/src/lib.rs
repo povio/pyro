@@ -7,6 +7,7 @@
 //! `pyro-webapi` supplies bindings in the main and isolated document worlds.
 
 mod bindings;
+mod bounce;
 pub mod clock;
 mod coop_report;
 mod csp_embedded;
@@ -2830,6 +2831,8 @@ impl Browser {
     fn dispose_page(&mut self, page: PageId) -> bool {
         let Some(pos) = self.page_index(page) else { return false };
         self.cancel_pending_document(page.into());
+        // Bounce Tracking Mitigations: a closing tab ends its extended navigation.
+        self.bounce_page_closed(page);
         let host = self.pages[pos].frames.clone();
         host.invalidate_focus(page.into(), false);
         host.retire_children(page.into());

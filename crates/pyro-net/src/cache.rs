@@ -275,6 +275,19 @@ impl HttpCache {
         });
     }
 
+    /// Removes the responses of every URL whose host is at `site` (a registrable domain as
+    /// [`crate::cookies::site_of`] names it): Bounce Tracking Mitigations' "clear cache entries".
+    pub fn clear_site(&mut self, site: &str) {
+        let bytes = &mut self.bytes;
+        self.entries.retain(|key, variants| {
+            let at_site = Url::parse(key).ok().and_then(|k| k.host_str().map(|h| crate::cookies::site_of(&h.to_ascii_lowercase()).eq_ignore_ascii_case(site))).unwrap_or(false);
+            if at_site {
+                *bytes -= variants.iter().map(|e| e.size).sum::<usize>();
+            }
+            !at_site
+        });
+    }
+
     /// `credentialed`: the request carries credentials ([`Entry::credentialed`]).
     pub fn lookup(&mut self, url: &Url, request: &HeaderMap, credentialed: bool, mode: CacheMode, now: f64) -> Lookup {
         if matches!(mode, CacheMode::NoStore | CacheMode::Reload) || !self.enabled() {

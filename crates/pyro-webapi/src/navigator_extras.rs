@@ -239,6 +239,9 @@ pub struct ContextServices {
     pub(crate) webauthn: RefCell<crate::webauthn::State>,
     /// The virtual sensors (`crate::sensors`).
     pub(crate) sensors: RefCell<crate::sensors::SensorHub>,
+    /// Bounce Tracking Mitigations: the sites its top-level navigations bounced through and the ones
+    /// the user activated (`crate::bounce_tracking`).
+    pub(crate) bounce: RefCell<crate::bounce_tracking::BounceTracker>,
 }
 
 /// A position `navigator.geolocation` reports. CDP's optional coordinates are

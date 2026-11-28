@@ -170,6 +170,32 @@ impl Namespace {
         }
     }
 
+    /// Bounce Tracking Mitigations: deletes the databases of the origins at `site` that no connection
+    /// and no upgrade holds (`deleteDb`'s reset). Returns whether any held data.
+    pub(crate) fn clear_site(&self, site: &str) -> bool {
+        let mut server = self.lock();
+        let mut cleared = false;
+        for (origin, dbs) in server.origins.iter_mut() {
+            if crate::bounce_tracking::site_of_url(origin).as_deref() != Some(site) {
+                continue;
+            }
+            for db in dbs.values_mut().filter(|db| db.conns.is_empty() && db.busy.is_none()) {
+                if let Some(lease) = &self.1 {
+                    let _ = lease.charge(Endpoint::IndexedDb, db.committed_bytes, 0);
+                }
+                cleared |= db.version > 0 || !db.stores.is_empty();
+                db.committed_bytes = 0;
+                db.changes.clear();
+                db.version = 0;
+                db.stores.clear();
+                db.undo.clear();
+                db.locks.clear();
+                db.upgrade = None;
+            }
+        }
+        cleared
+    }
+
     fn lock(&self) -> MutexGuard<'_, Server> {
         self.0.lock().unwrap_or_else(|e| e.into_inner())
     }

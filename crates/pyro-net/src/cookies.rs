@@ -1071,6 +1071,51 @@ impl CookieJar {
             }
         }
     }
+
+    /// The number the next stored cookie is created after: [`CookieJar::site_written_since`] compares with it.
+    pub fn sequence(&self) -> u64 {
+        self.seq
+    }
+
+    /// Whether a cookie of `site` (a registrable domain or host as [`site_of`] names it) was created after
+    /// [`CookieJar::sequence`] was `since`: unpartitioned cookies by their domain, partitioned ones by the
+    /// site of their partition key's top-level site.
+    pub fn site_written_since(&self, since: u64, site: &str) -> bool {
+        self.by_domain.values().flatten().any(|c| c.creation > since && Self::cookie_of_site(c, site))
+    }
+
+    /// Whether `c` belongs to `site` for state clearing: its domain is at the site, or it is partitioned
+    /// under a top-level document of the site (the partition key is `scheme://site`).
+    fn cookie_of_site(c: &Cookie, site: &str) -> bool {
+        site_of(&c.domain).eq_ignore_ascii_case(site)
+            || c.partition_key.as_deref().and_then(|k| k.split_once("://")).is_some_and(|(_, s)| s.eq_ignore_ascii_case(site))
+    }
+
+    /// Bounce Tracking Mitigations: deletes every cookie of `site` (see [`CookieJar::site_written_since`]),
+    /// partitioned or not, and tells the observers of the script-visible ones. Returns how many went.
+    pub fn delete_site(&mut self, site: &str) -> usize {
+        let mut removed = 0;
+        let mut changes = Vec::new();
+        let observing = !self.observers.is_empty();
+        self.by_domain.retain(|_, list| {
+            list.retain(|c| {
+                let doomed = Self::cookie_of_site(c, site);
+                if doomed {
+                    removed += 1;
+                    if observing {
+                        changes.push(c.clone());
+                    }
+                }
+                !doomed
+            });
+            !list.is_empty()
+        });
+        self.count -= removed;
+        for cookie in changes {
+            self.notify(CookieChange::Deleted(cookie));
+        }
+        removed
+    }
 }
 
 /// Determines the SameSite context of a request initiated by a document at

@@ -2745,6 +2745,8 @@ impl Browser {
                 return Ok(());
             }
         }
+        // Bounce Tracking Mitigations: a top-level navigation starts (or continues) an extended navigation.
+        self.bounce_navigation_started(page, &opts);
         if let Some(mut p) = self.doc_mut(page) {
             p.pending_loader = Some(loader_id.clone());
             p.pending_script = script.then(|| (loader_id.clone(), opts.url.clone()));
@@ -3445,6 +3447,10 @@ impl Browser {
             state.committing_csp_sandbox = csp_sandbox;
         }
         let error_document = unreachable.is_some();
+        // Bounce Tracking Mitigations: the sites this response's redirect chain went through.
+        if !error_document {
+            self.bounce_response_committed(page, Browser::bounce_response_sites(&resource.coop, &resource.url));
+        }
         // COOP navigation reports (HTML "cross-origin opener policy reporting"): the reports about
         // the document being replaced and about redirects go out now, while that document is the
         // active one; those the new document receives are queued once it has its endpoints.

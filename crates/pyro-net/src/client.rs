@@ -973,6 +973,10 @@ impl NetClient {
     pub fn clear_http_cache(&self) {
         self.inner.shared.cache.lock().unwrap().clear();
     }
+    /// Drops the HTTP cache entries of every URL at `site` (Bounce Tracking Mitigations).
+    pub fn clear_http_cache_site(&self, site: &str) {
+        self.inner.shared.cache.lock().unwrap().clear_site(site);
+    }
     /// HTTP cache (entries, logical bytes).
     pub fn http_cache_usage(&self) -> (usize, usize) {
         self.inner.shared.cache.lock().unwrap().usage()
